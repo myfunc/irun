@@ -205,7 +205,13 @@ class RunnerDemo(ShowBase):
                 proc = subprocess.run(cmd, capture_output=True, text=True)
                 if proc.returncode != 0:
                     err = (proc.stderr or proc.stdout or "").strip()
-                    self._import_error = err[-600:] if err else f"Importer failed with code {proc.returncode}"
+                    # Prefer the last non-empty line (usually the exception), but keep a short tail for context.
+                    if err:
+                        lines = [l for l in err.splitlines() if l.strip()]
+                        tail = "\n".join(lines[-6:]) if lines else err
+                        self._import_error = tail[-800:]
+                    else:
+                        self._import_error = f"Importer failed with code {proc.returncode}"
                     return
                 self._pending_map_json = str(out_dir / "map.json")
             except Exception as e:
