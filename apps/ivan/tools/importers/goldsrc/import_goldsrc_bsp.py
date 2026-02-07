@@ -42,6 +42,26 @@ RENDER_NO_COLLIDE_CLASSNAMES = {
     "func_illusionary",
 }
 
+# Avoid copying code/binaries when users point the importer at a full Steam install.
+# GoldSrc mods typically store executable game code under these dirs / extensions.
+SKIP_RESOURCE_DIRS = {
+    "bin",
+    "cl_dlls",
+    "dlls",
+    "plugins",
+}
+SKIP_RESOURCE_EXTS = {
+    ".a",
+    ".dylib",
+    ".dll",
+    ".exe",
+    ".lib",
+    ".o",
+    ".obj",
+    ".pdb",
+    ".so",
+}
+
 
 def _norm_rel(path: str) -> str:
     return path.replace("\\", "/").lstrip("./").strip()
@@ -77,6 +97,16 @@ def find_case_insensitive(root: Path, rel: str) -> Path | None:
             return None
         p = matches[0]
     return p
+
+
+def should_copy_resource(rel: str) -> bool:
+    rel = _norm_rel(rel)
+    p = Path(rel)
+    if any(part.lower() in SKIP_RESOURCE_DIRS for part in p.parts):
+        return False
+    if p.suffix.lower() in SKIP_RESOURCE_EXTS:
+        return False
+    return True
 
 
 def _parse_wad_list(entities) -> list[str]:
@@ -251,8 +281,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--out",
-        required=True,
-        help="Output directory for the imported map bundle (will write map.json + materials/ + resources/).",
+        required=False,
+        default=None,
+        help="Output directory for the imported map bundle (will write map.json + materials/ + resources/). Not required with --analyze.",
     )
     parser.add_argument("--map-id", default=None, help="Optional map id for debugging/node naming.")
     parser.add_argument("--scale", type=float, default=0.03, help="GoldSrc-to-game unit scale.")
@@ -266,12 +297,21 @@ def main() -> None:
         action="store_true",
         help="Copy non-texture resources listed in .res / entity scan into the bundle (sound/models/sprites/etc). Off by default.",
     )
+    parser.add_argument(
+        "--analyze",
+        action="store_true",
+        help="Analyze the BSP (WAD list + detected resource refs) and print a JSON report to stdout without writing a bundle.",
+    )
     args = parser.parse_args()
+
+    if not args.analyze and not args.out:
+        parser.error("--out is required unless --analyze is set.")
 
     bsp_path = Path(args.bsp)
     game_root = Path(args.game_root)
-    out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(args.out or ".")
+    if not args.analyze:
+        out_dir.mkdir(parents=True, exist_ok=True)
 
     map_name = bsp_path.stem
     map_id = args.map_id or map_name
@@ -435,11 +475,35 @@ def main() -> None:
     for w in wad_names:
         resources.add(_norm_rel(w))
 
+    # Used by the default texture extraction mode and useful for analysis output.
+    used_textures = _expand_animated_textures(_collect_used_texture_names(bsp))
+
+    if args.analyze:
+        report = {
+            "bsp": str(bsp_path),
+            "game_root": str(game_root),
+            "map_id": map_id,
+            "scale": float(args.scale),
+            "wad_names": wad_names,
+            "used_textures": sorted(used_textures),
+            "resources_detected": sorted(resources),
+            "copy_policy": {
+                "skip_dirs": sorted(SKIP_RESOURCE_DIRS),
+                "skip_exts": sorted(SKIP_RESOURCE_EXTS),
+            },
+        }
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return
+
     # Copy resources into bundle under resources/<path>.
     copied: list[str] = []
     missing: list[str] = []
+    skipped: list[str] = []
     if args.copy_resources:
         for rel in sorted(resources):
+            if not should_copy_resource(rel):
+                skipped.append(_norm_rel(rel))
+                continue
             # Normalize common roots; allow both "sound/..." etc and bare wad names.
             src = find_case_insensitive(game_root, rel)
             if src is None:
@@ -461,8 +525,7 @@ def main() -> None:
     # Extract textures from referenced WADs into bundle materials/.
     materials_dir = out_dir / "materials"
     extracted_textures: int = 0
-    used = _expand_animated_textures(_collect_used_texture_names(bsp))
-    used_cf = {u.casefold() for u in used}
+    used_cf = {u.casefold() for u in used_textures}
     for wad_name in wad_names:
         wad_src = None
         # WAD paths in worldspawn are often absolute; treat as filename.
@@ -506,7 +569,14 @@ def main() -> None:
         "spawn": {"position": spawn_pos, "yaw": spawn_yaw},
         "skyname": skyname,
         "materials": {"root": None, "converted_root": "materials", "converted": extracted_textures},
-        "resources": {"root": "resources", "copied": copied, "missing": missing, "copied_enabled": bool(args.copy_resources)},
+        "resources": {
+            "root": "resources",
+            "copied": copied,
+            "missing": missing,
+            "skipped": skipped,
+            "copied_enabled": bool(args.copy_resources),
+            "skip_policy": {"dirs": sorted(SKIP_RESOURCE_DIRS), "exts": sorted(SKIP_RESOURCE_EXTS)},
+        },
         "collision_triangles": collision_triangles,
         "triangles": render_triangles,
         "brush_models": brush_model_report,
