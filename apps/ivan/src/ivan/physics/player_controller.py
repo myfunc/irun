@@ -102,6 +102,7 @@ class PlayerController:
         self._wall_jump_lock_timer += dt
         self._vault_cooldown_timer += dt
         self._jump_buffer_timer = max(0.0, self._jump_buffer_timer - dt)
+        self._refresh_wall_contact_from_probe()
 
         # Determine grounded state before applying friction/accel (otherwise friction appears to "break"
         # whenever you don't happen to collide with the floor during this frame).
@@ -146,6 +147,7 @@ class PlayerController:
             self._bullet_ground_snap()
             # Update grounded state after movement (e.g. walking off a ledge).
             self._bullet_ground_trace()
+            self._refresh_wall_contact_from_probe()
         else:
             self._move_and_collide(self.vel * dt)
 
@@ -403,6 +405,41 @@ class PlayerController:
         self.vel.x = horiz.x * new_speed
         self.vel.y = horiz.y * new_speed
 
+    def _refresh_wall_contact_from_probe(self) -> None:
+        n = self._probe_nearby_wall_normal()
+        if n.lengthSquared() <= 1e-12:
+            return
+        self._wall_normal = n
+        self._wall_contact_timer = 0.0
+
+    def _probe_nearby_wall_normal(self) -> LVector3f:
+        if self.collision is None:
+            return LVector3f(0, 0, 0)
+
+        probe_dist = max(0.08, float(self.tuning.player_radius) + 0.06)
+        directions = (
+            LVector3f(1, 0, 0),
+            LVector3f(-1, 0, 0),
+            LVector3f(0, 1, 0),
+            LVector3f(0, -1, 0),
+        )
+        walkable_z = self._walkable_threshold_z(float(self.tuning.max_ground_slope_deg))
+
+        for d in directions:
+            hit = self._bullet_sweep_closest(self.pos, self.pos + d * probe_dist)
+            if not hit.hasHit():
+                continue
+            n = LVector3f(hit.getHitNormal())
+            if n.lengthSquared() > 1e-12:
+                n.normalize()
+            # Treat near-vertical surfaces as walls.
+            if abs(n.z) < max(0.65, walkable_z):
+                wall_n = LVector3f(n.x, n.y, 0.0)
+                if wall_n.lengthSquared() > 1e-12:
+                    wall_n.normalize()
+                    return wall_n
+        return LVector3f(0, 0, 0)
+
     def _player_aabb(self) -> AABB:
         return AABB(self.pos - self.player_half, self.pos + self.player_half)
 
@@ -483,9 +520,6 @@ class PlayerController:
         pos = LVector3f(self.pos)
         remaining = LVector3f(delta)
         planes: list[LVector3f] = []
-
-        self._wall_normal = LVector3f(0, 0, 0)
-        self._wall_contact_timer = 999.0
 
         walkable_z = self._walkable_threshold_z(float(self.tuning.max_ground_slope_deg))
         skin = 0.006
