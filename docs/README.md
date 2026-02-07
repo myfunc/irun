@@ -1,5 +1,8 @@
 # Documentation Index
 
+## Repo Structure
+- Applications live under `apps/` (e.g. `apps/up`)
+
 ## Global
 - `docs/project.md`: Project overview and pillars
 - `docs/features.md`: Feature inventory and scope boundaries
@@ -9,4 +12,3 @@
 
 ## Brainstorm
 - `docs/brainstorm/README.md`: Brainstorm structure and templates
-

@@ -40,6 +40,7 @@ Naming convention:
   - `docs/architecture.md`
 
 ## Repository Defaults
-- Python package uses `src/` layout.
-- Entrypoint: `python -m irun` (documented in `README.md`).
-
+- Applications live under `apps/`.
+- Python apps use a `src/` layout inside their app folder.
+- Current game app: `apps/up`
+  - Entrypoint: `python -m up` (documented in `apps/up/README.md`).

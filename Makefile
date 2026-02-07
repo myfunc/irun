@@ -1,11 +1,19 @@
-.PHONY: run lint test
+.PHONY: run lint test up-run up-lint up-test
 
 run:
-\tpython -m irun
+	$(MAKE) up-run
 
 lint:
-\truff check .
+	$(MAKE) up-lint
 
 test:
-\tpytest -q
+	$(MAKE) up-test
 
+up-run:
+	cd apps/up && python -m up
+
+up-lint:
+	cd apps/up && ruff check .
+
+up-test:
+	cd apps/up && pytest -q

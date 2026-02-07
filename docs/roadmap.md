@@ -2,7 +2,7 @@
 
 ## Milestone 0: Project Initialization
 - Repo structure, docs scaffolding
-- Runnable prototype
+- Runnable UP prototype
 
 ## Milestone 1: Movement Prototype
 - Player controller: ground/air, jump tuning, basic collision
@@ -13,4 +13,3 @@
 - Checkpoints + respawn
 - Hazards + collectibles
 - Simple UI (timer/collect count)
-

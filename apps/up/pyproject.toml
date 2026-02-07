@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "irun"
+name = "irun-up"
 version = "0.1.0"
-description = "IRUN: a 3D platformer prototype in Python."
+description = "UP: the 3D platformer app (IRUN monorepo) in Python."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "Proprietary" }
@@ -22,7 +22,7 @@ dev = [
 ]
 
 [project.scripts]
-irun = "irun.__main__:main"
+up = "up.__main__:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
