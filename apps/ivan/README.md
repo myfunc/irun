@@ -63,11 +63,11 @@ Panel layout:
 - Hovering a setting name/control shows a tooltip with a short explanation.
 
 Numeric settings include sliders + entry fields for precise tuning:
-- Gravity, jump speed, ground/air speed caps
+- Gravity, jump speed, jump height, ground/air speed caps
 - Ground acceleration, bunnyhop acceleration, friction, air control
 - Air counter-strafe brake strength
 - Sprint multiplier, mouse sensitivity
-- Wall jump boost, coyote time, jump buffer time
+- Wall jump boost, vault jump/speed/ledge window, coyote time, jump buffer time
 
 Boolean toggles are shown inline as labeled rows with `ON/OFF` buttons:
 - Coyote time
@@ -82,6 +82,7 @@ Movement notes:
 - Default `air_counter_strafe_brake` is set to `5.0`.
 - Repeated wall-jumps from the same wall face are temporarily blocked.
 - Wallrun is lateral; vertical climb gain is capped.
+- If `vault_enabled` is on, pressing jump again near a ledge can trigger a vault: feet must be below ledge top, vault jump is higher than normal, and a small forward speed boost is applied.
 
 ## Level Layout
 The map is generated in code and includes:

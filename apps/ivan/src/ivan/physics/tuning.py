@@ -7,6 +7,7 @@ from dataclasses import dataclass
 class PhysicsTuning:
     gravity: float = 24.0
     jump_speed: float = 5.955
+    jump_height: float = 1.48
     max_ground_speed: float = 8.976
     max_air_speed: float = 11.258
     ground_accel: float = 48.009
@@ -17,6 +18,11 @@ class PhysicsTuning:
     sprint_multiplier: float = 1.2
     mouse_sensitivity: float = 0.14
     wall_jump_boost: float = 5.534
+    vault_jump_multiplier: float = 1.25
+    vault_forward_boost: float = 2.0
+    vault_min_ledge_height: float = 0.20
+    vault_max_ledge_height: float = 1.40
+    vault_cooldown: float = 0.30
     coyote_time: float = 0.12
     jump_buffer_time: float = 0.14
     enable_coyote: bool = True
