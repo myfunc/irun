@@ -179,8 +179,10 @@ class RunnerDemo(ShowBase):
         game_root = Path(self.cfg.hl_root) / self.cfg.hl_mod
 
         script = app_root / "tools" / "importers" / "goldsrc" / "import_goldsrc_bsp.py"
+        venv_py = app_root / ".venv" / "bin" / "python"
+        python_exe = str(venv_py) if venv_py.exists() else sys.executable
         cmd = [
-            sys.executable,
+            python_exe,
             str(script),
             "--bsp",
             entry.bsp_path,
