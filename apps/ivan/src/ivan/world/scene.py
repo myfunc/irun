@@ -33,14 +33,23 @@ class WorldScene:
         self.triangle_collision_mode = False
 
         self._material_texture_index: dict[str, Path] | None = None
+        self._material_texture_root: Path | None = None
+        self._map_id: str = "scene"
         self._skybox_np = None
 
-    def build(self, *, loader, render, camera) -> None:
+    def build(self, *, cfg, loader, render, camera) -> None:
         self._build_lighting(render)
 
-        self.external_map_loaded = self._try_load_generated_dust2_map(loader=loader, render=render, camera=camera)
-        if self.external_map_loaded:
-            return
+        # 1) Explicit map (CLI/config)
+        if getattr(cfg, "map_json", None):
+            self.external_map_loaded = self._try_load_external_map(
+                map_json=Path(str(cfg.map_json)),
+                loader=loader,
+                render=render,
+                camera=camera,
+            )
+            if self.external_map_loaded:
+                return
 
         # Official Panda3D sample environment model used in basic tutorial scenes.
         env = loader.loadModel("models/environment")
@@ -97,20 +106,28 @@ class WorldScene:
         h = LVector3f(*half)
         self.aabbs.append(AABB(minimum=p - h, maximum=p + h))
 
-    def _try_load_generated_dust2_map(self, *, loader, render, camera) -> bool:
-        app_root = Path(__file__).resolve().parents[3]
-        asset_path = app_root / "assets" / "generated" / "de_dust2_largo_map.json"
-        if not asset_path.exists():
+    def _try_load_external_map(self, *, map_json: Path, loader, render, camera) -> bool:
+        # Resolve relative paths from current working directory (CLI usage).
+        if not map_json.is_absolute():
+            map_json = (Path.cwd() / map_json).resolve()
+        if not map_json.exists():
             return False
 
         try:
-            payload = json.loads(asset_path.read_text(encoding="utf-8"))
+            payload = json.loads(map_json.read_text(encoding="utf-8"))
         except Exception:
             return False
 
         triangles = payload.get("triangles")
         if not isinstance(triangles, list) or not triangles:
             return False
+
+        # Derive a stable map id for node naming/debug.
+        map_id = payload.get("map_id")
+        if isinstance(map_id, str) and map_id.strip():
+            self._map_id = map_id.strip()
+        else:
+            self._map_id = map_json.stem
 
         spawn = payload.get("spawn", {})
         spawn_pos = spawn.get("position")
@@ -119,6 +136,11 @@ class WorldScene:
         spawn_yaw = spawn.get("yaw")
         if isinstance(spawn_yaw, (int, float)):
             self.spawn_yaw = float(spawn_yaw)
+
+        self._material_texture_index = None
+        self._material_texture_root = self._resolve_material_root(map_json=map_json, payload=payload)
+
+        collision_override = payload.get("collision_triangles")
 
         # Format v1: triangles is list[list[float]] (positions only)
         # Format v2: triangles is list[dict] with positions, normals, UVs, vertex colors, and material.
@@ -130,11 +152,19 @@ class WorldScene:
                     pos_tris.append([float(x) for x in p])
             if not pos_tris:
                 return False
-            self.triangles = pos_tris
-            self._attach_triangle_map_geometry_v2(app_root=app_root, loader=loader, render=render, triangles=triangles)
+            # Collision can be filtered at import time (e.g. exclude triggers).
+            if isinstance(collision_override, list) and collision_override and isinstance(collision_override[0], list):
+                coll: list[list[float]] = []
+                for t in collision_override:
+                    if isinstance(t, list) and len(t) == 9:
+                        coll.append([float(x) for x in t])
+                self.triangles = coll or pos_tris
+            else:
+                self.triangles = pos_tris
+            self._attach_triangle_map_geometry_v2(loader=loader, render=render, triangles=triangles)
             skyname = payload.get("skyname")
             if isinstance(skyname, str) and skyname.strip():
-                self._setup_skybox(app_root=app_root, loader=loader, camera=camera, skyname=skyname.strip())
+                self._setup_skybox(loader=loader, camera=camera, skyname=skyname.strip())
         else:
             self.triangles = triangles
             self._attach_triangle_map_geometry(render=render, triangles=triangles)
@@ -145,7 +175,7 @@ class WorldScene:
     def _attach_triangle_map_geometry(self, *, render, triangles: list[list[float]]) -> None:
         # Generated Dust2 asset currently includes positions only (no UV/material data).
         # For visibility we generate world-space UVs and apply a debug checker texture.
-        vdata = GeomVertexData("dust2-map", GeomVertexFormat.getV3n3t2(), Geom.UHStatic)
+        vdata = GeomVertexData(f"{self._map_id}-map", GeomVertexFormat.getV3n3t2(), Geom.UHStatic)
         vertex_writer = GeomVertexWriter(vdata, "vertex")
         normal_writer = GeomVertexWriter(vdata, "normal")
         uv_writer = GeomVertexWriter(vdata, "texcoord")
@@ -181,7 +211,7 @@ class WorldScene:
 
         geom = Geom(vdata)
         geom.addPrimitive(prim)
-        geom_node = GeomNode("dust2-map-geom")
+        geom_node = GeomNode(f"{self._map_id}-map-geom")
         geom_node.addGeom(geom)
 
         map_np = render.attachNewNode(geom_node)
@@ -189,8 +219,8 @@ class WorldScene:
         map_np.setTwoSided(False)
         map_np.setTexture(self._make_debug_checker_texture(), 1)
 
-    def _build_material_texture_index(self, app_root: Path) -> dict[str, Path]:
-        root = app_root / "assets" / "generated" / "materials"
+    @staticmethod
+    def _build_material_texture_index(root: Path) -> dict[str, Path]:
         index: dict[str, Path] = {}
         if not root.exists():
             return index
@@ -200,13 +230,15 @@ class WorldScene:
             index[key] = p
         return index
 
-    def _resolve_material_texture_path(self, *, app_root: Path, material_name: str) -> Path | None:
+    def _resolve_material_texture_path(self, *, material_name: str) -> Path | None:
+        if not self._material_texture_root:
+            return None
         if self._material_texture_index is None:
-            self._material_texture_index = self._build_material_texture_index(app_root)
+            self._material_texture_index = self._build_material_texture_index(self._material_texture_root)
         key = material_name.replace("\\", "/").casefold()
         return self._material_texture_index.get(key)
 
-    def _attach_triangle_map_geometry_v2(self, *, app_root: Path, loader, render, triangles: list[dict]) -> None:
+    def _attach_triangle_map_geometry_v2(self, *, loader, render, triangles: list[dict]) -> None:
         # Build render geometry with materials + baked vertex lighting.
         tris_by_mat: dict[str, list[dict]] = {}
         for t in triangles:
@@ -217,7 +249,7 @@ class WorldScene:
 
         for mat_name, tris in tris_by_mat.items():
             vdata = GeomVertexData(
-                f"dust2-map-{mat_name}", GeomVertexFormat.getV3n3c4t2(), Geom.UHStatic
+                f"{self._map_id}-map-{mat_name}", GeomVertexFormat.getV3n3c4t2(), Geom.UHStatic
             )
             vw = GeomVertexWriter(vdata, "vertex")
             nw = GeomVertexWriter(vdata, "normal")
@@ -258,12 +290,12 @@ class WorldScene:
 
             geom = Geom(vdata)
             geom.addPrimitive(prim)
-            geom_node = GeomNode(f"dust2-geom-{mat_name}")
+            geom_node = GeomNode(f"{self._map_id}-geom-{mat_name}")
             geom_node.addGeom(geom)
             np = render.attachNewNode(geom_node)
             np.setTwoSided(False)
 
-            tex_path = self._resolve_material_texture_path(app_root=app_root, material_name=mat_name)
+            tex_path = self._resolve_material_texture_path(material_name=mat_name)
             if tex_path and tex_path.exists():
                 tex = loader.loadTexture(str(tex_path))
                 if tex is not None:
@@ -273,7 +305,7 @@ class WorldScene:
             else:
                 np.setTexture(self._make_debug_checker_texture(), 1)
 
-    def _setup_skybox(self, *, app_root: Path, loader, camera, skyname: str) -> None:
+    def _setup_skybox(self, *, loader, camera, skyname: str) -> None:
         # Source convention: materials/skybox/<skyname><face>.vtf -> we converted to PNG.
         if self._skybox_np is not None:
             self._skybox_np.removeNode()
@@ -288,9 +320,10 @@ class WorldScene:
             "dn": ("dn", (0, 0, -200), (180, 90, 0)),
         }
 
-        # Prebuild texture index once.
+        if not self._material_texture_root:
+            return
         if self._material_texture_index is None:
-            self._material_texture_index = self._build_material_texture_index(app_root)
+            self._material_texture_index = self._build_material_texture_index(self._material_texture_root)
 
         def find_face(face_suffix: str) -> Path | None:
             # Try a few casing variants; the on-disk files are often mixed-case.
@@ -331,6 +364,32 @@ class WorldScene:
         self._skybox_np = root
 
     @staticmethod
+    def _resolve_material_root(*, map_json: Path, payload: dict) -> Path | None:
+        materials = payload.get("materials")
+        if not isinstance(materials, dict):
+            return None
+        converted_root = materials.get("converted_root")
+        if not isinstance(converted_root, str) or not converted_root.strip():
+            return None
+
+        raw = Path(converted_root)
+        # Prefer paths relative to the map bundle directory.
+        if not raw.is_absolute():
+            cand = (map_json.parent / raw).resolve()
+            if cand.exists():
+                return cand
+        # Back-compat: older bundles store app-root relative paths.
+        app_root = Path(__file__).resolve().parents[3]
+        cand = (app_root / raw).resolve()
+        if cand.exists():
+            return cand
+        # Last resort: treat as cwd-relative.
+        cand = (Path.cwd() / raw).resolve()
+        if cand.exists():
+            return cand
+        return None
+
+    @staticmethod
     def _make_debug_checker_texture() -> Texture:
         img = PNMImage(256, 256)
         # Simple high-contrast checker + grid, so collision/scale issues are visible.
@@ -352,4 +411,3 @@ class WorldScene:
         tex.setMagfilter(Texture.FT_linear)
         tex.generateRamMipmapImages()
         return tex
-

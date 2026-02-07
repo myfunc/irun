@@ -35,9 +35,14 @@ Smoke run:
 python -m ivan --smoke
 ```
 
+Half-Life map picker (imports GoldSrc maps on demand):
+```bash
+python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steamapps/common/Half-Life" --hl-mod valve
+```
+
 ## Code Layout
 - `src/ivan/game.py`: App wiring, input, camera, and update loop.
-- `src/ivan/world/scene.py`: Scene building and external map loading (Dust2 triangles/materials/skybox).
+- `src/ivan/world/scene.py`: Scene building and external map loading (`--map` bundles).
 - `src/ivan/physics/tuning.py`: Movement/physics tuning parameters (editable at runtime via the debug/admin menu).
 - `src/ivan/physics/player_controller.py`: Kinematic character movement (step + slide) and jump/wall interactions.
 - `src/ivan/ui/debug_ui.py`: Debug/admin UI widgets and HUD labels.
@@ -95,24 +100,36 @@ The map is generated in code and includes:
 - A simple reset/hard-fail condition if you fall off the course
 
 ## External Map Assets
-- The repository `de_dust2_largo` is stored under:
-  - `assets/maps/de_dust2_largo/`
-- Runtime uses generated triangle asset:
-  - `assets/generated/de_dust2_largo_map.json`
-- This file is built from BSP using:
+IVAN can load an external map bundle via `--map <path-to-map.json>`.
+
+### Source BSP -> Bundle (VTF -> PNG)
 ```bash
-python3 tools/build_dust2_assets.py \
-  --input assets/maps/de_dust2_largo/csgo/maps/de_dust2_largo.bsp \
-  --output assets/generated/de_dust2_largo_map.json \
+python3 tools/build_source_bsp_assets.py \
+  --input <path-to-source.bsp> \
+  --materials-root <path-to-materials/> \
+  --materials-out <bundle-dir>/materials \
+  --output <bundle-dir>/map.json \
   --scale 0.03
 ```
-- At startup:
-  - If generated asset exists and is valid, IVAN loads Dust2 geometry + collision from the same triangle data.
-  - Otherwise, IVAN falls back to sample environment + graybox lane.
+
+Run with the bundle:
+```bash
+python -m ivan --map <bundle-dir>/map.json
+```
+
+### GoldSrc/Xash3D BSP -> Bundle (WAD + resources)
+Example (Counter-Strike 1.6 / Xash3D style mod folder):
+```bash
+python3 tools/importers/goldsrc/import_goldsrc_bsp.py \
+  --bsp <path-to-goldsrc.bsp> \
+  --game-root <path-to-mod-root> \
+  --out <bundle-dir> \
+  --scale 0.03
+python -m ivan --map <bundle-dir>/map.json
+```
 
 Notes:
 - Triangle-map collision response uses Bullet convex sweep tests and a Quake3-style kinematic controller
   (step + slide with plane clipping) for stable wall/ceiling/slope handling.
-- The build step converts the shipped `assets/maps/de_dust2_largo/csgo/materials/**/*.vtf` into PNG under
-  `assets/generated/materials/` so Panda3D can load them.
-- The generated Dust2 JSON includes per-triangle materials, UVs, and vertex colors (used as baked lighting).
+- The Source build step converts `materials/**/*.vtf` into PNG so Panda3D can load them.
+- Map bundles include per-triangle materials, UVs, and optional vertex colors (used as baked lighting tint).

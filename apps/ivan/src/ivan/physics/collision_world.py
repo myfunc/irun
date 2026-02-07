@@ -45,7 +45,7 @@ class CollisionWorld:
                 tri_mesh.addTriangle(p0, p1, p2, False)
 
             shape = BulletTriangleMeshShape(tri_mesh, dynamic=False)
-            body = BulletRigidBodyNode("dust2-static")
+            body = BulletRigidBodyNode("static-triangle-mesh")
             body.setMass(0.0)
             body.addShape(shape)
             render.attachNewNode(body)
