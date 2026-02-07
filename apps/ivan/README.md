@@ -14,7 +14,7 @@ Requirements:
 
 Install and run:
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e ".[dev]"
@@ -78,3 +78,10 @@ python3 tools/build_dust2_assets.py \
 - At startup:
   - If generated asset exists and is valid, IVAN loads Dust2 geometry + collision from the same triangle data.
   - Otherwise, IVAN falls back to sample environment + graybox lane.
+
+Notes:
+- Triangle-map collision response uses Bullet convex sweep tests and a Quake3-style kinematic controller
+  (step + slide with plane clipping) for stable wall/ceiling/slope handling.
+- The generated Dust2 JSON currently contains triangle positions only (no UVs/materials). IVAN applies a
+  debug checker texture with world-space UVs so the mesh is readable; full BSP material/UV extraction is
+  planned work.

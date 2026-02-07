@@ -9,16 +9,17 @@ from direct.gui import DirectGuiGlobals as DGG
 from direct.gui.DirectGui import DirectButton, DirectEntry, DirectFrame, DirectLabel, DirectSlider
 from direct.showbase.ShowBase import ShowBase
 from direct.task import Task
+from panda3d.bullet import (
+    BulletBoxShape,
+    BulletCapsuleShape,
+    BulletRigidBodyNode,
+    BulletTriangleMesh,
+    BulletTriangleMeshShape,
+    BulletWorld,
+)
 from panda3d.core import (
     AmbientLight,
     BitMask32,
-    CollisionHandlerPusher,
-    CollisionHandlerQueue,
-    CollisionNode,
-    CollisionPolygon,
-    CollisionRay,
-    CollisionSphere,
-    CollisionTraverser,
     DirectionalLight,
     Geom,
     GeomNode,
@@ -29,8 +30,11 @@ from panda3d.core import (
     KeyboardButton,
     LVector3f,
     LVector4f,
+    PNMImage,
     Point3,
     TextNode,
+    Texture,
+    TransformState,
     WindowProperties,
     loadPrcFileData,
 )
@@ -58,6 +62,10 @@ class PhysicsTuning:
     wallrun_enabled: bool = False
     vault_enabled: bool = False
     grapple_enabled: bool = False
+    # Quake3-style character collision parameters.
+    max_ground_slope_deg: float = 46.0
+    step_height: float = 0.55
+    ground_snap_dist: float = 0.20
 
 
 @dataclass(frozen=True)
@@ -174,17 +182,23 @@ class RunnerDemo(ShowBase):
 
         self._wall_contact_timer = 999.0
         self._wall_normal = LVector3f(0, 0, 0)
+        self._ground_normal = LVector3f(0, 0, 1)
 
         self._aabbs: list[AABB] = []
+        self._triangles: list[list[float]] | None = None
         self._external_map_loaded = False
         self._triangle_collision_mode = False
+
+        # Bullet-based collision queries (sweep tests) for robust wall/ceiling/slope handling.
+        self._bworld: BulletWorld | None = None
+        self._player_sweep_shape = None
+        self._static_bodies: list[BulletRigidBodyNode] = []
 
         self._build_scene()
         self._setup_window()
         self._setup_input()
         self._setup_debug_ui()
-        if self._triangle_collision_mode:
-            self._setup_triangle_collision_runtime()
+        self._setup_bullet_collision()
 
         self.taskMgr.add(self._update, "runner-update")
 
@@ -271,6 +285,7 @@ class RunnerDemo(ShowBase):
         if isinstance(spawn_yaw, (int, float)):
             self._yaw = float(spawn_yaw)
 
+        self._triangles = triangles
         self._attach_triangle_map_geometry(triangles)
         self._triangle_collision_mode = True
         return True
@@ -287,15 +302,15 @@ class RunnerDemo(ShowBase):
         self._aabbs.append(AABB(minimum=p - h, maximum=p + h))
 
     def _attach_triangle_map_geometry(self, triangles: list[list[float]]) -> None:
-        vdata = GeomVertexData("dust2-map", GeomVertexFormat.getV3n3(), Geom.UHStatic)
+        # Generated Dust2 asset currently includes positions only (no UV/material data).
+        # For visibility we generate world-space UVs and apply a debug checker texture.
+        vdata = GeomVertexData("dust2-map", GeomVertexFormat.getV3n3t2(), Geom.UHStatic)
         vertex_writer = GeomVertexWriter(vdata, "vertex")
         normal_writer = GeomVertexWriter(vdata, "normal")
+        uv_writer = GeomVertexWriter(vdata, "texcoord")
         prim = GeomTriangles(Geom.UHStatic)
 
-        col_node = CollisionNode("dust2-map-collision")
-        col_node.setIntoCollideMask(BitMask32.allOn())
-        col_node.setFromCollideMask(BitMask32.allOff())
-
+        uv_scale = 0.20
         for tri in triangles:
             if len(tri) != 9:
                 continue
@@ -314,26 +329,14 @@ class RunnerDemo(ShowBase):
             base_idx = vdata.getNumRows()
             vertex_writer.addData3f(p0)
             normal_writer.addData3f(normal)
+            uv_writer.addData2f(p0.x * uv_scale, p0.y * uv_scale)
             vertex_writer.addData3f(p1)
             normal_writer.addData3f(normal)
+            uv_writer.addData2f(p1.x * uv_scale, p1.y * uv_scale)
             vertex_writer.addData3f(p2)
             normal_writer.addData3f(normal)
+            uv_writer.addData2f(p2.x * uv_scale, p2.y * uv_scale)
             prim.addVertices(base_idx, base_idx + 1, base_idx + 2)
-
-            col_node.addSolid(
-                CollisionPolygon(
-                    Point3(p0.x, p0.y, p0.z),
-                    Point3(p1.x, p1.y, p1.z),
-                    Point3(p2.x, p2.y, p2.z),
-                )
-            )
-            col_node.addSolid(
-                CollisionPolygon(
-                    Point3(p2.x, p2.y, p2.z),
-                    Point3(p1.x, p1.y, p1.z),
-                    Point3(p0.x, p0.y, p0.z),
-                )
-            )
 
         geom = Geom(vdata)
         geom.addPrimitive(prim)
@@ -343,60 +346,31 @@ class RunnerDemo(ShowBase):
         map_np = self.render.attachNewNode(geom_node)
         map_np.setColor(0.73, 0.67, 0.53, 1)
         map_np.setTwoSided(False)
-        self.render.attachNewNode(col_node)
+        map_np.setTexture(self._make_debug_checker_texture(), 1)
 
-    def _setup_triangle_collision_runtime(self) -> None:
-        self._c_trav = CollisionTraverser("tri-map-traverser")
+    @staticmethod
+    def _make_debug_checker_texture() -> Texture:
+        img = PNMImage(256, 256)
+        # Simple high-contrast checker + grid, so collision/scale issues are visible.
+        for y in range(256):
+            for x in range(256):
+                cx = (x // 32) % 2
+                cy = (y // 32) % 2
+                base = 0.82 if (cx ^ cy) else 0.25
+                if x % 32 == 0 or y % 32 == 0:
+                    img.setXel(x, y, 1.0, 0.15, 0.15)
+                else:
+                    img.setXel(x, y, base, base, base)
 
-        player_col = CollisionNode("player-sphere")
-        player_col.addSolid(CollisionSphere(0, 0, self.player_half.z * 0.95, self.player_half.x))
-        player_col.setFromCollideMask(BitMask32.allOn())
-        player_col.setIntoCollideMask(BitMask32.allOff())
-        self._player_col_np = self.player_node.attachNewNode(player_col)
+        tex = Texture("debug-checker")
+        tex.load(img)
+        tex.setWrapU(Texture.WM_repeat)
+        tex.setWrapV(Texture.WM_repeat)
+        tex.setMinfilter(Texture.FT_linear_mipmap_linear)
+        tex.setMagfilter(Texture.FT_linear)
+        tex.generateRamMipmapImages()
+        return tex
 
-        self._pusher = CollisionHandlerPusher()
-        self._pusher.addCollider(self._player_col_np, self.player_node)
-
-        self._wall_queue = CollisionHandlerQueue()
-        self._c_trav.addCollider(self._player_col_np, self._pusher)
-        self._c_trav.addCollider(self._player_col_np, self._wall_queue)
-
-        ground_node = CollisionNode("ground-ray")
-        ground_node.addSolid(CollisionRay(0, 0, self.player_half.z + 0.15, 0, 0, -1))
-        ground_node.setFromCollideMask(BitMask32.allOn())
-        ground_node.setIntoCollideMask(BitMask32.allOff())
-        self._ground_ray_np = self.player_node.attachNewNode(ground_node)
-        self._ground_queue = CollisionHandlerQueue()
-        self._c_trav.addCollider(self._ground_ray_np, self._ground_queue)
-
-    def _move_with_triangle_collisions(self, delta: LVector3f) -> None:
-        self.player_node.setPos(self.player_pos)
-        self.player_node.setPos(self.player_node.getPos() + delta)
-        self._c_trav.traverse(self.render)
-        self.player_pos = LVector3f(self.player_node.getPos())
-
-        self._wall_normal = LVector3f(0, 0, 0)
-        self._wall_contact_timer = 999.0
-        if self._wall_queue.getNumEntries() > 0:
-            self._wall_queue.sortEntries()
-            for i in range(self._wall_queue.getNumEntries()):
-                normal = self._wall_queue.getEntry(i).getSurfaceNormal(self.render)
-                if abs(normal.z) < 0.65:
-                    self._wall_normal = LVector3f(normal)
-                    if self._wall_normal.lengthSquared() > 1e-8:
-                        self._wall_normal.normalize()
-                    self._wall_contact_timer = 0.0
-                    break
-
-        self._grounded = False
-        if self._ground_queue.getNumEntries() > 0:
-            self._ground_queue.sortEntries()
-            nearest = self._ground_queue.getEntry(0).getSurfacePoint(self.render)
-            dist = (nearest - self.player_pos).length()
-            if dist <= self.player_half.z + 0.25 and self.velocity.z <= 2.0:
-                self._grounded = True
-                if self.velocity.z < 0:
-                    self.velocity.z = 0
 
     def _setup_debug_ui(self) -> None:
         self.debug_root = DirectFrame(
@@ -482,6 +456,51 @@ class RunnerDemo(ShowBase):
         )
         self.debug_root.hide()
 
+    def _setup_bullet_collision(self) -> None:
+        # We use Bullet for collision queries (convex sweeps) and implement a Quake3-like
+        # kinematic controller (step + slide). This gives correct wall/ceiling/slope behavior.
+        self._bworld = BulletWorld()
+        # We integrate gravity ourselves (for Quake-style tuning), so keep Bullet gravity neutral.
+        self._bworld.setGravity(LVector3f(0, 0, 0))
+
+        # Player collision hull: capsule aligned with Z.
+        radius = float(self.player_half.x)
+        # Bullet capsule height is cylinder height (excluding hemispherical caps).
+        cyl_h = max(0.01, float(self.player_half.z * 2.0 - radius * 2.0))
+        self._player_sweep_shape = BulletCapsuleShape(radius, cyl_h, 2)
+
+        if self._triangle_collision_mode and self._triangles:
+            tri_mesh = BulletTriangleMesh()
+            for tri in self._triangles:
+                if len(tri) != 9:
+                    continue
+                p0 = Point3(float(tri[0]), float(tri[1]), float(tri[2]))
+                p1 = Point3(float(tri[3]), float(tri[4]), float(tri[5]))
+                p2 = Point3(float(tri[6]), float(tri[7]), float(tri[8]))
+                tri_mesh.addTriangle(p0, p1, p2, False)
+
+            shape = BulletTriangleMeshShape(tri_mesh, dynamic=False)
+            body = BulletRigidBodyNode("dust2-static")
+            body.setMass(0.0)
+            body.addShape(shape)
+            self.render.attachNewNode(body)
+            self._bworld.attachRigidBody(body)
+            self._static_bodies.append(body)
+            return
+
+        # Graybox fallback: build static boxes for the blocks we placed.
+        for box in self._aabbs:
+            half = (box.maximum - box.minimum) * 0.5
+            center = box.minimum + half
+            shape = BulletBoxShape(LVector3f(float(half.x), float(half.y), float(half.z)))
+            body = BulletRigidBodyNode("graybox-block")
+            body.setMass(0.0)
+            body.addShape(shape)
+            np = self.render.attachNewNode(body)
+            np.setPos(float(center.x), float(center.y), float(center.z))
+            self._bworld.attachRigidBody(body)
+            self._static_bodies.append(body)
+
     def _make_toggle_button(self, field: str, x: float, y: float) -> None:
         button = DirectButton(
             parent=self.debug_root,
@@ -541,6 +560,8 @@ class RunnerDemo(ShowBase):
         self._center_mouse()
 
     def _wish_direction(self) -> LVector3f:
+        if self.mouseWatcherNode is None:
+            return LVector3f(0, 0, 0)
         h_rad = math.radians(self._yaw)
         forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0)
         right = LVector3f(forward.y, -forward.x, 0)
@@ -654,6 +675,191 @@ class RunnerDemo(ShowBase):
             and a.maximum.z > (b.minimum.z + eps)
         )
 
+    @staticmethod
+    def _walkable_threshold_z(max_slope_deg: float) -> float:
+        # Equivalent to Quake3 MIN_WALK_NORMAL (0.7) when max_slope_deg ~= 45.57.
+        return float(math.cos(math.radians(max_slope_deg)))
+
+    @staticmethod
+    def _clip_velocity(vel: LVector3f, normal: LVector3f, overbounce: float = 1.001) -> LVector3f:
+        # Quake-style clip against a collision plane.
+        v = LVector3f(vel)
+        n = LVector3f(normal)
+        if n.lengthSquared() > 1e-12:
+            n.normalize()
+        backoff = v.dot(n)
+        if backoff < 0.0:
+            backoff *= overbounce
+        else:
+            backoff /= overbounce
+        v -= n * backoff
+        # Avoid tiny oscillations.
+        if abs(v.x) < 1e-6:
+            v.x = 0.0
+        if abs(v.y) < 1e-6:
+            v.y = 0.0
+        if abs(v.z) < 1e-6:
+            v.z = 0.0
+        return v
+
+    def _bullet_sweep_closest(self, from_pos: LVector3f, to_pos: LVector3f):
+        assert self._bworld is not None
+        assert self._player_sweep_shape is not None
+        return self._bworld.sweepTestClosest(
+            self._player_sweep_shape,
+            TransformState.makePos(from_pos),
+            TransformState.makePos(to_pos),
+            BitMask32.allOn(),
+            0.0,
+        )
+
+    def _bullet_ground_trace(self) -> None:
+        walkable_z = self._walkable_threshold_z(self.tuning.max_ground_slope_deg)
+        down = LVector3f(0, 0, -max(0.06, float(self.tuning.ground_snap_dist)))
+        hit = self._bullet_sweep_closest(self.player_pos, self.player_pos + down)
+        if not hit.hasHit():
+            self._grounded = False
+            return
+
+        n = LVector3f(hit.getHitNormal())
+        if n.lengthSquared() > 1e-12:
+            n.normalize()
+        self._ground_normal = n
+        self._grounded = n.z > walkable_z
+
+    def _bullet_slide_move(self, delta: LVector3f) -> None:
+        # Iterative slide move (Quake-style): sweep -> move -> clip velocity -> repeat.
+        if delta.lengthSquared() <= 1e-12:
+            return
+
+        pos = LVector3f(self.player_pos)
+        remaining = LVector3f(delta)
+        planes: list[LVector3f] = []
+
+        self._wall_normal = LVector3f(0, 0, 0)
+        self._wall_contact_timer = 999.0
+
+        walkable_z = self._walkable_threshold_z(self.tuning.max_ground_slope_deg)
+        skin = 0.006
+
+        for _ in range(4):
+            if remaining.lengthSquared() <= 1e-10:
+                break
+
+            move = LVector3f(remaining)
+            target = pos + move
+            hit = self._bullet_sweep_closest(pos, target)
+            if not hit.hasHit():
+                pos = target
+                break
+
+            hit_frac = max(0.0, min(1.0, float(hit.getHitFraction())))
+            # Move to contact (slightly before), then push out along normal (skin).
+            pos = pos + move * max(0.0, hit_frac - 1e-4)
+
+            n = LVector3f(hit.getHitNormal())
+            if n.lengthSquared() > 1e-12:
+                n.normalize()
+            planes.append(n)
+            pos = pos + n * skin
+
+            # Contact classification.
+            if n.z > walkable_z:
+                self._grounded = True
+                self._ground_normal = LVector3f(n)
+                if self.velocity.z < 0.0:
+                    self.velocity.z = 0.0
+            elif abs(n.z) < 0.65:
+                self._wall_normal = LVector3f(n.x, n.y, 0)
+                if self._wall_normal.lengthSquared() > 1e-12:
+                    self._wall_normal.normalize()
+                self._wall_contact_timer = 0.0
+            elif n.z < -0.65 and self.velocity.z > 0.0:
+                # Ceiling.
+                self.velocity.z = 0.0
+
+            self.velocity = self._clip_velocity(self.velocity, n)
+            time_left = 1.0 - hit_frac
+            remaining = move * time_left
+            remaining = self._clip_velocity(remaining, n, overbounce=1.0)
+
+            # Multi-plane clip: if we're still going into any previous plane, clip again.
+            for p in planes[:-1]:
+                if remaining.dot(p) < 0.0:
+                    remaining = self._clip_velocity(remaining, p, overbounce=1.0)
+                if self.velocity.dot(p) < 0.0:
+                    self.velocity = self._clip_velocity(self.velocity, p)
+
+        self.player_pos = pos
+
+    def _bullet_step_slide_move(self, delta: LVector3f) -> None:
+        # StepSlideMove: try regular slide; then try stepping up and sliding; choose the best.
+        if delta.lengthSquared() <= 1e-12:
+            return
+
+        start_pos = LVector3f(self.player_pos)
+        start_vel = LVector3f(self.velocity)
+
+        # First attempt: plain slide.
+        self._bullet_slide_move(delta)
+        pos1 = LVector3f(self.player_pos)
+        vel1 = LVector3f(self.velocity)
+
+        # Second attempt: step up, move horizontally, then step down.
+        self.player_pos = LVector3f(start_pos)
+        self.velocity = LVector3f(start_vel)
+
+        step_up = LVector3f(0, 0, float(self.tuning.step_height))
+        hit_up = self._bullet_sweep_closest(self.player_pos, self.player_pos + step_up)
+        if not hit_up.hasHit():
+            self.player_pos += step_up
+            horiz = LVector3f(float(delta.x), float(delta.y), 0.0)
+            self._bullet_slide_move(horiz)
+
+            step_down = LVector3f(0, 0, -float(self.tuning.step_height) - 0.01)
+            hit_down = self._bullet_sweep_closest(self.player_pos, self.player_pos + step_down)
+            if hit_down.hasHit():
+                frac = max(0.0, float(hit_down.getHitFraction()) - 1e-4)
+                self.player_pos = self.player_pos + step_down * frac
+
+        pos2 = LVector3f(self.player_pos)
+        vel2 = LVector3f(self.velocity)
+
+        d1 = (pos1 - start_pos)
+        d2 = (pos2 - start_pos)
+        dist1 = d1.x * d1.x + d1.y * d1.y
+        dist2 = d2.x * d2.x + d2.y * d2.y
+
+        if dist1 >= dist2:
+            self.player_pos = pos1
+            self.velocity = vel1
+        else:
+            self.player_pos = pos2
+            self.velocity = vel2
+
+    def _bullet_ground_snap(self) -> None:
+        # Keep the player glued to ground on small descents (Quake-style ground snap).
+        if self.velocity.z > 0.0:
+            return
+
+        walkable_z = self._walkable_threshold_z(self.tuning.max_ground_slope_deg)
+        down = LVector3f(0, 0, -float(self.tuning.ground_snap_dist))
+        hit = self._bullet_sweep_closest(self.player_pos, self.player_pos + down)
+        if not hit.hasHit():
+            return
+        n = LVector3f(hit.getHitNormal())
+        if n.lengthSquared() > 1e-12:
+            n.normalize()
+        if n.z <= walkable_z:
+            return
+
+        frac = max(0.0, float(hit.getHitFraction()) - 1e-4)
+        self.player_pos = self.player_pos + down * frac
+        self._grounded = True
+        self._ground_normal = LVector3f(n)
+        if self.velocity.z < 0.0:
+            self.velocity.z = 0.0
+
     def _move_and_collide(self, delta: LVector3f) -> None:
         self._grounded = False
         max_component = max(abs(delta.x), abs(delta.y), abs(delta.z))
@@ -721,6 +927,8 @@ class RunnerDemo(ShowBase):
         self.player_node.setPos(self.player_pos)
 
     def _is_sprinting(self) -> bool:
+        if self.mouseWatcherNode is None:
+            return False
         return (
             self.mouseWatcherNode.isButtonDown(KeyboardButton.shift())
             or self.mouseWatcherNode.isButtonDown(KeyboardButton.lshift())
@@ -734,6 +942,11 @@ class RunnerDemo(ShowBase):
         self._wall_contact_timer += dt
 
         self._jump_buffer_timer = max(0.0, self._jump_buffer_timer - dt)
+
+        # Determine grounded state before applying friction/accel (otherwise friction appears to "break"
+        # whenever you don't happen to collide with the floor during this frame).
+        if self._bworld is not None:
+            self._bullet_ground_trace()
 
         wish = self._wish_direction()
         sprint_multiplier = self.tuning.sprint_multiplier if self._is_sprinting() else 1.0
@@ -759,8 +972,12 @@ class RunnerDemo(ShowBase):
             if self._consume_jump_request() and self.tuning.walljump_enabled and self._has_wall_for_jump():
                 self._apply_wall_jump()
 
-        if self._triangle_collision_mode:
-            self._move_with_triangle_collisions(self.velocity * dt)
+        # Movement + collision resolution.
+        if self._bworld is not None:
+            self._bullet_step_slide_move(self.velocity * dt)
+            self._bullet_ground_snap()
+            # Update grounded state after movement (e.g. walking off a ledge).
+            self._bullet_ground_trace()
         else:
             self._move_and_collide(self.velocity * dt)
 
@@ -772,6 +989,7 @@ class RunnerDemo(ShowBase):
         if self.player_pos.z < -18:
             self._respawn()
 
+        self.player_node.setPos(self.player_pos)
         self.camera.setPos(self.player_pos.x, self.player_pos.y, self.player_pos.z + 0.65)
         self.camera.setHpr(self._yaw, self._pitch, 0)
 
