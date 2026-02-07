@@ -299,7 +299,8 @@ class RunnerDemo(ShowBase):
         self._last_mouse = (mx, my)
 
         dx_norm = mx - lmx
-        dy_norm = my - lmy
+        # Keep non-inverted vertical look (mouse up -> look up).
+        dy_norm = lmy - my
         dx = dx_norm * (self.win.getXSize() * 0.5)
         dy = dy_norm * (self.win.getYSize() * 0.5)
 
