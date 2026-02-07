@@ -53,22 +53,35 @@ python -m ivan --smoke
 ## HUD
 - A top-center speed readout is always visible (`Speed: <int> u/s`).
 - The value is horizontal speed, rounded down to an integer.
+- Detailed movement status (`speed/z-vel/grounded/wall`) is shown in the bottom-left corner during gameplay and hidden while the debug/admin panel is open.
 
 ## Debug/Admin Menu
-Panel includes sliders + numeric entry fields for precise tuning:
+Panel layout:
+- The setting list is rendered in dynamic columns.
+- Total panel height is capped at two-thirds of the game window height.
+- As settings grow, new columns are added so the list does not run to the bottom.
+- Hovering a setting name/control shows a tooltip with a short explanation.
+
+Numeric settings include sliders + entry fields for precise tuning:
 - Gravity, jump speed, ground/air speed caps
-- Ground/air acceleration, friction, air control
+- Ground acceleration, bunnyhop acceleration, friction, air control
 - Air counter-strafe brake strength
 - Sprint multiplier, mouse sensitivity
 - Wall jump boost, coyote time, jump buffer time
 
-Toggles:
+Boolean toggles are shown inline as labeled rows with `ON/OFF` buttons:
 - Coyote time
 - Jump buffer
 - Wall jump
 - Wallrun (toggle only, prototype hook)
 - Vault (toggle only)
 - Grapple (toggle + mock impulse)
+
+Movement notes:
+- Counter-strafe braking in air aggressively decelerates horizontal speed and does not accelerate in reverse while opposite input is held.
+- Default `air_counter_strafe_brake` is set to `5.0`.
+- Repeated wall-jumps from the same wall face are temporarily blocked.
+- Wallrun is lateral; vertical climb gain is capped.
 
 ## Level Layout
 The map is generated in code and includes:
