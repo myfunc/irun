@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import math
+import subprocess
+import sys
+import threading
+from pathlib import Path
 
 from direct.showbase.ShowBase import ShowBase
 from direct.task import Task
@@ -17,6 +21,7 @@ from ivan.physics.collision_world import CollisionWorld
 from ivan.physics.player_controller import PlayerController
 from ivan.physics.tuning import PhysicsTuning
 from ivan.ui.debug_ui import DebugUI
+from ivan.ui.map_select_ui import MapEntry, MapSelectUI
 from ivan.world.scene import WorldScene
 
 
@@ -35,34 +40,29 @@ class RunnerDemo(ShowBase):
         self._yaw = 0.0
         self._pitch = 0.0
         self._pointer_locked = True
+        self._mode: str = "boot"  # boot | menu | game
 
-        self.scene = WorldScene()
-        self.scene.build(loader=self.loader, render=self.render, camera=self.camera)
-        self._yaw = float(self.scene.spawn_yaw)
-
+        self.scene: WorldScene | None = None
+        self.collision: CollisionWorld | None = None
+        self.player: PlayerController | None = None
         self.player_node = self.render.attachNewNode("player-node")
+        self.world_root = self.render.attachNewNode("world-root")
 
-        self.collision = CollisionWorld(
-            aabbs=self.scene.aabbs,
-            triangles=self.scene.triangles,
-            triangle_collision_mode=self.scene.triangle_collision_mode,
-            player_radius=float(self.tuning.player_radius),
-            player_half_height=float(self.tuning.player_half_height),
-            render=self.render,
-        )
-
-        self.player = PlayerController(
-            tuning=self.tuning,
-            spawn_point=self.scene.spawn_point,
-            aabbs=self.scene.aabbs,
-            collision=self.collision,
-        )
-
-        self.player_node.setPos(self.player.pos)
+        self._map_menu: MapSelectUI | None = None
+        self._import_thread: threading.Thread | None = None
+        self._importing: bool = False
+        self._import_error: str | None = None
+        self._pending_map_json: str | None = None
 
         self._setup_window()
         self._setup_input()
+
         self.ui = DebugUI(aspect2d=self.aspect2d, tuning=self.tuning, on_tuning_change=self._on_tuning_change)
+
+        if self.cfg.hl_root and not self.cfg.map_json and not self.cfg.smoke:
+            self._enter_map_picker()
+        else:
+            self._start_game(map_json=self.cfg.map_json)
 
         self.taskMgr.add(self._update, "runner-update")
 
@@ -74,36 +74,190 @@ class RunnerDemo(ShowBase):
         if self.cfg.smoke:
             return
         props = WindowProperties()
-        props.setCursorHidden(True)
+        props.setCursorHidden(self._pointer_locked)
         props.setTitle("IRUN IVAN Demo")
         props.setSize(self.pipe.getDisplayWidth(), self.pipe.getDisplayHeight())
         self.win.requestProperties(props)
         self.camLens.setFov(96)
         # Reduce near-plane clipping when hugging walls in first-person.
         self.camLens.setNearFar(0.03, 5000.0)
-        self._center_mouse()
+        if self._pointer_locked:
+            self._center_mouse()
 
     def _setup_input(self) -> None:
-        self.accept("escape", self._toggle_pointer_lock)
+        self.accept("escape", self._on_escape)
         self.accept("r", self._respawn)
         self.accept("space", self._queue_jump)
         self.accept("mouse1", self._grapple_mock)
+        self.accept("arrow_up", self._menu_up)
+        self.accept("arrow_down", self._menu_down)
+        self.accept("enter", self._menu_select)
+        self.accept("w", self._menu_up)
+        self.accept("s", self._menu_down)
 
     def _on_tuning_change(self, field: str) -> None:
         if field in ("player_radius", "player_half_height", "crouch_half_height"):
-            self.player.apply_hull_settings()
+            if self.player is not None:
+                self.player.apply_hull_settings()
 
     def _toggle_pointer_lock(self) -> None:
         self._pointer_locked = not self._pointer_locked
         props = WindowProperties()
         props.setCursorHidden(self._pointer_locked)
         self.win.requestProperties(props)
-        if self._pointer_locked:
-            self.ui.hide()
-        else:
-            self.ui.show()
+        if self._mode == "game":
+            if self._pointer_locked:
+                self.ui.hide()
+            else:
+                self.ui.show()
         if self._pointer_locked:
             self._center_mouse()
+
+    def _on_escape(self) -> None:
+        if self._mode == "menu":
+            self.userExit()
+            return
+        self._toggle_pointer_lock()
+
+    def _enter_map_picker(self) -> None:
+        self._mode = "menu"
+        self._pointer_locked = False
+        props = WindowProperties()
+        props.setCursorHidden(False)
+        self.win.requestProperties(props)
+
+        # Hide in-game HUD while picking.
+        self.ui.speed_hud_label.hide()
+        self.ui.hide()
+
+        entries = self._list_hl_maps()
+        title = f"Select map to import/run ({self.cfg.hl_mod})"
+        self._map_menu = MapSelectUI(aspect2d=self.aspect2d, title=title)
+        self._map_menu.set_entries(entries)
+
+        if not entries:
+            self._map_menu.set_status("No .bsp maps found.")
+            return
+
+        # Make Crossfire easy to find.
+        for i, e in enumerate(entries):
+            if e.label.lower() == "crossfire":
+                self._map_menu.move(i)
+                break
+
+    def _list_hl_maps(self) -> list[MapEntry]:
+        if not self.cfg.hl_root:
+            return []
+        maps_dir = Path(self.cfg.hl_root) / self.cfg.hl_mod / "maps"
+        if not maps_dir.exists():
+            return []
+        out: list[MapEntry] = []
+        for p in sorted(maps_dir.glob("*.bsp")):
+            out.append(MapEntry(label=p.stem, bsp_path=str(p)))
+        return out
+
+    def _menu_up(self) -> None:
+        if self._mode == "menu" and self._map_menu is not None and not self._importing:
+            self._map_menu.move(-1)
+
+    def _menu_down(self) -> None:
+        if self._mode == "menu" and self._map_menu is not None and not self._importing:
+            self._map_menu.move(1)
+
+    def _menu_select(self) -> None:
+        if self._mode != "menu" or self._map_menu is None or self._importing:
+            return
+        entry = self._map_menu.selected()
+        if entry is None:
+            return
+        self._start_import_goldsrc_map(entry)
+
+    def _start_import_goldsrc_map(self, entry: MapEntry) -> None:
+        assert self.cfg.hl_root is not None
+        app_root = Path(__file__).resolve().parents[3]
+        out_dir = app_root / "assets" / "imported" / "halflife" / self.cfg.hl_mod / entry.label
+        game_root = Path(self.cfg.hl_root) / self.cfg.hl_mod
+
+        script = app_root / "tools" / "importers" / "goldsrc" / "import_goldsrc_bsp.py"
+        cmd = [
+            sys.executable,
+            str(script),
+            "--bsp",
+            entry.bsp_path,
+            "--game-root",
+            str(game_root),
+            "--out",
+            str(out_dir),
+            "--map-id",
+            entry.label,
+            "--scale",
+            "0.03",
+        ]
+
+        self._importing = True
+        self._import_error = None
+        self._pending_map_json = None
+        self._map_menu.set_status(f"Importing {entry.label} ...")
+
+        def worker() -> None:
+            try:
+                out_dir.mkdir(parents=True, exist_ok=True)
+                proc = subprocess.run(cmd, capture_output=True, text=True)
+                if proc.returncode != 0:
+                    err = (proc.stderr or proc.stdout or "").strip()
+                    self._import_error = err[-600:] if err else f"Importer failed with code {proc.returncode}"
+                    return
+                self._pending_map_json = str(out_dir / "map.json")
+            except Exception as e:
+                self._import_error = str(e)
+            finally:
+                self._importing = False
+
+        self._import_thread = threading.Thread(target=worker, daemon=True)
+        self._import_thread.start()
+
+    def _start_game(self, map_json: str | None) -> None:
+        # Tear down menu.
+        if self._map_menu is not None:
+            self._map_menu.destroy()
+            self._map_menu = None
+
+        self._mode = "game"
+        self._pointer_locked = True
+        if not self.cfg.smoke:
+            props = WindowProperties()
+            props.setCursorHidden(True)
+            self.win.requestProperties(props)
+        self.ui.speed_hud_label.show()
+        self.ui.hide()
+        if not self.cfg.smoke:
+            self._center_mouse()
+
+        # Reset world root to allow reloading.
+        self.world_root.removeNode()
+        self.world_root = self.render.attachNewNode("world-root")
+
+        cfg = RunConfig(smoke=self.cfg.smoke, map_json=map_json, hl_root=self.cfg.hl_root, hl_mod=self.cfg.hl_mod)
+        self.scene = WorldScene()
+        self.scene.build(cfg=cfg, loader=self.loader, render=self.world_root, camera=self.camera)
+        self._yaw = float(self.scene.spawn_yaw)
+
+        self.collision = CollisionWorld(
+            aabbs=self.scene.aabbs,
+            triangles=self.scene.triangles,
+            triangle_collision_mode=self.scene.triangle_collision_mode,
+            player_radius=float(self.tuning.player_radius),
+            player_half_height=float(self.tuning.player_half_height),
+            render=self.world_root,
+        )
+
+        self.player = PlayerController(
+            tuning=self.tuning,
+            spawn_point=self.scene.spawn_point,
+            aabbs=self.scene.aabbs,
+            collision=self.collision,
+        )
+        self.player_node.setPos(self.player.pos)
 
     def _center_mouse(self) -> None:
         if self.cfg.smoke:
@@ -160,18 +314,33 @@ class RunnerDemo(ShowBase):
         return move
 
     def _queue_jump(self) -> None:
-        self.player.queue_jump()
+        if self.player is not None:
+            self.player.queue_jump()
 
     def _grapple_mock(self) -> None:
-        self.player.apply_grapple_impulse(yaw_deg=self._yaw)
+        if self.player is not None:
+            self.player.apply_grapple_impulse(yaw_deg=self._yaw)
 
     def _respawn(self) -> None:
+        if self.player is None or self.scene is None:
+            return
         self.player.respawn()
         self._yaw = 0.0
         self._pitch = 0.0
         self.player_node.setPos(self.player.pos)
 
     def _update(self, task: Task) -> int:
+        if self._mode == "menu":
+            if self._import_error and self._map_menu is not None:
+                self._map_menu.set_status(f"Import failed: {self._import_error}")
+                self._import_error = None
+            if self._pending_map_json:
+                self._start_game(map_json=self._pending_map_json)
+                self._pending_map_json = None
+            return Task.cont
+        if self._mode != "game" or self.player is None:
+            return Task.cont
+
         dt = min(globalClock.getDt(), 1.0 / 30.0)
 
         self._update_look()
@@ -215,6 +384,6 @@ class RunnerDemo(ShowBase):
         return Task.cont
 
 
-def run(*, smoke: bool = False) -> None:
-    app = RunnerDemo(RunConfig(smoke=smoke))
+def run(*, smoke: bool = False, map_json: str | None = None, hl_root: str | None = None, hl_mod: str = "valve") -> None:
+    app = RunnerDemo(RunConfig(smoke=smoke, map_json=map_json, hl_root=hl_root, hl_mod=hl_mod))
     app.run()

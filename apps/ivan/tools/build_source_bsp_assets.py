@@ -83,23 +83,16 @@ def convert_material_textures(*, materials_root: Path, out_root: Path) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build Dust2 Largo generated map asset from BSP.")
-    parser.add_argument(
-        "--input",
-        default="assets/maps/de_dust2_largo/csgo/maps/de_dust2_largo.bsp",
-        help="Path to Source BSP file (default: repo copy).",
-    )
-    parser.add_argument("--output", required=True, help="Output JSON path.")
+    parser = argparse.ArgumentParser(description="Convert a Source BSP into IVAN runtime assets (triangles + textures).")
+    parser.add_argument("--input", required=True, help="Path to a Source BSP file.")
+    parser.add_argument("--output", required=True, help="Output JSON path (map bundle).")
+    parser.add_argument("--map-id", default=None, help="Optional map id for debugging/node naming.")
     parser.add_argument("--scale", type=float, default=0.03, help="Source-to-game unit scale.")
-    parser.add_argument(
-        "--materials-root",
-        default="assets/maps/de_dust2_largo/csgo/materials",
-        help="Folder containing Source materials (VTF/VMT).",
-    )
+    parser.add_argument("--materials-root", required=True, help="Folder containing Source materials (VTF/VMT).")
     parser.add_argument(
         "--materials-out",
-        default="assets/generated/materials",
-        help="Output folder for converted textures (PNG).",
+        required=True,
+        help="Output folder for converted textures (PNG). Recommended: <map-bundle-dir>/materials",
     )
     args = parser.parse_args()
 
@@ -109,7 +102,7 @@ def main() -> None:
 
     bsp = bsp_tool.load_bsp(str(bsp_path))
 
-    # Format v2: triangles include material + UV + vertex color for baked lighting.
+    # Triangles include material + UV + vertex color for baked lighting.
     triangles: list[dict] = []
     min_v = [float("inf"), float("inf"), float("inf")]
     max_v = [float("-inf"), float("-inf"), float("-inf")]
@@ -174,20 +167,30 @@ def main() -> None:
     spawn_pos, spawn_yaw = pick_spawn(bsp.ENTITIES, args.scale)
     skyname = skyname_from_entities(bsp.ENTITIES)
 
-    # Convert all shipped VTF files into PNG so Panda3D can load them at runtime.
     materials_root = Path(args.materials_root)
     materials_out = Path(args.materials_out)
     converted = convert_material_textures(materials_root=materials_root, out_root=materials_out)
 
+    # Prefer a materials path relative to the map bundle for portability.
+    try:
+        materials_out_rel = str(materials_out.resolve().relative_to(out_path.parent.resolve()))
+    except Exception:
+        materials_out_rel = str(materials_out)
+
     payload = {
         "format_version": 2,
+        "map_id": args.map_id or out_path.stem,
         "source_bsp": str(bsp_path),
         "scale": args.scale,
         "triangle_count": len(triangles),
         "bounds": {"min": min_v, "max": max_v},
         "spawn": {"position": spawn_pos, "yaw": spawn_yaw},
         "skyname": skyname,
-        "materials": {"root": str(materials_root), "converted_root": str(materials_out), "converted": converted},
+        "materials": {
+            "root": str(materials_root),
+            "converted_root": materials_out_rel,
+            "converted": converted,
+        },
         "triangles": triangles,
     }
 
@@ -197,3 +200,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
