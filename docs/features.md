@@ -1,8 +1,7 @@
 # Features
 
 ## Implemented (Prototype)
-- UP: boot to a simple 3D scene
-- UP: basic player movement placeholder
+- MVP: boot to a simple 3D scene
 
 ## Planned (High-Level)
 - Movement: walk/run, jump, coyote time, jump buffer, air control

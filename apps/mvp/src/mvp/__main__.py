@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import argparse
 
-from up.game import run
+from mvp.game import run
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="up", description="UP app runner (IRUN monorepo)")
+    parser = argparse.ArgumentParser(prog="mvp", description="MVP app runner (IRUN monorepo)")
     parser.add_argument(
         "--smoke",
         action="store_true",

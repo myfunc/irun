@@ -3,16 +3,15 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "irun-up"
+name = "irun-mvp"
 version = "0.1.0"
-description = "UP: the 3D platformer app (IRUN monorepo) in Python."
+description = "MVP: the 3D platformer app (IRUN monorepo) in Python."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "Proprietary" }
 authors = [{ name = "IRUN Contributors" }]
 dependencies = [
-  "ursina>=5.0.0",
-  "screeninfo>=0.8.1",
+  "panda3d>=1.10.16",
 ]
 
 [project.optional-dependencies]
@@ -22,7 +21,7 @@ dev = [
 ]
 
 [project.scripts]
-up = "up.__main__:main"
+mvp = "mvp.__main__:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
