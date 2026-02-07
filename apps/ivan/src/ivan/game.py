@@ -42,6 +42,7 @@ class RunnerDemo(ShowBase):
         self._pitch = 0.0
         self._pointer_locked = True
         self._mode: str = "boot"  # boot | menu | game
+        self._last_mouse: tuple[float, float] | None = None
 
         self.scene: WorldScene | None = None
         self.collision: CollisionWorld | None = None
@@ -76,6 +77,7 @@ class RunnerDemo(ShowBase):
             return
         props = WindowProperties()
         props.setCursorHidden(self._pointer_locked)
+        props.setMouseMode(WindowProperties.M_relative if self._pointer_locked else WindowProperties.M_absolute)
         props.setTitle("IRUN IVAN Demo")
         props.setSize(self.pipe.getDisplayWidth(), self.pipe.getDisplayHeight())
         self.win.requestProperties(props)
@@ -103,8 +105,10 @@ class RunnerDemo(ShowBase):
 
     def _toggle_pointer_lock(self) -> None:
         self._pointer_locked = not self._pointer_locked
+        self._last_mouse = None
         props = WindowProperties()
         props.setCursorHidden(self._pointer_locked)
+        props.setMouseMode(WindowProperties.M_relative if self._pointer_locked else WindowProperties.M_absolute)
         self.win.requestProperties(props)
         if self._mode == "game":
             if self._pointer_locked:
@@ -123,8 +127,10 @@ class RunnerDemo(ShowBase):
     def _enter_map_picker(self) -> None:
         self._mode = "menu"
         self._pointer_locked = False
+        self._last_mouse = None
         props = WindowProperties()
         props.setCursorHidden(False)
+        props.setMouseMode(WindowProperties.M_absolute)
         self.win.requestProperties(props)
 
         # Hide in-game HUD while picking.
@@ -233,9 +239,11 @@ class RunnerDemo(ShowBase):
 
         self._mode = "game"
         self._pointer_locked = True
+        self._last_mouse = None
         if not self.cfg.smoke:
             props = WindowProperties()
             props.setCursorHidden(True)
+            props.setMouseMode(WindowProperties.M_relative)
             self.win.requestProperties(props)
         self.ui.speed_hud_label.show()
         self.ui.hide()
@@ -278,15 +286,25 @@ class RunnerDemo(ShowBase):
     def _update_look(self) -> None:
         if self.cfg.smoke or not self._pointer_locked:
             return
-        cx = self.win.getXSize() // 2
-        cy = self.win.getYSize() // 2
-        pointer = self.win.getPointer(0)
-        dx = pointer.getX() - cx
-        dy = pointer.getY() - cy
+        if self.mouseWatcherNode is None or not self.mouseWatcherNode.hasMouse():
+            return
+
+        # Use normalized mouse coords so look works with relative mouse mode.
+        mx = float(self.mouseWatcherNode.getMouseX())
+        my = float(self.mouseWatcherNode.getMouseY())
+        if self._last_mouse is None:
+            self._last_mouse = (mx, my)
+            return
+        lmx, lmy = self._last_mouse
+        self._last_mouse = (mx, my)
+
+        dx_norm = mx - lmx
+        dy_norm = my - lmy
+        dx = dx_norm * (self.win.getXSize() * 0.5)
+        dy = dy_norm * (self.win.getYSize() * 0.5)
 
         self._yaw -= dx * float(self.tuning.mouse_sensitivity)
         self._pitch = max(-88.0, min(88.0, self._pitch - dy * float(self.tuning.mouse_sensitivity)))
-        self._center_mouse()
 
     def _wish_direction(self) -> LVector3f:
         if self.mouseWatcherNode is None:
@@ -294,11 +312,15 @@ class RunnerDemo(ShowBase):
 
         def down(*names: str) -> bool:
             for name in names:
-                if len(name) == 1 and ord(name) < 128:
-                    handle = KeyboardButton.ascii_key(name)
-                else:
-                    handle = ButtonHandle(name)
-                if self.mouseWatcherNode.isButtonDown(handle):
+                n = name.lower()
+                if len(n) == 1 and ord(n) < 128:
+                    # ASCII key (layout-dependent) + raw key (layout-independent).
+                    if self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key(n)):
+                        return True
+                    if self.mouseWatcherNode.isButtonDown(ButtonHandle(f"raw-{n}")):
+                        return True
+                    continue
+                if self.mouseWatcherNode.isButtonDown(ButtonHandle(n)):
                     return True
             return False
 
