@@ -110,10 +110,8 @@ class WorldScene:
         self.aabbs.append(AABB(minimum=p - h, maximum=p + h))
 
     def _try_load_external_map(self, *, map_json: Path, loader, render, camera) -> bool:
-        # Resolve relative paths from current working directory (CLI usage).
-        if not map_json.is_absolute():
-            map_json = (Path.cwd() / map_json).resolve()
-        if not map_json.exists():
+        map_json = self._resolve_map_bundle_path(map_json)
+        if not map_json:
             return False
 
         try:
@@ -185,6 +183,39 @@ class WorldScene:
 
         self.triangle_collision_mode = True
         return True
+
+    @staticmethod
+    def _resolve_map_bundle_path(map_json: Path) -> Path | None:
+        """
+        Resolve a map bundle path.
+
+        Supported inputs:
+        - absolute path to map.json
+        - relative path to map.json (resolved from cwd, then from apps/ivan/assets/)
+        - alias directory under apps/ivan/assets/, e.g. imported/halflife/valve/bounce (implies <alias>/map.json)
+        """
+
+        candidates: list[Path] = []
+        if map_json.is_absolute():
+            candidates.append(map_json)
+        else:
+            # 1) cwd-relative (CLI usage)
+            candidates.append((Path.cwd() / map_json).resolve())
+            # 2) assets-relative alias/path
+            assets_root = ivan_app_root() / "assets"
+            candidates.append((assets_root / map_json).resolve())
+
+        expanded: list[Path] = []
+        for c in candidates:
+            expanded.append(c)
+            # Allow passing a directory alias.
+            if c.suffix.lower() != ".json":
+                expanded.append(c / "map.json")
+
+        for c in expanded:
+            if c.exists() and c.is_file():
+                return c
+        return None
 
     def _attach_triangle_map_geometry(self, *, render, triangles: list[list[float]]) -> None:
         # Generated Dust2 asset currently includes positions only (no UV/material data).

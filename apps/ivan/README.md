@@ -30,6 +30,10 @@ python -m pip install -e ".[dev]"
 python -m ivan
 ```
 
+Default map:
+- If `assets/imported/halflife/valve/bounce/map.json` exists, `python -m ivan` loads Bounce by default.
+- Override with `--map` or use the HL map picker with `--hl-root`.
+
 Smoke run:
 ```bash
 python -m ivan --smoke
@@ -102,6 +106,11 @@ The map is generated in code and includes:
 
 ## External Map Assets
 IVAN can load an external map bundle via `--map <path-to-map.json>`.
+
+You can also use a short alias under `apps/ivan/assets/`, for example:
+```bash
+python -m ivan --map imported/halflife/valve/bounce
+```
 
 ### Source BSP -> Bundle (VTF -> PNG)
 ```bash
