@@ -24,6 +24,3 @@ coverage.xml
 .DS_Store
 .idea/
 .vscode/
-
-# Imported runtime assets (local machine specific, often large binaries).
-apps/ivan/assets/imported/
