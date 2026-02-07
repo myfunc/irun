@@ -59,10 +59,9 @@ class RunnerDemo(ShowBase):
         self._pending_map_json: str | None = None
 
         self._setup_window()
-        self._setup_input()
-
         self.ui = DebugUI(aspect2d=self.aspect2d, tuning=self.tuning, on_tuning_change=self._on_tuning_change)
         self.input_debug = InputDebugUI(aspect2d=self.aspect2d)
+        self._setup_input()
 
         if self.cfg.hl_root and not self.cfg.map_json and not self.cfg.smoke:
             self._enter_map_picker()
