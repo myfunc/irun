@@ -35,6 +35,10 @@ Naming convention:
 ## Collaboration (Two Engineers)
 - Prefer small, reviewable changesets.
 - Keep commits coherent; avoid mixing refactors with feature changes.
+- Avoid "god files": as features grow, split code into logically scoped modules/files so multiple people/agents can work in parallel with minimal merge conflicts.
+- Default pattern:
+  - One concern per module (scene loading, input, physics, UI, importers, etc).
+  - Keep public APIs small and explicit; prefer composition over giant classes.
 - When adding dependencies, update:
   - `pyproject.toml`
   - `docs/architecture.md`
