@@ -8,8 +8,11 @@
 - Player controller: ground/air, jump tuning, basic collision
 - Camera prototype
 - Minimal "graybox" test level
+- First-person bhop/strafe tuning lane with wall-jump experimentation
+- In-game admin panel for live physics iteration
 
 ## Milestone 2: Level Loop
 - Checkpoints + respawn
 - Hazards + collectibles
 - Simple UI (timer/collect count)
+- Handcrafted, player-generated map workflow and validation tools
