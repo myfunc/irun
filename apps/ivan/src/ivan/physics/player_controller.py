@@ -37,6 +37,7 @@ class PlayerController:
         self._wall_normal = LVector3f(0, 0, 0)
         self._last_wall_jump_normal = LVector3f(0, 0, 0)
         self._wall_jump_lock_timer = 999.0
+        self._vault_cooldown_timer = 999.0
         self._ground_normal = LVector3f(0, 0, 1)
         self._prev_wish_dir = LVector3f(0, 0, 0)
 
@@ -89,6 +90,7 @@ class PlayerController:
         dt = float(dt)
         self._wall_contact_timer += dt
         self._wall_jump_lock_timer += dt
+        self._vault_cooldown_timer += dt
         self._jump_buffer_timer = max(0.0, self._jump_buffer_timer - dt)
 
         # Determine grounded state before applying friction/accel (otherwise friction appears to "break"
@@ -122,8 +124,11 @@ class PlayerController:
 
             self.vel.z -= float(self.tuning.gravity) * gravity_scale * dt
 
-            if self._consume_jump_request() and self.tuning.walljump_enabled and self.has_wall_for_jump():
-                self._apply_wall_jump(yaw_deg=yaw_deg)
+            if self._consume_jump_request():
+                if self.tuning.vault_enabled and self._try_vault(yaw_deg=yaw_deg):
+                    pass
+                elif self.tuning.walljump_enabled and self.has_wall_for_jump():
+                    self._apply_wall_jump(yaw_deg=yaw_deg)
 
         # Movement + collision resolution.
         if self.collision is not None:
@@ -150,7 +155,7 @@ class PlayerController:
         return self._jump_buffer_timer > 0.0
 
     def _apply_jump(self) -> None:
-        self.vel.z = float(self.tuning.jump_speed)
+        self.vel.z = self._jump_up_speed()
         self._jump_buffer_timer = 0.0
         self.grounded = False
 
@@ -164,9 +169,97 @@ class PlayerController:
         boost = away * wjb + forward * (wjb * 0.45)
         self.vel.x = boost.x
         self.vel.y = boost.y
-        self.vel.z = float(self.tuning.jump_speed) * 0.95
+        self.vel.z = self._jump_up_speed() * 0.95
         self._last_wall_jump_normal = LVector3f(away)
         self._wall_jump_lock_timer = 0.0
+        self._wall_contact_timer = 999.0
+        self._wall_normal = LVector3f(0, 0, 0)
+        self._jump_buffer_timer = 0.0
+
+    def _jump_up_speed(self) -> float:
+        g = max(0.001, float(self.tuning.gravity))
+        h = float(getattr(self.tuning, "jump_height", 0.0))
+        if h > 0.0:
+            return math.sqrt(2.0 * g * h)
+        # Backward-compat fallback if jump_height is not configured.
+        return float(self.tuning.jump_speed)
+
+    def _try_vault(self, *, yaw_deg: float) -> bool:
+        if self.collision is None:
+            return False
+        if self._vault_cooldown_timer < float(self.tuning.vault_cooldown):
+            return False
+        if self._wall_contact_timer > 0.16 or self._wall_normal.lengthSquared() <= 0.01:
+            return False
+
+        edge_z = self._find_vault_edge_height()
+        if edge_z is None:
+            return False
+
+        feet_z = self.pos.z - self.player_half.z
+        ledge_delta = edge_z - feet_z
+        if ledge_delta < float(self.tuning.vault_min_ledge_height):
+            return False
+        if ledge_delta > float(self.tuning.vault_max_ledge_height):
+            return False
+        if feet_z >= edge_z - 0.02:
+            return False
+
+        self._apply_vault(yaw_deg=yaw_deg)
+        return True
+
+    def _find_vault_edge_height(self) -> float | None:
+        if self.collision is None:
+            return None
+        wall_n = LVector3f(self._wall_normal)
+        if wall_n.lengthSquared() <= 1e-12:
+            return None
+        wall_n.normalize()
+
+        feet_z = self.pos.z - self.player_half.z
+        probe_xy = self.pos - wall_n * (self.player_half.x + 0.18)
+        scan_top = feet_z + float(self.tuning.vault_max_ledge_height) + 0.35
+        scan_bottom = feet_z - 0.25
+        start = LVector3f(probe_xy.x, probe_xy.y, scan_top)
+        end = LVector3f(probe_xy.x, probe_xy.y, scan_bottom)
+        hit = self._bullet_sweep_closest(start, end)
+        if not hit.hasHit():
+            return None
+
+        n = LVector3f(hit.getHitNormal())
+        if n.lengthSquared() > 1e-12:
+            n.normalize()
+        walkable_z = self._walkable_threshold_z(float(self.tuning.max_ground_slope_deg))
+        if n.z <= walkable_z:
+            return None
+
+        return self._hit_z(hit=hit, start=start, end=end)
+
+    @staticmethod
+    def _hit_z(*, hit, start: LVector3f, end: LVector3f) -> float:
+        if hasattr(hit, "getHitPos"):
+            return float(LVector3f(hit.getHitPos()).z)
+        frac = max(0.0, min(1.0, float(hit.getHitFraction())))
+        return float((start + (end - start) * frac).z)
+
+    def _apply_vault(self, *, yaw_deg: float) -> None:
+        h_rad = math.radians(float(yaw_deg))
+        forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0)
+        if forward.lengthSquared() > 1e-12:
+            forward.normalize()
+
+        self.vel.z = max(self.vel.z, self._jump_up_speed() * float(self.tuning.vault_jump_multiplier))
+        self.vel.x += forward.x * float(self.tuning.vault_forward_boost)
+        self.vel.y += forward.y * float(self.tuning.vault_forward_boost)
+
+        max_vault_hspeed = float(self.tuning.max_air_speed) * 1.6
+        hspeed = math.sqrt(self.vel.x * self.vel.x + self.vel.y * self.vel.y)
+        if hspeed > max_vault_hspeed and hspeed > 1e-9:
+            s = max_vault_hspeed / hspeed
+            self.vel.x *= s
+            self.vel.y *= s
+
+        self._vault_cooldown_timer = 0.0
         self._wall_contact_timer = 999.0
         self._wall_normal = LVector3f(0, 0, 0)
         self._jump_buffer_timer = 0.0
