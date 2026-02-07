@@ -20,6 +20,7 @@ from panda3d.core import (
 )
 
 from ivan.common.aabb import AABB
+from ivan.paths import app_root as ivan_app_root
 
 
 class WorldScene:
@@ -379,7 +380,7 @@ class WorldScene:
             if cand.exists():
                 return cand
         # Back-compat: older bundles store app-root relative paths.
-        app_root = Path(__file__).resolve().parents[3]
+        app_root = ivan_app_root()
         cand = (app_root / raw).resolve()
         if cand.exists():
             return cand
