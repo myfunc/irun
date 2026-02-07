@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -191,6 +192,53 @@ def _model_index_from_entity(ent: dict) -> int | None:
         return None
 
 
+def _decode_miptex_name(name) -> str:
+    # bsp_tool uses bytes for miptex names in GoldSrc lumps.
+    if isinstance(name, bytes):
+        if b"\x00" in name:
+            name = name.split(b"\x00", 1)[0]
+        try:
+            return name.decode("ascii", errors="ignore").strip()
+        except Exception:
+            return ""
+    if isinstance(name, str):
+        return name.strip()
+    return ""
+
+
+def _collect_used_texture_names(bsp) -> set[str]:
+    used: set[str] = set()
+    mip = getattr(bsp, "MIP_TEXTURES", None)
+    if mip is None:
+        return used
+    for entry in mip:
+        # GoldSrc: each element looks like (MipTexture(...), [mip0..mip3 bytes]).
+        if isinstance(entry, tuple) and entry:
+            mt = entry[0]
+        else:
+            mt = entry
+        name = _decode_miptex_name(getattr(mt, "name", mt))
+        if not name:
+            continue
+        used.add(name)
+    return used
+
+
+def _expand_animated_textures(names: set[str]) -> set[str]:
+    # GoldSrc animated textures are commonly +0foo .. +9foo (and sometimes -0foo .. -9foo).
+    out = set(names)
+    pat = re.compile(r"^([+-])([0-9])(.*)$")
+    for n in names:
+        m = pat.match(n)
+        if not m:
+            continue
+        sign = m.group(1)
+        rest = m.group(3)
+        for i in range(10):
+            out.add(f"{sign}{i}{rest}")
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Import a GoldSrc/Xash3D BSP into an IVAN map bundle (geometry + extracted textures + resource copy)."
@@ -211,7 +259,12 @@ def main() -> None:
     parser.add_argument(
         "--extract-all-wad-textures",
         action="store_true",
-        help="Extract all textures from referenced WADs (default extracts all because used-texture scanning is unreliable).",
+        help="Extract all textures from referenced WADs (default extracts only the textures referenced by the BSP).",
+    )
+    parser.add_argument(
+        "--copy-resources",
+        action="store_true",
+        help="Copy non-texture resources listed in .res / entity scan into the bundle (sound/models/sprites/etc). Off by default.",
     )
     args = parser.parse_args()
 
@@ -385,28 +438,31 @@ def main() -> None:
     # Copy resources into bundle under resources/<path>.
     copied: list[str] = []
     missing: list[str] = []
-    for rel in sorted(resources):
-        # Normalize common roots; allow both "sound/..." etc and bare wad names.
-        src = find_case_insensitive(game_root, rel)
-        if src is None:
-            # If this is a bare WAD name, try common subdirs.
-            if rel.lower().endswith(".wad"):
-                for sub in ("", "maps", "wads", "WAD", "gfx", "cstrike", "valve"):
-                    cand = find_case_insensitive(game_root / sub, rel)
-                    if cand is not None:
-                        src = cand
-                        break
-        if src is None or not src.exists():
-            missing.append(rel)
-            continue
-        dst = out_dir / "resources" / _norm_rel(rel)
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-        copied.append(_norm_rel(rel))
+    if args.copy_resources:
+        for rel in sorted(resources):
+            # Normalize common roots; allow both "sound/..." etc and bare wad names.
+            src = find_case_insensitive(game_root, rel)
+            if src is None:
+                # If this is a bare WAD name, try common subdirs.
+                if rel.lower().endswith(".wad"):
+                    for sub in ("", "maps", "wads", "WAD", "gfx", "cstrike", "valve"):
+                        cand = find_case_insensitive(game_root / sub, rel)
+                        if cand is not None:
+                            src = cand
+                            break
+            if src is None or not src.exists():
+                missing.append(rel)
+                continue
+            dst = out_dir / "resources" / _norm_rel(rel)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            copied.append(_norm_rel(rel))
 
     # Extract textures from referenced WADs into bundle materials/.
     materials_dir = out_dir / "materials"
     extracted_textures: int = 0
+    used = _expand_animated_textures(_collect_used_texture_names(bsp))
+    used_cf = {u.casefold() for u in used}
     for wad_name in wad_names:
         wad_src = None
         # WAD paths in worldspawn are often absolute; treat as filename.
@@ -417,11 +473,6 @@ def main() -> None:
                 wad_src = cand
                 break
         if wad_src is None:
-            # Fallback: if we copied the WAD as a resource, use the copied location.
-            copied_wad = out_dir / "resources" / wad_file
-            if copied_wad.exists():
-                wad_src = copied_wad
-        if wad_src is None:
             continue
 
         try:
@@ -429,6 +480,12 @@ def main() -> None:
         except Exception:
             continue
         for tex in wad.iter_textures():
+            if not args.extract_all_wad_textures:
+                # Only extract textures used by this BSP (keeps import fast and bundle small).
+                if tex.name.casefold() not in used_cf:
+                    continue
+                if not _should_render_texture(tex.name):
+                    continue
             dst = materials_dir / f"{tex.name}.png"
             if dst.exists():
                 continue
@@ -449,7 +506,7 @@ def main() -> None:
         "spawn": {"position": spawn_pos, "yaw": spawn_yaw},
         "skyname": skyname,
         "materials": {"root": None, "converted_root": "materials", "converted": extracted_textures},
-        "resources": {"root": "resources", "copied": copied, "missing": missing},
+        "resources": {"root": "resources", "copied": copied, "missing": missing, "copied_enabled": bool(args.copy_resources)},
         "collision_triangles": collision_triangles,
         "triangles": render_triangles,
         "brush_models": brush_model_report,
