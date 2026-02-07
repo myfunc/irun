@@ -5,6 +5,9 @@ import json
 from pathlib import Path
 
 import bsp_tool
+from PIL import Image
+
+from vtf_decode import decode_vtf_highres_rgba
 
 
 def parse_origin(value: str | None) -> tuple[float, float, float] | None:
@@ -30,6 +33,11 @@ def convert_pos(pos, scale: float) -> list[float]:
     return [float(pos.x) * scale, -float(pos.y) * scale, float(pos.z) * scale]
 
 
+def convert_normal(n) -> list[float]:
+    # Flip Y to match convert_pos; normals are unit vectors (no scaling).
+    return [float(n.x), -float(n.y), float(n.z)]
+
+
 def pick_spawn(entities, scale: float) -> tuple[list[float], float]:
     fallback = ([0.0, 0.0, 2.0], 0.0)
     for ent in entities:
@@ -45,11 +53,54 @@ def pick_spawn(entities, scale: float) -> tuple[list[float], float]:
     return fallback
 
 
+def skyname_from_entities(entities) -> str | None:
+    for ent in entities:
+        if ent.get("classname") == "worldspawn":
+            name = ent.get("skyname")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+            return None
+    return None
+
+
+def _vtf_to_png(vtf_path: Path, png_path: Path) -> None:
+    w, h, rgba = decode_vtf_highres_rgba(vtf_path)
+    img = Image.frombytes("RGBA", (w, h), rgba)
+    png_path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(png_path)
+
+
+def convert_material_textures(*, materials_root: Path, out_root: Path) -> int:
+    converted = 0
+    for vtf in materials_root.rglob("*.vtf"):
+        rel = vtf.relative_to(materials_root)
+        out = out_root / rel.with_suffix(".png")
+        if out.exists() and out.stat().st_mtime >= vtf.stat().st_mtime:
+            continue
+        _vtf_to_png(vtf, out)
+        converted += 1
+    return converted
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build Dust2 Largo generated map asset from BSP.")
-    parser.add_argument("--input", required=True, help="Path to Source BSP file.")
+    parser.add_argument(
+        "--input",
+        default="assets/maps/de_dust2_largo/csgo/maps/de_dust2_largo.bsp",
+        help="Path to Source BSP file (default: repo copy).",
+    )
     parser.add_argument("--output", required=True, help="Output JSON path.")
     parser.add_argument("--scale", type=float, default=0.03, help="Source-to-game unit scale.")
+    parser.add_argument(
+        "--materials-root",
+        default="assets/maps/de_dust2_largo/csgo/materials",
+        help="Folder containing Source materials (VTF/VMT).",
+    )
+    parser.add_argument(
+        "--materials-out",
+        default="assets/generated/materials",
+        help="Output folder for converted textures (PNG).",
+    )
     args = parser.parse_args()
 
     bsp_path = Path(args.input)
@@ -58,7 +109,8 @@ def main() -> None:
 
     bsp = bsp_tool.load_bsp(str(bsp_path))
 
-    triangles: list[list[float]] = []
+    # Format v2: triangles include material + UV + vertex color for baked lighting.
+    triangles: list[dict] = []
     min_v = [float("inf"), float("inf"), float("inf")]
     max_v = [float("-inf"), float("-inf"), float("-inf")]
 
@@ -69,16 +121,49 @@ def main() -> None:
         except Exception:
             continue
 
+        mat_name = mesh.material.name if getattr(mesh, "material", None) is not None else "unknown"
+
         for poly in mesh.polygons:
             if len(poly.vertices) < 3:
                 continue
 
-            verts = [convert_pos(v.position, args.scale) for v in poly.vertices]
+            verts = poly.vertices
             for i in range(1, len(verts) - 1):
-                tri = [*verts[0], *verts[i], *verts[i + 1]]
+                v0 = verts[0]
+                v1 = verts[i]
+                v2 = verts[i + 1]
+
+                p0 = convert_pos(v0.position, args.scale)
+                p1 = convert_pos(v1.position, args.scale)
+                p2 = convert_pos(v2.position, args.scale)
+
+                n0 = convert_normal(v0.normal)
+                n1 = convert_normal(v1.normal)
+                n2 = convert_normal(v2.normal)
+
+                # bsp_tool provides UV pairs: [base, lightmap].
+                uv0 = [float(v0.uv[0].x), float(v0.uv[0].y)]
+                uv1 = [float(v1.uv[0].x), float(v1.uv[0].y)]
+                uv2 = [float(v2.uv[0].x), float(v2.uv[0].y)]
+                lm0 = [float(v0.uv[1].x), float(v0.uv[1].y)]
+                lm1 = [float(v1.uv[1].x), float(v1.uv[1].y)]
+                lm2 = [float(v2.uv[1].x), float(v2.uv[1].y)]
+
+                c0 = list(map(float, v0.colour))
+                c1 = list(map(float, v1.colour))
+                c2 = list(map(float, v2.colour))
+
+                tri = {
+                    "m": mat_name,
+                    "p": [*p0, *p1, *p2],
+                    "n": [*n0, *n1, *n2],
+                    "uv": [*uv0, *uv1, *uv2],
+                    "lm": [*lm0, *lm1, *lm2],
+                    "c": [*c0, *c1, *c2],
+                }
                 triangles.append(tri)
                 for j in range(0, 9, 3):
-                    px, py, pz = tri[j], tri[j + 1], tri[j + 2]
+                    px, py, pz = tri["p"][j], tri["p"][j + 1], tri["p"][j + 2]
                     min_v[0] = min(min_v[0], px)
                     min_v[1] = min(min_v[1], py)
                     min_v[2] = min(min_v[2], pz)
@@ -87,14 +172,22 @@ def main() -> None:
                     max_v[2] = max(max_v[2], pz)
 
     spawn_pos, spawn_yaw = pick_spawn(bsp.ENTITIES, args.scale)
+    skyname = skyname_from_entities(bsp.ENTITIES)
+
+    # Convert all shipped VTF files into PNG so Panda3D can load them at runtime.
+    materials_root = Path(args.materials_root)
+    materials_out = Path(args.materials_out)
+    converted = convert_material_textures(materials_root=materials_root, out_root=materials_out)
 
     payload = {
-        "format_version": 1,
+        "format_version": 2,
         "source_bsp": str(bsp_path),
         "scale": args.scale,
         "triangle_count": len(triangles),
         "bounds": {"min": min_v, "max": max_v},
         "spawn": {"position": spawn_pos, "yaw": spawn_yaw},
+        "skyname": skyname,
+        "materials": {"root": str(materials_root), "converted_root": str(materials_out), "converted": converted},
         "triangles": triangles,
     }
 

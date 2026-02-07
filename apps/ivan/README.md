@@ -2,6 +2,15 @@
 
 IVAN is a **first-person 3D runner movement demo** focused on flow-first movement and high skill ceiling through pathing, routing, and timing.
 
+## Project Rules (Non-Negotiable)
+- All repository files and documentation are **English by default** (Russian is allowed only in chat).
+- Any new gameplay/engine parameter (even if introduced as a bugfix) must be:
+  - Globally configurable by default (no hardcoded tuning constants).
+  - Exposed in the in-game debug/admin menu so it can be changed at runtime.
+- Debug/admin menu UX requirement:
+  - Parameters are presented as a multi-column list/table.
+  - You can select a parameter and adjust it (numeric) or toggle it (boolean) quickly.
+
 ## Goals of This Demo
 - Easy to learn, hard to master movement feel
 - Bunnyhop/strafe-acceleration inspired control
@@ -26,8 +35,15 @@ Smoke run:
 python -m ivan --smoke
 ```
 
+## Code Layout
+- `src/ivan/game.py`: App wiring, input, camera, and update loop.
+- `src/ivan/world/scene.py`: Scene building and external map loading (Dust2 triangles/materials/skybox).
+- `src/ivan/physics/tuning.py`: Movement/physics tuning parameters (editable at runtime via the debug/admin menu).
+- `src/ivan/physics/player_controller.py`: Kinematic character movement (step + slide) and jump/wall interactions.
+- `src/ivan/ui/debug_ui.py`: Debug/admin UI widgets and HUD labels.
+
 ## Controls
-- `WASD`: move
+- `WASD`: move (US layout). On RU layout you can use `ЦФЫВ`. Arrow keys also work.
 - `Shift`: sprint
 - `Space`: jump
 - `R`: reset to spawn
@@ -71,7 +87,7 @@ The map is generated in code and includes:
 - This file is built from BSP using:
 ```bash
 python3 tools/build_dust2_assets.py \
-  --input assets/maps/de_dust2_largo/csgo/dist/de_dust2_largo.bsp \
+  --input assets/maps/de_dust2_largo/csgo/maps/de_dust2_largo.bsp \
   --output assets/generated/de_dust2_largo_map.json \
   --scale 0.03
 ```
@@ -82,6 +98,6 @@ python3 tools/build_dust2_assets.py \
 Notes:
 - Triangle-map collision response uses Bullet convex sweep tests and a Quake3-style kinematic controller
   (step + slide with plane clipping) for stable wall/ceiling/slope handling.
-- The generated Dust2 JSON currently contains triangle positions only (no UVs/materials). IVAN applies a
-  debug checker texture with world-space UVs so the mesh is readable; full BSP material/UV extraction is
-  planned work.
+- The build step converts the shipped `assets/maps/de_dust2_largo/csgo/materials/**/*.vtf` into PNG under
+  `assets/generated/materials/` so Panda3D can load them.
+- The generated Dust2 JSON includes per-triangle materials, UVs, and vertex colors (used as baked lighting).
