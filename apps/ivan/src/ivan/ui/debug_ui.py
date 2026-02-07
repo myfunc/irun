@@ -12,6 +12,74 @@ from ivan.ui.number_control import NumberControl
 
 
 class DebugUI:
+    NUMERIC_CONTROLS: list[tuple[str, float, float]] = [
+        ("gravity", 8.0, 60.0),
+        ("jump_height", 0.2, 4.0),
+        ("max_ground_speed", 3.0, 40.0),
+        ("max_air_speed", 3.0, 45.0),
+        ("ground_accel", 5.0, 140.0),
+        ("jump_accel", 1.0, 90.0),
+        ("friction", 0.0, 25.0),
+        ("air_control", 0.0, 1.0),
+        ("air_counter_strafe_brake", 0.0, 90.0),
+        ("mouse_sensitivity", 0.02, 0.40),
+        ("wall_jump_boost", 1.0, 20.0),
+        ("vault_jump_multiplier", 1.0, 2.5),
+        ("vault_forward_boost", 0.0, 6.0),
+        ("vault_min_ledge_height", 0.05, 0.8),
+        ("vault_max_ledge_height", 0.4, 2.5),
+        ("vault_cooldown", 0.0, 1.0),
+        ("coyote_time", 0.0, 0.35),
+        ("jump_buffer_time", 0.0, 0.35),
+        ("max_ground_slope_deg", 20.0, 70.0),
+        ("step_height", 0.0, 1.2),
+        ("ground_snap_dist", 0.0, 0.6),
+        ("player_radius", 0.20, 0.80),
+        ("player_half_height", 0.70, 1.60),
+        ("player_eye_height", 0.20, 1.30),
+    ]
+    TOGGLE_CONTROLS: list[str] = [
+        "enable_coyote",
+        "enable_jump_buffer",
+        "walljump_enabled",
+        "wallrun_enabled",
+        "vault_enabled",
+        "grapple_enabled",
+    ]
+
+    FIELD_HELP: dict[str, str] = {
+        "gravity": "Lower: floatier movement and longer airtime. Higher: faster fall and snappier landings.",
+        "jump_height": "Lower: shorter hop height. Higher: higher jump apex and longer time before landing.",
+        "max_ground_speed": "Lower: slower top run speed on ground. Higher: faster top run speed on ground.",
+        "max_air_speed": "Lower: lower speed cap while airborne. Higher: allows faster airborne travel.",
+        "ground_accel": "Lower: slower speed build-up on ground. Higher: faster acceleration to top ground speed.",
+        "jump_accel": "Lower: weaker bunnyhop/strafe acceleration in air. Higher: stronger airborne speed gain.",
+        "friction": "Lower: keep momentum longer on ground. Higher: lose ground speed faster when input stops.",
+        "air_control": "Lower: less steering authority in air. Higher: tighter mid-air steering.",
+        "air_counter_strafe_brake": "Lower: softer airborne counter-strafe braking. Higher: much more aggressive speed reduction without reversing.",
+        "mouse_sensitivity": "Lower: slower camera turn response. Higher: faster camera turn response.",
+        "wall_jump_boost": "Lower: weaker horizontal push from wall jumps. Higher: stronger push away from wall.",
+        "vault_jump_multiplier": "Lower: vault jump closer to normal jump height. Higher: vault launches higher.",
+        "vault_forward_boost": "Lower: little forward speed added by vault. Higher: stronger vault forward burst.",
+        "vault_min_ledge_height": "Lower: vault can trigger on smaller ledges. Higher: requires a taller ledge.",
+        "vault_max_ledge_height": "Lower: only low-to-mid ledges are vaultable. Higher: allows vaulting taller ledges.",
+        "vault_cooldown": "Lower: vault can retrigger sooner. Higher: longer delay between vaults.",
+        "coyote_time": "Lower: less post-edge jump forgiveness. Higher: more time to jump after leaving ground.",
+        "jump_buffer_time": "Lower: tighter jump timing before landing. Higher: more forgiving early jump presses.",
+        "max_ground_slope_deg": "Lower: fewer slopes count as walkable. Higher: steeper slopes remain walkable.",
+        "step_height": "Lower: smaller obstacles can be stepped over. Higher: taller steps are auto-climbed.",
+        "ground_snap_dist": "Lower: less ground sticking on small drops. Higher: stronger snap to nearby walkable ground.",
+        "player_radius": "Lower: narrower collision capsule. Higher: wider body collision.",
+        "player_half_height": "Lower: shorter collision capsule. Higher: taller collision capsule.",
+        "player_eye_height": "Lower: camera sits lower. Higher: camera sits higher.",
+        "enable_coyote": "Lower (OFF): no coyote-time forgiveness. Higher (ON): edge grace jumps allowed.",
+        "enable_jump_buffer": "Lower (OFF): no jump input buffering. Higher (ON): buffered jump before landing.",
+        "walljump_enabled": "Lower (OFF): wall-jumps disabled. Higher (ON): wall-jumps enabled.",
+        "wallrun_enabled": "Lower (OFF): wallrun disabled. Higher (ON): side wallrun enabled.",
+        "vault_enabled": "Lower (OFF): ledge vault disabled. Higher (ON): second-jump ledge vault enabled.",
+        "grapple_enabled": "Lower (OFF): grapple impulse disabled. Higher (ON): grapple impulse enabled on LMB.",
+    }
+
     def __init__(
         self,
         *,
@@ -21,7 +89,7 @@ class DebugUI:
     ) -> None:
         self._tuning = tuning
         self._on_tuning_change = on_tuning_change
-        self._field_help = self._build_field_help()
+        self._field_help = dict(self.FIELD_HELP)
 
         aspect_ratio = 16.0 / 9.0
         if getattr(ShowBaseGlobal, "base", None) is not None:
@@ -86,42 +154,8 @@ class DebugUI:
         )
         self._tooltip_label.hide()
 
-        numeric_controls = [
-            ("gravity", 8.0, 60.0),
-            ("jump_speed", 3.0, 25.0),
-            ("jump_height", 0.2, 4.0),
-            ("max_ground_speed", 3.0, 40.0),
-            ("max_air_speed", 3.0, 45.0),
-            ("ground_accel", 5.0, 140.0),
-            ("bhop_accel", 1.0, 90.0),
-            ("friction", 0.0, 25.0),
-            ("air_control", 0.0, 1.0),
-            ("air_counter_strafe_brake", 5.0, 90.0),
-            ("sprint_multiplier", 1.0, 2.0),
-            ("mouse_sensitivity", 0.02, 0.40),
-            ("wall_jump_boost", 1.0, 20.0),
-            ("vault_jump_multiplier", 1.0, 2.5),
-            ("vault_forward_boost", 0.0, 6.0),
-            ("vault_min_ledge_height", 0.05, 0.8),
-            ("vault_max_ledge_height", 0.4, 2.5),
-            ("vault_cooldown", 0.0, 1.0),
-            ("coyote_time", 0.0, 0.35),
-            ("jump_buffer_time", 0.0, 0.35),
-            ("max_ground_slope_deg", 20.0, 70.0),
-            ("step_height", 0.0, 1.2),
-            ("ground_snap_dist", 0.0, 0.6),
-            ("player_radius", 0.20, 0.80),
-            ("player_half_height", 0.70, 1.60),
-            ("player_eye_height", 0.20, 1.30),
-        ]
-        toggle_controls = [
-            "enable_coyote",
-            "enable_jump_buffer",
-            "walljump_enabled",
-            "wallrun_enabled",
-            "vault_enabled",
-            "grapple_enabled",
-        ]
+        numeric_controls = list(self.NUMERIC_CONTROLS)
+        toggle_controls = list(self.TOGGLE_CONTROLS)
 
         total_items = len(numeric_controls) + len(toggle_controls)
         desired_columns = max(1, int(math.ceil(total_items / max_rows)))
@@ -264,40 +298,3 @@ class DebugUI:
 
     def _hide_tooltip(self) -> None:
         self._tooltip_label.hide()
-
-    @staticmethod
-    def _build_field_help() -> dict[str, str]:
-        return {
-            "gravity": "Downward force. Higher values pull you down faster.",
-            "jump_speed": "Initial upward jump velocity.",
-            "jump_height": "Target jump apex height. Jump speed is derived from gravity and this value.",
-            "max_ground_speed": "Top move speed while grounded.",
-            "max_air_speed": "Top move speed while airborne.",
-            "ground_accel": "How quickly you reach target speed on ground.",
-            "bhop_accel": "Bunnyhop acceleration in air while strafing.",
-            "friction": "Ground deceleration when you stop input.",
-            "air_control": "How much you can steer while airborne.",
-            "air_counter_strafe_brake": "Strength of opposite-input air braking; aggressively slows airborne speed without reversing direction.",
-            "sprint_multiplier": "Multiplier applied to max ground speed while sprinting.",
-            "mouse_sensitivity": "Camera turn sensitivity.",
-            "wall_jump_boost": "Horizontal push strength when wall jumping.",
-            "vault_jump_multiplier": "Multiplier over normal jump strength used for vault.",
-            "vault_forward_boost": "Extra forward speed applied during vault.",
-            "vault_min_ledge_height": "Minimum ledge height above feet required to start vault.",
-            "vault_max_ledge_height": "Maximum ledge height above feet that can still be vaulted.",
-            "vault_cooldown": "Minimum time between two vaults.",
-            "coyote_time": "Grace period after leaving ground when jump is still allowed.",
-            "jump_buffer_time": "If jump is pressed early, this long it is buffered before landing.",
-            "max_ground_slope_deg": "Steepest slope still treated as walkable ground.",
-            "step_height": "Maximum step-up height for auto stepping.",
-            "ground_snap_dist": "Downward snap distance to stay glued to ground.",
-            "player_radius": "Player collision capsule radius.",
-            "player_half_height": "Half-height of player collision capsule.",
-            "player_eye_height": "Camera offset above player center.",
-            "enable_coyote": "Toggle coyote-time grace jumps after stepping off edges.",
-            "enable_jump_buffer": "Toggle jump input buffering before landing.",
-            "walljump_enabled": "Allow wall jumps when touching a valid wall.",
-            "wallrun_enabled": "Allow side wallrun behavior. Vertical climbing is limited.",
-            "vault_enabled": "Allow second-jump ledge vault when feet are below nearby ledge top.",
-            "grapple_enabled": "Enable grapple impulse on left mouse click.",
-        }

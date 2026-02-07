@@ -171,22 +171,13 @@ class RunnerDemo(ShowBase):
         self._pitch = 0.0
         self.player_node.setPos(self.player.pos)
 
-    def _is_sprinting(self) -> bool:
-        if self.mouseWatcherNode is None:
-            return False
-        return (
-            self.mouseWatcherNode.isButtonDown(KeyboardButton.shift())
-            or self.mouseWatcherNode.isButtonDown(KeyboardButton.lshift())
-            or self.mouseWatcherNode.isButtonDown(KeyboardButton.rshift())
-        )
-
     def _update(self, task: Task) -> int:
         dt = min(globalClock.getDt(), 1.0 / 30.0)
 
         self._update_look()
 
         wish = self._wish_direction()
-        self.player.step(dt=dt, wish_dir=wish, sprinting=self._is_sprinting(), yaw_deg=self._yaw)
+        self.player.step(dt=dt, wish_dir=wish, yaw_deg=self._yaw)
 
         if self.player.pos.z < -18:
             self._respawn()
@@ -219,4 +210,3 @@ class RunnerDemo(ShowBase):
 def run(*, smoke: bool = False) -> None:
     app = RunnerDemo(RunConfig(smoke=smoke))
     app.run()
-

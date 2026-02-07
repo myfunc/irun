@@ -6,16 +6,14 @@ from dataclasses import dataclass
 @dataclass
 class PhysicsTuning:
     gravity: float = 24.0
-    jump_speed: float = 5.955
     jump_height: float = 1.48
     max_ground_speed: float = 8.976
     max_air_speed: float = 11.258
     ground_accel: float = 48.009
-    bhop_accel: float = 11.408
+    jump_accel: float = 11.408
     friction: float = 6.5
     air_control: float = 0.35
     air_counter_strafe_brake: float = 5.0
-    sprint_multiplier: float = 1.2
     mouse_sensitivity: float = 0.14
     wall_jump_boost: float = 5.534
     vault_jump_multiplier: float = 1.25

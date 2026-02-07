@@ -4,6 +4,7 @@
 - MVP: boot to a simple 3D scene
 - IVAN demo: first-person playable graybox with bhop/strafe-style movement prototype
 - IVAN demo: in-game debug/admin panel with live movement parameter tuning
+- IVAN demo: ledge-vault prototype (second-jump near ledge, with configurable boost and ledge height window)
 - IVAN demo: generated test course with walls and jump obstacles
 - IVAN demo: Dust2 Largo BSP-to-triangle asset pipeline and runtime map loading
 
