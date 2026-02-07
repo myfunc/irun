@@ -292,26 +292,39 @@ class RunnerDemo(ShowBase):
     def _update_look(self) -> None:
         if self.cfg.smoke or not self._pointer_locked:
             return
-        if self.mouseWatcherNode is None or not self.mouseWatcherNode.hasMouse():
-            return
 
-        # Use normalized mouse coords so look works with relative mouse mode.
-        mx = float(self.mouseWatcherNode.getMouseX())
-        my = float(self.mouseWatcherNode.getMouseY())
-        if self._last_mouse is None:
+        # Primary path: normalized mouse coords (works well with relative mouse mode).
+        if self.mouseWatcherNode is not None and self.mouseWatcherNode.hasMouse():
+            mx = float(self.mouseWatcherNode.getMouseX())
+            my = float(self.mouseWatcherNode.getMouseY())
+            if self._last_mouse is None:
+                self._last_mouse = (mx, my)
+                return
+            lmx, lmy = self._last_mouse
             self._last_mouse = (mx, my)
+
+            dx_norm = mx - lmx
+            # Keep non-inverted vertical look (mouse up -> look up).
+            dy_norm = lmy - my
+            dx = dx_norm * (self.win.getXSize() * 0.5)
+            dy = dy_norm * (self.win.getYSize() * 0.5)
+
+            self._yaw -= dx * float(self.tuning.mouse_sensitivity)
+            self._pitch = max(-88.0, min(88.0, self._pitch - dy * float(self.tuning.mouse_sensitivity)))
             return
-        lmx, lmy = self._last_mouse
-        self._last_mouse = (mx, my)
 
-        dx_norm = mx - lmx
-        # Keep non-inverted vertical look (mouse up -> look up).
-        dy_norm = lmy - my
-        dx = dx_norm * (self.win.getXSize() * 0.5)
-        dy = dy_norm * (self.win.getYSize() * 0.5)
+        # Fallback: pointer delta vs screen center (useful if hasMouse() stays false on some macOS setups).
+        cx = self.win.getXSize() // 2
+        cy = self.win.getYSize() // 2
+        pointer = self.win.getPointer(0)
+        dx = float(pointer.getX() - cx)
+        dy = float(pointer.getY() - cy)
 
+        if dx == 0.0 and dy == 0.0:
+            return
         self._yaw -= dx * float(self.tuning.mouse_sensitivity)
         self._pitch = max(-88.0, min(88.0, self._pitch - dy * float(self.tuning.mouse_sensitivity)))
+        self._center_mouse()
 
     def _wish_direction(self) -> LVector3f:
         if self.mouseWatcherNode is None:
@@ -381,6 +394,9 @@ class RunnerDemo(ShowBase):
 
         dt = min(globalClock.getDt(), 1.0 / 30.0)
 
+        # Precompute wish so debug overlay can show it even if movement seems dead.
+        wish = self._wish_direction()
+
         if self.mouseWatcherNode is not None:
             has_mouse = self.mouseWatcherNode.hasMouse()
             mx = float(self.mouseWatcherNode.getMouseX()) if has_mouse else 0.0
@@ -393,10 +409,14 @@ class RunnerDemo(ShowBase):
             asc_a = self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key("a"))
             asc_s = self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key("s"))
             asc_d = self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key("d"))
+            pos = self.player.pos if self.player is not None else LVector3f(0, 0, 0)
+            vel = self.player.vel if self.player is not None else LVector3f(0, 0, 0)
+            grounded = bool(self.player.grounded) if self.player is not None else False
             self.input_debug.set_text(
                 "input debug (F2)\n"
-                f"mode={self._mode} lock={self._pointer_locked} hasMouse={has_mouse} mouse=({mx:+.2f},{my:+.2f})\n"
-                f"raw WASD={int(raw_w)}{int(raw_a)}{int(raw_s)}{int(raw_d)} ascii WASD={int(asc_w)}{int(asc_a)}{int(asc_s)}{int(asc_d)}"
+                f"mode={self._mode} lock={self._pointer_locked} dt={dt:.3f} hasMouse={has_mouse} mouse=({mx:+.2f},{my:+.2f})\n"
+                f"raw WASD={int(raw_w)}{int(raw_a)}{int(raw_s)}{int(raw_d)} ascii WASD={int(asc_w)}{int(asc_a)}{int(asc_s)}{int(asc_d)}\n"
+                f"wish=({wish.x:+.2f},{wish.y:+.2f}) pos=({pos.x:+.2f},{pos.y:+.2f},{pos.z:+.2f}) vel=({vel.x:+.2f},{vel.y:+.2f},{vel.z:+.2f}) grounded={int(grounded)}"
             )
         if self._input_debug_until and globalClock.getFrameTime() >= self._input_debug_until:
             self._input_debug_until = 0.0
@@ -404,7 +424,6 @@ class RunnerDemo(ShowBase):
 
         self._update_look()
 
-        wish = self._wish_direction()
         self.player.step(dt=dt, wish_dir=wish, yaw_deg=self._yaw, crouching=self._is_crouching())
 
         if self.player.pos.z < -18:
