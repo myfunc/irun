@@ -16,7 +16,12 @@ def main(argv: list[str] | None = None) -> None:
         "--map",
         dest="map_json",
         default=None,
-        help="Path to a generated map JSON bundle to load (relative paths are resolved from the current working dir).",
+        help=(
+            "Map bundle to load. Accepts:\n"
+            "  - a path to map.json\n"
+            "  - an alias under apps/ivan/assets/, e.g. imported/halflife/valve/bounce\n"
+            "Relative paths are resolved from the current working dir first, then from apps/ivan/assets/."
+        ),
     )
     parser.add_argument(
         "--hl-root",
@@ -30,7 +35,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    run(smoke=args.smoke, map_json=args.map_json, hl_root=args.hl_root, hl_mod=args.hl_mod)
+    map_json = args.map_json
+    # Default to Bounce when running normally without an explicit map or HL map picker.
+    if not args.smoke and not args.hl_root and not map_json:
+        map_json = "imported/halflife/valve/bounce"
+
+    run(smoke=args.smoke, map_json=map_json, hl_root=args.hl_root, hl_mod=args.hl_mod)
 
 
 if __name__ == "__main__":
