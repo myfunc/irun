@@ -46,7 +46,7 @@ python3 tools/build_source_bsp_assets.py \
   --scale 0.03
 ```
 
-3. Import a **GoldSrc/Xash3D** bundle (WAD + resources):
+3. Import a **GoldSrc/Xash3D** bundle (WAD textures; optional resource copy):
 ```bash
 cd apps/ivan
 source .venv/bin/activate
@@ -117,4 +117,4 @@ Troubleshooting:
 - VMT parsing is not implemented (only the base texture name is used via BSP material name mapping).
 - Lightmaps are not rendered yet. The runtime uses per-vertex color as a baked lighting tint.
 - No props, decals, or dynamic entities are imported (only the BSP face meshes).
-- GoldSrc sound/models are currently copied into the bundle as files + a manifest; runtime audio/prop spawning is not implemented yet.
+- GoldSrc sound/models are not used by runtime yet. The importer can optionally copy them into the bundle via `--copy-resources`.
