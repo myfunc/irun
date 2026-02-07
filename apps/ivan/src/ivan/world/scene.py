@@ -27,6 +27,8 @@ class WorldScene:
     def __init__(self) -> None:
         self.spawn_point = LVector3f(0, 35, 1.9)
         self.spawn_yaw = 0.0
+        # Respawn threshold (maps can be far below 0 in Z).
+        self.kill_z = -18.0
 
         self.aabbs: list[AABB] = []
         self.triangles: list[list[float]] | None = None
@@ -122,6 +124,17 @@ class WorldScene:
         triangles = payload.get("triangles")
         if not isinstance(triangles, list) or not triangles:
             return False
+
+        bounds = payload.get("bounds")
+        if isinstance(bounds, dict):
+            bmin = bounds.get("min")
+            if isinstance(bmin, list) and len(bmin) == 3:
+                try:
+                    min_z = float(bmin[2])
+                    # Keep a small margin below the lowest geometry.
+                    self.kill_z = min_z - 5.0
+                except Exception:
+                    pass
 
         # Derive a stable map id for node naming/debug.
         map_id = payload.get("map_id")

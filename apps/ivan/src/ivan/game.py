@@ -376,7 +376,7 @@ class RunnerDemo(ShowBase):
         if self.player is None or self.scene is None:
             return
         self.player.respawn()
-        self._yaw = 0.0
+        self._yaw = float(self.scene.spawn_yaw)
         self._pitch = 0.0
         self.player_node.setPos(self.player.pos)
 
@@ -426,7 +426,7 @@ class RunnerDemo(ShowBase):
 
         self.player.step(dt=dt, wish_dir=wish, yaw_deg=self._yaw, crouching=self._is_crouching())
 
-        if self.player.pos.z < -18:
+        if self.scene is not None and self.player.pos.z < float(self.scene.kill_z):
             self._respawn()
 
         self.player_node.setPos(self.player.pos)
