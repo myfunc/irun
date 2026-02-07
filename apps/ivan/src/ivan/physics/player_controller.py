@@ -32,6 +32,7 @@ class PlayerController:
         self.grounded = False
         self._ground_timer = 0.0
         self._jump_buffer_timer = 0.0
+        self._jump_pressed = False
 
         self._wall_contact_timer = 999.0
         self._wall_normal = LVector3f(0, 0, 0)
@@ -58,7 +59,10 @@ class PlayerController:
         self.vel = LVector3f(0, 0, 0)
 
     def queue_jump(self) -> None:
-        self._jump_buffer_timer = float(self.tuning.jump_buffer_time)
+        if self.tuning.enable_jump_buffer:
+            self._jump_buffer_timer = float(self.tuning.jump_buffer_time)
+            return
+        self._jump_pressed = True
 
     def can_ground_jump(self) -> bool:
         if self.grounded:
@@ -86,7 +90,7 @@ class PlayerController:
         forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0)
         self.vel += forward * 4.5 + LVector3f(0, 0, 1.8)
 
-    def step(self, *, dt: float, wish_dir: LVector3f, sprinting: bool, yaw_deg: float) -> None:
+    def step(self, *, dt: float, wish_dir: LVector3f, yaw_deg: float) -> None:
         dt = float(dt)
         self._wall_contact_timer += dt
         self._wall_jump_lock_timer += dt
@@ -98,8 +102,7 @@ class PlayerController:
         if self.collision is not None:
             self._bullet_ground_trace()
 
-        sprint_multiplier = float(self.tuning.sprint_multiplier) if sprinting else 1.0
-        target_ground_speed = float(self.tuning.max_ground_speed) * sprint_multiplier
+        target_ground_speed = float(self.tuning.max_ground_speed)
 
         if self.grounded:
             self._apply_friction(dt)
@@ -112,15 +115,15 @@ class PlayerController:
                 # Opposite input in air should brake aggressively instead of accelerating backward.
                 self._apply_air_counter_strafe_brake(wish_dir, dt)
             else:
-                self._accelerate(wish_dir, float(self.tuning.max_air_speed), float(self.tuning.bhop_accel), dt)
+                self._accelerate(wish_dir, float(self.tuning.max_air_speed), float(self.tuning.jump_accel), dt)
                 self._air_control(wish_dir, dt)
 
             gravity_scale = 1.0
             if self.tuning.wallrun_enabled and self.has_wall_for_jump():
-                gravity_scale = 0.55
-                # Wallrun should be lateral, not a vertical climb.
-                self.vel.z = min(self.vel.z, 0.0)
-                self.vel.z = max(self.vel.z, -2.0)
+                # Preserve upward jump motion along walls, but reduce fall speed while descending.
+                if self.vel.z <= 0.0:
+                    gravity_scale = 0.55
+                    self.vel.z = max(self.vel.z, -2.0)
 
             self.vel.z -= float(self.tuning.gravity) * gravity_scale * dt
 
@@ -152,6 +155,9 @@ class PlayerController:
             self._prev_wish_dir = LVector3f(0, 0, 0)
 
     def _consume_jump_request(self) -> bool:
+        if self._jump_pressed:
+            self._jump_pressed = False
+            return True
         return self._jump_buffer_timer > 0.0
 
     def _apply_jump(self) -> None:
@@ -178,11 +184,8 @@ class PlayerController:
 
     def _jump_up_speed(self) -> float:
         g = max(0.001, float(self.tuning.gravity))
-        h = float(getattr(self.tuning, "jump_height", 0.0))
-        if h > 0.0:
-            return math.sqrt(2.0 * g * h)
-        # Backward-compat fallback if jump_height is not configured.
-        return float(self.tuning.jump_speed)
+        h = max(0.01, float(self.tuning.jump_height))
+        return math.sqrt(2.0 * g * h)
 
     def _try_vault(self, *, yaw_deg: float) -> bool:
         if self.collision is None:
@@ -368,6 +371,18 @@ class PlayerController:
             v.z = 0.0
         return v
 
+    def _choose_clip_normal(self, normal: LVector3f) -> LVector3f:
+        n = LVector3f(normal)
+        if n.lengthSquared() > 1e-12:
+            n.normalize()
+        # Preserve upward jump movement when hugging mostly vertical walls/corners.
+        if not self.grounded and self.vel.z > 0.0 and abs(n.z) < 0.82 and n.z > -0.35:
+            wall_n = LVector3f(n.x, n.y, 0.0)
+            if wall_n.lengthSquared() > 1e-12:
+                wall_n.normalize()
+                return wall_n
+        return n
+
     def _bullet_sweep_closest(self, from_pos: LVector3f, to_pos: LVector3f):
         assert self.collision is not None
         return self.collision.sweep_closest(from_pos, to_pos)
@@ -437,17 +452,21 @@ class PlayerController:
                 # Ceiling.
                 self.vel.z = 0.0
 
-            self.vel = self._clip_velocity(self.vel, n)
+            clip_n = self._choose_clip_normal(n)
+            if self.vel.dot(clip_n) < 0.0:
+                self.vel = self._clip_velocity(self.vel, clip_n)
             time_left = 1.0 - hit_frac
             remaining = move * time_left
-            remaining = self._clip_velocity(remaining, n, overbounce=1.0)
+            if remaining.dot(clip_n) < 0.0:
+                remaining = self._clip_velocity(remaining, clip_n, overbounce=1.0)
 
             # Multi-plane clip: if we're still going into any previous plane, clip again.
             for p in planes[:-1]:
-                if remaining.dot(p) < 0.0:
-                    remaining = self._clip_velocity(remaining, p, overbounce=1.0)
-                if self.vel.dot(p) < 0.0:
-                    self.vel = self._clip_velocity(self.vel, p)
+                clip_p = self._choose_clip_normal(p)
+                if remaining.dot(clip_p) < 0.0:
+                    remaining = self._clip_velocity(remaining, clip_p, overbounce=1.0)
+                if self.vel.dot(clip_p) < 0.0:
+                    self.vel = self._clip_velocity(self.vel, clip_p)
 
         self.pos = pos
 

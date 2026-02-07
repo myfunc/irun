@@ -44,7 +44,6 @@ python -m ivan --smoke
 
 ## Controls
 - `WASD`: move (US layout). On RU layout you can use `ЦФЫВ`. Arrow keys also work.
-- `Shift`: sprint
 - `Space`: jump
 - `R`: reset to spawn
 - `Esc`: toggle pointer lock and debug/admin menu
@@ -63,10 +62,10 @@ Panel layout:
 - Hovering a setting name/control shows a tooltip with a short explanation.
 
 Numeric settings include sliders + entry fields for precise tuning:
-- Gravity, jump speed, jump height, ground/air speed caps
-- Ground acceleration, bunnyhop acceleration, friction, air control
+- Gravity, jump height, ground/air speed caps
+- Ground acceleration, jump acceleration (bunnyhop/strafe), friction, air control
 - Air counter-strafe brake strength
-- Sprint multiplier, mouse sensitivity
+- Mouse sensitivity
 - Wall jump boost, vault jump/speed/ledge window, coyote time, jump buffer time
 
 Boolean toggles are shown inline as labeled rows with `ON/OFF` buttons:
