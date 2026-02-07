@@ -19,6 +19,32 @@ def _make_controller(tuning: PhysicsTuning) -> PlayerController:
     )
 
 
+class _FakeHit:
+    def __init__(self, has_hit: bool, normal: LVector3f) -> None:
+        self._has_hit = has_hit
+        self._normal = LVector3f(normal)
+
+    def hasHit(self) -> bool:
+        return self._has_hit
+
+    def getHitNormal(self) -> LVector3f:
+        return LVector3f(self._normal)
+
+    def getHitFraction(self) -> float:
+        return 0.5
+
+
+class _FakeCollision:
+    def update_player_sweep_shape(self, *, player_radius: float, player_half_height: float) -> None:
+        _ = player_radius, player_half_height
+
+    def sweep_closest(self, from_pos: LVector3f, to_pos: LVector3f):
+        d = LVector3f(to_pos - from_pos)
+        if abs(d.x) > 0.001 or abs(d.y) > 0.001:
+            return _FakeHit(True, LVector3f(-1.0, 0.0, 0.0))
+        return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
+
+
 def test_all_numeric_debug_controls_exist_have_tooltips_and_are_wired() -> None:
     numeric_fields = [name for name, _lo, _hi in DebugUI.NUMERIC_CONTROLS]
     assert len(numeric_fields) == len(set(numeric_fields))
@@ -127,3 +153,19 @@ def test_crouch_speed_multiplier_reduces_ground_acceleration() -> None:
     stand_speed = math.sqrt(stand_ctrl.vel.x * stand_ctrl.vel.x + stand_ctrl.vel.y * stand_ctrl.vel.y)
     crouch_speed = math.sqrt(crouch_ctrl.vel.x * crouch_ctrl.vel.x + crouch_ctrl.vel.y * crouch_ctrl.vel.y)
     assert crouch_speed < stand_speed
+
+
+def test_wall_detection_probe_refreshes_without_movement() -> None:
+    tuning = PhysicsTuning()
+    ctrl = PlayerController(
+        tuning=tuning,
+        spawn_point=LVector3f(0, 0, 3),
+        aabbs=[],
+        collision=_FakeCollision(),
+    )
+    ctrl.grounded = False
+    ctrl._wall_contact_timer = 999.0
+    ctrl._wall_normal = LVector3f(0, 0, 0)
+
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+    assert ctrl.has_wall_for_jump()
