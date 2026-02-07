@@ -1,19 +1,19 @@
-.PHONY: run lint test up-run up-lint up-test
+.PHONY: run lint test mvp-run mvp-lint mvp-test
 
 run:
-	$(MAKE) up-run
+	$(MAKE) mvp-run
 
 lint:
-	$(MAKE) up-lint
+	$(MAKE) mvp-lint
 
 test:
-	$(MAKE) up-test
+	$(MAKE) mvp-test
 
-up-run:
-	cd apps/up && python -m up
+mvp-run:
+	cd apps/mvp && python -m mvp
 
-up-lint:
-	cd apps/up && ruff check .
+mvp-lint:
+	cd apps/mvp && ruff check .
 
-up-test:
-	cd apps/up && pytest -q
+mvp-test:
+	cd apps/mvp && pytest -q

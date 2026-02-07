@@ -42,5 +42,5 @@ Naming convention:
 ## Repository Defaults
 - Applications live under `apps/`.
 - Python apps use a `src/` layout inside their app folder.
-- Current game app: `apps/up`
-  - Entrypoint: `python -m up` (documented in `apps/up/README.md`).
+- Current game app: `apps/mvp`
+  - Entrypoint: `python -m mvp` (documented in `apps/mvp/README.md`).

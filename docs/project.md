@@ -1,7 +1,7 @@
 # Project
 
 ## One-Liner
-IRUN is a monorepo for the project; **UP** is the main 3D platformer game app focused on responsive movement and clear traversal challenges.
+IRUN is a monorepo for the project; **MVP** is the main 3D platformer game app focused on responsive movement and clear traversal challenges.
 
 ## Status
 Prototype / initialization phase.
@@ -16,7 +16,7 @@ Prototype / initialization phase.
 - Runtime: Python
 
 ## Apps
-- `apps/up`: UP (game)
+- `apps/mvp`: MVP (game)
 
 ## Constraints (Initial)
 - Keep dependencies minimal and well-documented.

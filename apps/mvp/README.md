@@ -1,6 +1,6 @@
-# UP
+# MVP
 
-UP is an early-stage **3D platformer** app in the IRUN monorepo, written in **Python**.
+MVP is an early-stage **3D platformer** app in the IRUN monorepo, written in **Python** (Panda3D).
 
 ## Quick Start
 
@@ -13,12 +13,12 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e ".[dev]"
-python -m up
+python -m mvp
 ```
 
 Smoke run (starts and exits quickly):
 ```bash
-python -m up --smoke
+python -m mvp --smoke
 ```
 
 ## Documentation

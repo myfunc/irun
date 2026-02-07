@@ -1,7 +1,8 @@
 # Documentation Index
 
 ## Repo Structure
-- Applications live under `apps/` (e.g. `apps/up`)
+- Applications live under `apps/` (e.g. `apps/mvp`)
+  - Main app: `apps/mvp`
 
 ## Global
 - `docs/project.md`: Project overview and pillars

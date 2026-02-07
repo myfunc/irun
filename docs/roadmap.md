@@ -2,7 +2,7 @@
 
 ## Milestone 0: Project Initialization
 - Repo structure, docs scaffolding
-- Runnable UP prototype
+- Runnable MVP prototype
 
 ## Milestone 1: Movement Prototype
 - Player controller: ground/air, jump tuning, basic collision
