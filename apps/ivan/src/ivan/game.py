@@ -20,6 +20,7 @@ from ivan.app_config import RunConfig
 from ivan.physics.collision_world import CollisionWorld
 from ivan.physics.player_controller import PlayerController
 from ivan.physics.tuning import PhysicsTuning
+from ivan.paths import app_root as ivan_app_root
 from ivan.ui.debug_ui import DebugUI
 from ivan.ui.map_select_ui import MapEntry, MapSelectUI
 from ivan.world.scene import WorldScene
@@ -174,7 +175,7 @@ class RunnerDemo(ShowBase):
 
     def _start_import_goldsrc_map(self, entry: MapEntry) -> None:
         assert self.cfg.hl_root is not None
-        app_root = Path(__file__).resolve().parents[3]
+        app_root = ivan_app_root()
         out_dir = app_root / "assets" / "imported" / "halflife" / self.cfg.hl_mod / entry.label
         game_root = Path(self.cfg.hl_root) / self.cfg.hl_mod
 
