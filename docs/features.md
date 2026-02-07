@@ -2,6 +2,8 @@
 
 ## Implemented (Prototype)
 - MVP: boot to a simple 3D scene
+- Movement test arena: walk, jump, platform landing, camera follow
+- In-game tuning: physics sliders, feature flags, JSON settings export
 
 ## Planned (High-Level)
 - Movement: walk/run, jump, coyote time, jump buffer, air control

@@ -21,5 +21,18 @@ Smoke run (starts and exits quickly):
 python -m mvp --smoke
 ```
 
+## Controls (Prototype Sandbox)
+- Move: WASD
+- Jump: Space
+- Reset position: R
+- Toggle bunny hop: F1
+- Toggle air control: F2
+- Toggle debug HUD: F3
+- Save settings to JSON: F5 (writes `apps/mvp/settings.json`)
+- Adjust gravity: [ / ]
+- Adjust max speed: , / .
+- Adjust ground acceleration: ; / '
+- Adjust jump speed: / / ?
+
 ## Documentation
 - Global IRUN docs live at repo root in `docs/`.

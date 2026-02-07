@@ -5,9 +5,10 @@
 - Runnable MVP prototype
 
 ## Milestone 1: Movement Prototype
-- Player controller: ground/air, jump tuning, basic collision
-- Camera prototype
-- Minimal "graybox" test level
+- Player controller: ground/air, jump tuning, basic collision (in progress)
+- Camera prototype (in progress)
+- Minimal "graybox" test level (in progress)
+- In-game tuning + JSON export (in progress)
 
 ## Milestone 2: Level Loop
 - Checkpoints + respawn

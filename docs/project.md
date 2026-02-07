@@ -10,6 +10,7 @@ Prototype / initialization phase.
 - Movement first: tight controls, predictable physics, forgiving camera.
 - Readable levels: strong silhouettes, clear affordances, low ambiguity.
 - Short iteration loop: fast to run, easy to tweak.
+- Tuning-friendly: in-game physics knobs and feature flags for rapid iteration.
 
 ## Target (Initial)
 - Platform: Desktop (macOS/Windows/Linux)
