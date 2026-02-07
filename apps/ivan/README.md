@@ -53,6 +53,7 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 - `Space`: jump
 - `R`: reset to spawn
 - `Esc`: toggle pointer lock and debug/admin menu
+- `F2`: toggle input debug overlay (useful when keyboard/mouse don't seem to register)
 - `LMB`: mock grapple impulse (only if grapple toggle enabled)
 
 ## HUD

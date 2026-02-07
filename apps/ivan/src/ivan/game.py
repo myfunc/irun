@@ -22,6 +22,7 @@ from ivan.physics.player_controller import PlayerController
 from ivan.physics.tuning import PhysicsTuning
 from ivan.paths import app_root as ivan_app_root
 from ivan.ui.debug_ui import DebugUI
+from ivan.ui.input_debug_ui import InputDebugUI
 from ivan.ui.map_select_ui import MapEntry, MapSelectUI
 from ivan.world.scene import WorldScene
 
@@ -43,6 +44,7 @@ class RunnerDemo(ShowBase):
         self._pointer_locked = True
         self._mode: str = "boot"  # boot | menu | game
         self._last_mouse: tuple[float, float] | None = None
+        self._input_debug_until: float = 0.0
 
         self.scene: WorldScene | None = None
         self.collision: CollisionWorld | None = None
@@ -60,6 +62,7 @@ class RunnerDemo(ShowBase):
         self._setup_input()
 
         self.ui = DebugUI(aspect2d=self.aspect2d, tuning=self.tuning, on_tuning_change=self._on_tuning_change)
+        self.input_debug = InputDebugUI(aspect2d=self.aspect2d)
 
         if self.cfg.hl_root and not self.cfg.map_json and not self.cfg.smoke:
             self._enter_map_picker()
@@ -92,6 +95,7 @@ class RunnerDemo(ShowBase):
         self.accept("r", self._respawn)
         self.accept("space", self._queue_jump)
         self.accept("mouse1", self._grapple_mock)
+        self.accept("f2", self.input_debug.toggle)
         self.accept("arrow_up", self._menu_up)
         self.accept("arrow_down", self._menu_down)
         self.accept("enter", self._menu_select)
@@ -249,6 +253,9 @@ class RunnerDemo(ShowBase):
         self.ui.hide()
         if not self.cfg.smoke:
             self._center_mouse()
+            # Show input debug briefly after loading a map (useful when mouse/keyboard seem dead).
+            self._input_debug_until = globalClock.getFrameTime() + 8.0
+            self.input_debug.show()
 
         # Reset world root to allow reloading.
         self.world_root.removeNode()
@@ -374,6 +381,27 @@ class RunnerDemo(ShowBase):
             return Task.cont
 
         dt = min(globalClock.getDt(), 1.0 / 30.0)
+
+        if self.mouseWatcherNode is not None:
+            has_mouse = self.mouseWatcherNode.hasMouse()
+            mx = float(self.mouseWatcherNode.getMouseX()) if has_mouse else 0.0
+            my = float(self.mouseWatcherNode.getMouseY()) if has_mouse else 0.0
+            raw_w = self.mouseWatcherNode.isButtonDown(ButtonHandle("raw-w"))
+            raw_a = self.mouseWatcherNode.isButtonDown(ButtonHandle("raw-a"))
+            raw_s = self.mouseWatcherNode.isButtonDown(ButtonHandle("raw-s"))
+            raw_d = self.mouseWatcherNode.isButtonDown(ButtonHandle("raw-d"))
+            asc_w = self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key("w"))
+            asc_a = self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key("a"))
+            asc_s = self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key("s"))
+            asc_d = self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key("d"))
+            self.input_debug.set_text(
+                "input debug (F2)\n"
+                f"mode={self._mode} lock={self._pointer_locked} hasMouse={has_mouse} mouse=({mx:+.2f},{my:+.2f})\n"
+                f"raw WASD={int(raw_w)}{int(raw_a)}{int(raw_s)}{int(raw_d)} ascii WASD={int(asc_w)}{int(asc_a)}{int(asc_s)}{int(asc_d)}"
+            )
+        if self._input_debug_until and globalClock.getFrameTime() >= self._input_debug_until:
+            self._input_debug_until = 0.0
+            self.input_debug.hide()
 
         self._update_look()
 
