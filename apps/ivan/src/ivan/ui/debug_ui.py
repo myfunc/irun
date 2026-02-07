@@ -23,6 +23,9 @@ class DebugUI:
         ("air_control", 0.0, 1.0),
         ("air_counter_strafe_brake", 0.0, 90.0),
         ("mouse_sensitivity", 0.02, 0.40),
+        ("crouch_speed_multiplier", 0.2, 1.0),
+        ("crouch_half_height", 0.30, 1.20),
+        ("crouch_eye_height", 0.15, 1.20),
         ("wall_jump_boost", 1.0, 20.0),
         ("vault_jump_multiplier", 1.0, 2.5),
         ("vault_forward_boost", 0.0, 6.0),
@@ -44,6 +47,7 @@ class DebugUI:
         "walljump_enabled",
         "wallrun_enabled",
         "vault_enabled",
+        "crouch_enabled",
         "grapple_enabled",
     ]
 
@@ -58,6 +62,9 @@ class DebugUI:
         "air_control": "Lower: less steering authority in air. Higher: tighter mid-air steering.",
         "air_counter_strafe_brake": "Lower: softer airborne counter-strafe braking. Higher: much more aggressive speed reduction without reversing.",
         "mouse_sensitivity": "Lower: slower camera turn response. Higher: faster camera turn response.",
+        "crouch_speed_multiplier": "Lower: much slower movement while crouched. Higher: crouched speed stays closer to normal speed.",
+        "crouch_half_height": "Lower: shorter crouch collision height. Higher: taller crouch collision height.",
+        "crouch_eye_height": "Lower: camera sits lower while crouched. Higher: camera sits higher while crouched.",
         "wall_jump_boost": "Lower: weaker horizontal push from wall jumps. Higher: stronger push away from wall.",
         "vault_jump_multiplier": "Lower: vault jump closer to normal jump height. Higher: vault launches higher.",
         "vault_forward_boost": "Lower: little forward speed added by vault. Higher: stronger vault forward burst.",
@@ -77,6 +84,7 @@ class DebugUI:
         "walljump_enabled": "Lower (OFF): wall-jumps disabled. Higher (ON): wall-jumps enabled.",
         "wallrun_enabled": "Lower (OFF): wallrun disabled. Higher (ON): side wallrun enabled.",
         "vault_enabled": "Lower (OFF): ledge vault disabled. Higher (ON): second-jump ledge vault enabled.",
+        "crouch_enabled": "Lower (OFF): crouch input ignored. Higher (ON): hold C to crouch.",
         "grapple_enabled": "Lower (OFF): grapple impulse disabled. Higher (ON): grapple impulse enabled on LMB.",
     }
 

@@ -90,7 +90,7 @@ class RunnerDemo(ShowBase):
         self.accept("mouse1", self._grapple_mock)
 
     def _on_tuning_change(self, field: str) -> None:
-        if field in ("player_radius", "player_half_height"):
+        if field in ("player_radius", "player_half_height", "crouch_half_height"):
             self.player.apply_hull_settings()
 
     def _toggle_pointer_lock(self) -> None:
@@ -177,16 +177,19 @@ class RunnerDemo(ShowBase):
         self._update_look()
 
         wish = self._wish_direction()
-        self.player.step(dt=dt, wish_dir=wish, yaw_deg=self._yaw)
+        self.player.step(dt=dt, wish_dir=wish, yaw_deg=self._yaw, crouching=self._is_crouching())
 
         if self.player.pos.z < -18:
             self._respawn()
 
         self.player_node.setPos(self.player.pos)
+        eye_height = float(self.tuning.player_eye_height)
+        if self.player.crouched and bool(self.tuning.crouch_enabled):
+            eye_height = min(eye_height, float(self.tuning.crouch_eye_height))
         self.camera.setPos(
             self.player.pos.x,
             self.player.pos.y,
-            self.player.pos.z + float(self.tuning.player_eye_height),
+            self.player.pos.z + eye_height,
         )
         self.camera.setHpr(self._yaw, self._pitch, 0)
 
@@ -198,6 +201,11 @@ class RunnerDemo(ShowBase):
         )
 
         return Task.cont
+
+    def _is_crouching(self) -> bool:
+        if self.mouseWatcherNode is None:
+            return False
+        return self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key("c"))
 
     def _smoke_exit(self, task: Task) -> int:
         self._smoke_frames -= 1

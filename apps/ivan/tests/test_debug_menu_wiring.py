@@ -70,8 +70,8 @@ def test_jump_accel_affects_air_acceleration_strength() -> None:
     low_ctrl.grounded = False
     high_ctrl.grounded = False
     wish = LVector3f(1, 0, 0)
-    low_ctrl.step(dt=0.016, wish_dir=wish, yaw_deg=0.0)
-    high_ctrl.step(dt=0.016, wish_dir=wish, yaw_deg=0.0)
+    low_ctrl.step(dt=0.016, wish_dir=wish, yaw_deg=0.0, crouching=False)
+    high_ctrl.step(dt=0.016, wish_dir=wish, yaw_deg=0.0, crouching=False)
     assert high_ctrl.vel.x > low_ctrl.vel.x
 
 
@@ -86,8 +86,8 @@ def test_air_counter_strafe_brake_strength_affects_deceleration() -> None:
     low_ctrl.vel = LVector3f(10, 0, 0)
     high_ctrl.vel = LVector3f(10, 0, 0)
     opposite = LVector3f(-1, 0, 0)
-    low_ctrl.step(dt=0.016, wish_dir=opposite, yaw_deg=0.0)
-    high_ctrl.step(dt=0.016, wish_dir=opposite, yaw_deg=0.0)
+    low_ctrl.step(dt=0.016, wish_dir=opposite, yaw_deg=0.0, crouching=False)
+    high_ctrl.step(dt=0.016, wish_dir=opposite, yaw_deg=0.0, crouching=False)
     assert abs(high_ctrl.vel.x) < abs(low_ctrl.vel.x)
 
 
@@ -109,5 +109,21 @@ def test_wallrun_does_not_cancel_upward_jump_velocity() -> None:
     ctrl._wall_contact_timer = 0.0
     ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
 
-    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
     assert ctrl.vel.z > 0.0
+
+
+def test_crouch_speed_multiplier_reduces_ground_acceleration() -> None:
+    tuning = PhysicsTuning(crouch_speed_multiplier=0.4, crouch_enabled=True)
+    stand_ctrl = _make_controller(tuning)
+    crouch_ctrl = _make_controller(tuning)
+    wish = LVector3f(1, 0, 0)
+
+    stand_ctrl.grounded = True
+    crouch_ctrl.grounded = True
+    stand_ctrl.step(dt=0.016, wish_dir=wish, yaw_deg=0.0, crouching=False)
+    crouch_ctrl.step(dt=0.016, wish_dir=wish, yaw_deg=0.0, crouching=True)
+
+    stand_speed = math.sqrt(stand_ctrl.vel.x * stand_ctrl.vel.x + stand_ctrl.vel.y * stand_ctrl.vel.y)
+    crouch_speed = math.sqrt(crouch_ctrl.vel.x * crouch_ctrl.vel.x + crouch_ctrl.vel.y * crouch_ctrl.vel.y)
+    assert crouch_speed < stand_speed
