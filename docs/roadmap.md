@@ -6,8 +6,9 @@
 
 ## Milestone 1: Movement Prototype
 - Player controller: ground/air, jump tuning, basic collision
+- Graybox test arena with a raised platform
+- Runtime tuning overlay + JSON presets
 - Camera prototype
-- Minimal "graybox" test level
 
 ## Milestone 2: Level Loop
 - Checkpoints + respawn

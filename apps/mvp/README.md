@@ -21,5 +21,32 @@ Smoke run (starts and exits quickly):
 python -m mvp --smoke
 ```
 
+## Controls (Prototype)
+
+Movement:
+- `W/A/S/D` - Move
+- `Space` - Jump
+- `Shift` - Sprint (only when enabled via feature flag)
+
+Tuning + feature flags:
+- `F1` - Toggle debug/tuning overlay
+- `F2` - Toggle air control
+- `F3` - Toggle bunny hop
+- `F4` - Toggle friction
+- `[` / `]` - Adjust gravity
+- `;` / `'` - Adjust jump speed
+- `,` / `.` - Adjust move speed
+- `O` / `P` - Adjust friction
+- `F5` - Save tuning JSON
+- `F6` - Reload tuning JSON
+
+## Settings
+
+The game loads tuning settings from `mvp_settings.json` in the current working directory by default.
+You can override the path:
+```bash
+python -m mvp --settings path/to/settings.json
+```
+
 ## Documentation
 - Global IRUN docs live at repo root in `docs/`.
