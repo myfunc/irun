@@ -29,7 +29,7 @@ class PhysicsTuning:
     enable_coyote: bool = True
     enable_jump_buffer: bool = True
     walljump_enabled: bool = True
-    wallrun_enabled: bool = True
+    wallrun_enabled: bool = False
     vault_enabled: bool = True
     crouch_enabled: bool = True
     grapple_enabled: bool = False
