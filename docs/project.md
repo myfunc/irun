@@ -1,7 +1,7 @@
 # Project
 
 ## One-Liner
-IRUN is a monorepo for the project; **MVP** is the main 3D platformer game app focused on responsive movement and clear traversal challenges.
+IRUN is a monorepo for the project with multiple game prototypes; current focus includes flow-driven 3D movement and traversal challenges.
 
 ## Status
 Prototype / initialization phase.
@@ -17,6 +17,7 @@ Prototype / initialization phase.
 
 ## Apps
 - `apps/mvp`: MVP (game)
+- `apps/ivan`: First-person flow-runner movement demo with real-time physics tuning
 
 ## Constraints (Initial)
 - Keep dependencies minimal and well-documented.

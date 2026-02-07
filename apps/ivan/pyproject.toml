@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "irun-ivan"
+version = "0.1.0"
+description = "Flow-first first-person runner demo app (IRUN monorepo) in Python."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Proprietary" }
+authors = [{ name = "IRUN Contributors" }]
+dependencies = [
+  "panda3d>=1.10.16",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.5.0",
+  "pytest>=8.0.0",
+  "bsp_tool>=0.6.0",
+]
+
+[project.scripts]
+ivan = "ivan.__main__:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
