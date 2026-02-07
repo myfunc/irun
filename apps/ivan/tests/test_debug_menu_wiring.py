@@ -169,3 +169,33 @@ def test_wall_detection_probe_refreshes_without_movement() -> None:
 
     ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
     assert ctrl.has_wall_for_jump()
+
+
+def test_cannot_walljump_same_wall_twice_in_a_row() -> None:
+    ctrl = _make_controller(PhysicsTuning(walljump_enabled=True))
+    ctrl.grounded = False
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
+    ctrl._wall_contact_point = LVector3f(10.0, 0.0, 2.0)
+    assert ctrl.has_wall_for_jump()
+    ctrl._apply_wall_jump(yaw_deg=0.0)
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
+    ctrl._wall_contact_point = LVector3f(10.1, 0.0, 2.2)
+    assert not ctrl.has_wall_for_jump()
+
+
+def test_can_walljump_multiple_times_in_air_on_different_walls() -> None:
+    ctrl = _make_controller(PhysicsTuning(walljump_enabled=True))
+    ctrl.grounded = False
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
+    ctrl._wall_contact_point = LVector3f(10.0, 0.0, 2.0)
+    assert ctrl.has_wall_for_jump()
+    ctrl._apply_wall_jump(yaw_deg=0.0)
+
+    # Different wall plane in same airtime should be allowed.
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(0.0, 1.0, 0.0)
+    ctrl._wall_contact_point = LVector3f(0.0, 10.0, 2.0)
+    assert ctrl.has_wall_for_jump()

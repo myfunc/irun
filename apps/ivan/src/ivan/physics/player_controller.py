@@ -38,7 +38,9 @@ class PlayerController:
 
         self._wall_contact_timer = 999.0
         self._wall_normal = LVector3f(0, 0, 0)
+        self._wall_contact_point = LVector3f(0, 0, 0)
         self._last_wall_jump_normal = LVector3f(0, 0, 0)
+        self._last_wall_jump_point = LVector3f(0, 0, 0)
         self._wall_jump_lock_timer = 999.0
         self._vault_cooldown_timer = 999.0
         self._ground_normal = LVector3f(0, 0, 1)
@@ -77,16 +79,21 @@ class PlayerController:
     def has_wall_for_jump(self) -> bool:
         if self._wall_contact_timer > 0.18 or self._wall_normal.lengthSquared() <= 0.01:
             return False
-        if self._wall_jump_lock_timer > 0.28:
-            return True
         n = LVector3f(self._wall_normal)
         l = LVector3f(self._last_wall_jump_normal)
         if n.lengthSquared() > 1e-12:
             n.normalize()
         if l.lengthSquared() > 1e-12:
             l.normalize()
-        # Disallow repeated wall-jumps from essentially the same wall for a short window.
-        return n.dot(l) < 0.6
+        # Disallow repeated wall-jumps off the same wall plane in a row.
+        if l.lengthSquared() <= 1e-12:
+            return True
+        same_plane = n.dot(l) > 0.9
+        if not same_plane:
+            return True
+        plane_d = l.dot(self._last_wall_jump_point)
+        dist = abs(l.dot(self._wall_contact_point) - plane_d)
+        return dist > 0.45
 
     def apply_grapple_impulse(self, *, yaw_deg: float) -> None:
         if not self.tuning.grapple_enabled:
@@ -156,6 +163,7 @@ class PlayerController:
         else:
             self._ground_timer = 0.0
             self._last_wall_jump_normal = LVector3f(0, 0, 0)
+            self._last_wall_jump_point = LVector3f(0, 0, 0)
             self._wall_jump_lock_timer = 999.0
 
         if wish_dir.lengthSquared() > 0.0:
@@ -186,6 +194,7 @@ class PlayerController:
         self.vel.y = boost.y
         self.vel.z = self._jump_up_speed() * 0.95
         self._last_wall_jump_normal = LVector3f(away)
+        self._last_wall_jump_point = LVector3f(self._wall_contact_point)
         self._wall_jump_lock_timer = 0.0
         self._wall_contact_timer = 999.0
         self._wall_normal = LVector3f(0, 0, 0)
@@ -406,15 +415,14 @@ class PlayerController:
         self.vel.y = horiz.y * new_speed
 
     def _refresh_wall_contact_from_probe(self) -> None:
-        n = self._probe_nearby_wall_normal()
+        n, p = self._probe_nearby_wall()
         if n.lengthSquared() <= 1e-12:
             return
-        self._wall_normal = n
-        self._wall_contact_timer = 0.0
+        self._set_wall_contact(n, p)
 
-    def _probe_nearby_wall_normal(self) -> LVector3f:
+    def _probe_nearby_wall(self) -> tuple[LVector3f, LVector3f]:
         if self.collision is None:
-            return LVector3f(0, 0, 0)
+            return LVector3f(0, 0, 0), LVector3f(0, 0, 0)
 
         probe_dist = max(0.08, float(self.tuning.player_radius) + 0.06)
         directions = (
@@ -437,8 +445,19 @@ class PlayerController:
                 wall_n = LVector3f(n.x, n.y, 0.0)
                 if wall_n.lengthSquared() > 1e-12:
                     wall_n.normalize()
-                    return wall_n
-        return LVector3f(0, 0, 0)
+                    frac = max(0.0, min(1.0, float(hit.getHitFraction())))
+                    p = self.pos + d * (probe_dist * frac)
+                    if hasattr(hit, "getHitPos"):
+                        p = LVector3f(hit.getHitPos())
+                    return wall_n, p
+        return LVector3f(0, 0, 0), LVector3f(0, 0, 0)
+
+    def _set_wall_contact(self, normal: LVector3f, point: LVector3f) -> None:
+        self._wall_normal = LVector3f(normal.x, normal.y, 0.0)
+        if self._wall_normal.lengthSquared() > 1e-12:
+            self._wall_normal.normalize()
+        self._wall_contact_point = LVector3f(point)
+        self._wall_contact_timer = 0.0
 
     def _player_aabb(self) -> AABB:
         return AABB(self.pos - self.player_half, self.pos + self.player_half)
@@ -552,10 +571,10 @@ class PlayerController:
                 if self.vel.z < 0.0:
                     self.vel.z = 0.0
             elif abs(n.z) < 0.65:
-                self._wall_normal = LVector3f(n.x, n.y, 0)
-                if self._wall_normal.lengthSquared() > 1e-12:
-                    self._wall_normal.normalize()
-                self._wall_contact_timer = 0.0
+                hit_pos = pos
+                if hasattr(hit, "getHitPos"):
+                    hit_pos = LVector3f(hit.getHitPos())
+                self._set_wall_contact(LVector3f(n.x, n.y, 0.0), hit_pos)
             elif n.z < -0.65 and self.vel.z > 0.0:
                 # Ceiling.
                 self.vel.z = 0.0
