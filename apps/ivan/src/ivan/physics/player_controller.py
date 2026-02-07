@@ -35,7 +35,10 @@ class PlayerController:
 
         self._wall_contact_timer = 999.0
         self._wall_normal = LVector3f(0, 0, 0)
+        self._last_wall_jump_normal = LVector3f(0, 0, 0)
+        self._wall_jump_lock_timer = 999.0
         self._ground_normal = LVector3f(0, 0, 1)
+        self._prev_wish_dir = LVector3f(0, 0, 0)
 
         self.apply_hull_settings()
 
@@ -62,7 +65,18 @@ class PlayerController:
         return bool(self.tuning.enable_coyote) and self._ground_timer <= float(self.tuning.coyote_time)
 
     def has_wall_for_jump(self) -> bool:
-        return self._wall_contact_timer <= 0.18 and self._wall_normal.lengthSquared() > 0.01
+        if self._wall_contact_timer > 0.18 or self._wall_normal.lengthSquared() <= 0.01:
+            return False
+        if self._wall_jump_lock_timer > 0.28:
+            return True
+        n = LVector3f(self._wall_normal)
+        l = LVector3f(self._last_wall_jump_normal)
+        if n.lengthSquared() > 1e-12:
+            n.normalize()
+        if l.lengthSquared() > 1e-12:
+            l.normalize()
+        # Disallow repeated wall-jumps from essentially the same wall for a short window.
+        return n.dot(l) < 0.6
 
     def apply_grapple_impulse(self, *, yaw_deg: float) -> None:
         if not self.tuning.grapple_enabled:
@@ -74,6 +88,7 @@ class PlayerController:
     def step(self, *, dt: float, wish_dir: LVector3f, sprinting: bool, yaw_deg: float) -> None:
         dt = float(dt)
         self._wall_contact_timer += dt
+        self._wall_jump_lock_timer += dt
         self._jump_buffer_timer = max(0.0, self._jump_buffer_timer - dt)
 
         # Determine grounded state before applying friction/accel (otherwise friction appears to "break"
@@ -90,13 +105,19 @@ class PlayerController:
             if self._consume_jump_request() and self.can_ground_jump():
                 self._apply_jump()
         else:
-            self._accelerate(wish_dir, float(self.tuning.max_air_speed), float(self.tuning.air_accel), dt)
-            self._air_control(wish_dir, dt)
-            self._apply_air_counter_strafe_brake(wish_dir, dt)
+            counter_strafe = self._is_counter_strafe(wish_dir)
+            if counter_strafe:
+                # Opposite input in air should brake aggressively instead of accelerating backward.
+                self._apply_air_counter_strafe_brake(wish_dir, dt)
+            else:
+                self._accelerate(wish_dir, float(self.tuning.max_air_speed), float(self.tuning.bhop_accel), dt)
+                self._air_control(wish_dir, dt)
 
             gravity_scale = 1.0
-            if self.tuning.wallrun_enabled and self.has_wall_for_jump() and self.vel.z <= 0.0:
-                gravity_scale = 0.38
+            if self.tuning.wallrun_enabled and self.has_wall_for_jump():
+                gravity_scale = 0.55
+                # Wallrun should be lateral, not a vertical climb.
+                self.vel.z = min(self.vel.z, 0.0)
                 self.vel.z = max(self.vel.z, -2.0)
 
             self.vel.z -= float(self.tuning.gravity) * gravity_scale * dt
@@ -117,6 +138,13 @@ class PlayerController:
             self._ground_timer += dt
         else:
             self._ground_timer = 0.0
+            self._last_wall_jump_normal = LVector3f(0, 0, 0)
+            self._wall_jump_lock_timer = 999.0
+
+        if wish_dir.lengthSquared() > 0.0:
+            self._prev_wish_dir = LVector3f(wish_dir.x, wish_dir.y, 0.0)
+        else:
+            self._prev_wish_dir = LVector3f(0, 0, 0)
 
     def _consume_jump_request(self) -> bool:
         return self._jump_buffer_timer > 0.0
@@ -137,6 +165,10 @@ class PlayerController:
         self.vel.x = boost.x
         self.vel.y = boost.y
         self.vel.z = float(self.tuning.jump_speed) * 0.95
+        self._last_wall_jump_normal = LVector3f(away)
+        self._wall_jump_lock_timer = 0.0
+        self._wall_contact_timer = 999.0
+        self._wall_normal = LVector3f(0, 0, 0)
         self._jump_buffer_timer = 0.0
 
     def _apply_friction(self, dt: float) -> None:
@@ -170,16 +202,36 @@ class PlayerController:
         self.vel.x += wish_dir.x * steer
         self.vel.y += wish_dir.y * steer
 
+    def _is_counter_strafe(self, wish_dir: LVector3f) -> bool:
+        horiz = LVector3f(self.vel.x, self.vel.y, 0)
+        speed = horiz.length()
+        if speed <= 0.01 or wish_dir.lengthSquared() <= 0.0:
+            return False
+        horiz.normalize()
+        return horiz.dot(wish_dir) < -0.25
+
     def _apply_air_counter_strafe_brake(self, wish_dir: LVector3f, dt: float) -> None:
         horiz = LVector3f(self.vel.x, self.vel.y, 0)
         speed = horiz.length()
         if speed <= 0.01 or wish_dir.lengthSquared() <= 0.0:
             return
         horiz.normalize()
-        if horiz.dot(wish_dir) < -0.2:
-            decel = min(speed, float(self.tuning.air_counter_strafe_brake) * dt + speed * 8.0 * dt)
-            self.vel.x -= horiz.x * decel
-            self.vel.y -= horiz.y * decel
+        dot_now = horiz.dot(wish_dir)
+        if dot_now > -0.25:
+            return
+
+        prev = LVector3f(self._prev_wish_dir)
+        was_opposite = False
+        if prev.lengthSquared() > 1e-12:
+            prev.normalize()
+            was_opposite = horiz.dot(prev) < -0.25
+
+        # Aggressive air braking with no reverse acceleration.
+        bonus = speed * (14.0 if not was_opposite else 10.0) * dt
+        decel = float(self.tuning.air_counter_strafe_brake) * dt + bonus
+        new_speed = max(0.0, speed - decel)
+        self.vel.x = horiz.x * new_speed
+        self.vel.y = horiz.y * new_speed
 
     def _player_aabb(self) -> AABB:
         return AABB(self.pos - self.player_half, self.pos + self.player_half)
@@ -310,6 +362,10 @@ class PlayerController:
         # StepSlideMove: try regular slide; then try stepping up and sliding; choose the best.
         if delta.lengthSquared() <= 1e-12:
             return
+        if not self.grounded:
+            # Do not perform step-up in air; otherwise vertical walls can feel like ladders.
+            self._bullet_slide_move(delta)
+            return
 
         start_pos = LVector3f(self.pos)
         start_vel = LVector3f(self.vel)
@@ -432,4 +488,3 @@ class PlayerController:
                 self.vel.z = 0
 
             paabb = self._player_aabb()
-
