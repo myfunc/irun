@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "irun"
+version = "0.1.0"
+description = "IRUN: a 3D platformer prototype in Python."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Proprietary" }
+authors = [{ name = "IRUN Contributors" }]
+dependencies = [
+  "ursina>=5.0.0",
+  "screeninfo>=0.8.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.5.0",
+  "pytest>=8.0.0",
+]
+
+[project.scripts]
+irun = "irun.__main__:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
