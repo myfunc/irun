@@ -1,30 +1,19 @@
-.PHONY: run lint test mvp-run mvp-lint mvp-test ivan-run ivan-lint ivan-test
+.PHONY: run lint test ivan-run ivan-lint ivan-test
 
 run:
 	$(MAKE) ivan-run
 
 lint:
-	$(MAKE) mvp-lint
 	$(MAKE) ivan-lint
 
 test:
-	$(MAKE) mvp-test
 	$(MAKE) ivan-test
 
-mvp-run:
-	cd apps/mvp && python -m mvp
-
-mvp-lint:
-	cd apps/mvp && ruff check .
-
-mvp-test:
-	cd apps/mvp && pytest -q
-
 ivan-run:
-	cd apps/ivan && python -m ivan
+	cd apps/ivan && ( [ -x .venv/bin/python ] && .venv/bin/python -m ivan || python3 -m ivan )
 
 ivan-lint:
-	cd apps/ivan && ruff check .
+	cd apps/ivan && ( [ -x .venv/bin/ruff ] && .venv/bin/ruff check . || ruff check . )
 
 ivan-test:
-	cd apps/ivan && pytest -q
+	cd apps/ivan && ( [ -x .venv/bin/pytest ] && .venv/bin/pytest -q || pytest -q )

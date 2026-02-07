@@ -1,13 +1,15 @@
 # Features
 
 ## Implemented (Prototype)
-- MVP: boot to a simple 3D scene
-- IVAN demo: first-person playable graybox with bhop/strafe-style movement prototype
-- IVAN demo: in-game debug/admin panel with live movement parameter tuning
-- IVAN demo: ledge-vault prototype (second-jump near ledge, with configurable boost and ledge height window)
-- IVAN demo: crouch mechanic (hold C) with configurable crouch speed and hull/camera heights
-- IVAN demo: generated test course with walls and jump obstacles
-- IVAN demo: Dust2 Largo BSP-to-triangle asset pipeline and runtime map loading
+- Ivan: boot to a playable first-person 3D graybox
+- Ivan: bhop/strafe-style movement prototype
+- Ivan: in-game debug/admin panel with live movement parameter tuning
+- Ivan: input debug overlay (`F2`) for keyboard/mouse troubleshooting
+- Ivan: generated test course with walls and jump obstacles
+- Ivan: BSP-to-map-bundle asset pipeline and runtime map loading (`--map`, including assets-relative aliases)
+- Ivan: Source material extraction (VTF->PNG conversion), textured rendering, and skybox hookup
+- Ivan: GoldSrc/Xash3D importer (WAD texture extraction + resource copying to bundle; incl. sound/model paths)
+- Ivan: Half-Life map picker (`--hl-root`) with on-demand GoldSrc import and collision filtering
 
 ## Planned (High-Level)
 - Movement: walk/run, jump, coyote time, jump buffer, air control

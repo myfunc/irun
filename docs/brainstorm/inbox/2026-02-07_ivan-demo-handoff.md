@@ -56,19 +56,17 @@ Implemented:
 - Always-visible speed readout at top center.
 - Horizontal speed displayed as integer (`Speed: <int> u/s`).
 
-### Dust2 pipeline
+### BSP map pipeline (demo)
 User requested exact map usage from:
 - `https://github.com/rolivencia/de_dust2_largo`
 
 Implemented:
 - Repo cloned to `apps/ivan/assets/maps/de_dust2_largo`.
 - Conversion script added:
-  - `apps/ivan/tools/build_dust2_assets.py`
-- Generated asset produced:
-  - `apps/ivan/assets/generated/de_dust2_largo_map.json`
-  - Current output: 3434 triangles.
+  - `apps/ivan/tools/build_source_bsp_assets.py`
+- Bundle format + loader implemented (`--map <bundle>/map.json`).
 - Runtime integration:
-  - Game attempts to load generated Dust2 asset first.
+  - Game attempts to load an explicit `--map` bundle first.
   - If present/valid, builds render geometry + collision polygons from the same triangle data.
   - Falls back to sample/graybox scene if generated asset is missing/invalid.
 - Added `bsp_tool` as dev dependency in `apps/ivan/pyproject.toml`.
@@ -99,12 +97,14 @@ source .venv/bin/activate
 python3 -m ivan
 ```
 
-### Rebuild Dust2 generated asset
+### Rebuild Source BSP demo bundle
 ```bash
 cd apps/ivan
-python3 tools/build_dust2_assets.py \
+python3 tools/build_source_bsp_assets.py \
   --input assets/maps/de_dust2_largo/csgo/dist/de_dust2_largo.bsp \
-  --output assets/generated/de_dust2_largo_map.json \
+  --materials-root assets/maps/de_dust2_largo/csgo/materials \
+  --materials-out assets/generated/materials \
+  --output <bundle-dir>/map.json \
   --scale 0.03
 ```
 

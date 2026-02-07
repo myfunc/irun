@@ -1,8 +1,8 @@
 # Documentation Index
 
 ## Repo Structure
-- Applications live under `apps/` (e.g. `apps/mvp`, `apps/ivan`)
-  - Game apps: `apps/mvp`, `apps/ivan`
+- Applications live under `apps/` (e.g. `apps/ivan`)
+  - Game apps: `apps/ivan`
 
 ## Global
 - `docs/project.md`: Project overview and pillars
@@ -13,3 +13,6 @@
 
 ## Brainstorm
 - `docs/brainstorm/README.md`: Brainstorm structure and templates
+
+## Skills
+- `docs/skills/map-conversion/SKILL.md`: Source BSP to IVAN runtime conversion (geometry, materials, skybox)
