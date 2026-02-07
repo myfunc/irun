@@ -25,3 +25,5 @@ coverage.xml
 .idea/
 .vscode/
 
+# Imported runtime assets (local machine specific, often large binaries).
+apps/ivan/assets/imported/

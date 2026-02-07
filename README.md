@@ -1,25 +1,14 @@
 # IRUN
 
-IRUN is a monorepo for multiple applications related to the project.
+IRUN is a monorepo for applications related to the project.
 
 ## Apps
-- `apps/mvp`: MVP, the main 3D platformer game (Python + Panda3D)
-- `apps/ivan`: IVAN, first-person flow runner movement demo (Python + Panda3D)
+- `apps/ivan`: Ivan, first-person flow runner movement demo (Python + Panda3D)
 
-## Quick Start (MVP)
-```bash
-cd apps/mvp
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip
-python -m pip install -e ".[dev]"
-python -m mvp
-```
-
-## Quick Start (IVAN Demo)
+## Quick Start (Ivan)
 ```bash
 cd apps/ivan
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e ".[dev]"

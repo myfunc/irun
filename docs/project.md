@@ -16,8 +16,7 @@ Prototype / initialization phase.
 - Runtime: Python
 
 ## Apps
-- `apps/mvp`: MVP (game)
-- `apps/ivan`: First-person flow-runner movement demo with real-time physics tuning
+- `apps/ivan`: Primary game project (first-person flow-runner movement demo with real-time physics tuning)
 
 ## Constraints (Initial)
 - Keep dependencies minimal and well-documented.
