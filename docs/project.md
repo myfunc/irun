@@ -1,7 +1,7 @@
 # Project
 
 ## One-Liner
-IRUN is a fast, readable 3D platformer focused on responsive movement and clear traversal challenges.
+IRUN is a monorepo for the project; **UP** is the main 3D platformer game app focused on responsive movement and clear traversal challenges.
 
 ## Status
 Prototype / initialization phase.
@@ -15,7 +15,9 @@ Prototype / initialization phase.
 - Platform: Desktop (macOS/Windows/Linux)
 - Runtime: Python
 
+## Apps
+- `apps/up`: UP (game)
+
 ## Constraints (Initial)
 - Keep dependencies minimal and well-documented.
 - Prefer deterministic gameplay rules over emergent physics chaos.
-

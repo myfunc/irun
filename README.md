@@ -1,26 +1,21 @@
 # IRUN
 
-IRUN is an early-stage **3D platformer** written in **Python**.
+IRUN is a monorepo for multiple applications related to the project.
 
-## Quick Start
+## Apps
+- `apps/up`: UP, the main 3D platformer game (Python + Ursina)
 
-Requirements:
-- Python 3.11+ recommended
-
-Install and run:
+## Quick Start (UP)
 ```bash
+cd apps/up
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e ".[dev]"
-python -m irun
-```
-
-Smoke run (starts and exits quickly):
-```bash
-python -m irun --smoke
+python -m up
 ```
 
 ## Documentation
-- Global docs live in `docs/` (see `docs/README.md`).
-- Brainstorm notes live in `docs/brainstorm/`.
+- Global docs: `docs/` (start with `docs/README.md`)
+- Brainstorm: `docs/brainstorm/`
+

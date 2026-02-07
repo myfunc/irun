@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import argparse
 
-from irun.game import run
+from up.game import run
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="irun", description="IRUN prototype runner")
+    parser = argparse.ArgumentParser(prog="up", description="UP app runner (IRUN monorepo)")
     parser.add_argument(
         "--smoke",
         action="store_true",

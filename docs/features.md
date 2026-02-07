@@ -1,8 +1,8 @@
 # Features
 
 ## Implemented (Prototype)
-- Boot to a simple 3D scene
-- Basic player movement placeholder
+- UP: boot to a simple 3D scene
+- UP: basic player movement placeholder
 
 ## Planned (High-Level)
 - Movement: walk/run, jump, coyote time, jump buffer, air control
@@ -15,4 +15,3 @@
 - Multiplayer
 - Networked features
 - Modding pipeline
-
