@@ -5,6 +5,8 @@ description: Convert Source/GoldSrc BSP maps into IVAN runtime map bundles. Use 
 
 # IRUN Map Conversion (IVAN)
 
+This skill is intended for an agent/operator workflow: given a BSP + the game assets it depends on (WADs, sounds, models, sprites), produce an IVAN **map bundle** under `apps/ivan/assets/` and run it by a short alias.
+
 ## What Exists Today
 
 IVAN loads a **map bundle** described by a single `map.json` file, plus assets next to it.
@@ -34,7 +36,15 @@ python -m pip install -U pip
 python -m pip install -e ".[dev]"
 ```
 
-2. Build/refresh a **Source** bundle (VTF -> PNG):
+1. Recommended bundle locations (keeps `--map` aliases short):
+- Output bundles: `apps/ivan/assets/imported/<vendor>/<mod>/<map_id>/`
+- If you need to drop inputs later for an agent to import: `apps/ivan/assets/incoming/<vendor>/<mod>/`
+  - For GoldSrc, treat `<mod>` like a mod folder (e.g. `valve`, `cstrike`):
+    - `apps/ivan/assets/incoming/halflife/valve/maps/<map>.bsp`
+    - `apps/ivan/assets/incoming/halflife/valve/wads/<wad>.wad` (or directly under the mod root)
+    - optional: `sound/`, `models/`, `sprites/`, `gfx/` (resources for `--copy-resources`)
+
+1. Build/refresh a **Source** bundle (VTF -> PNG):
 ```bash
 cd apps/ivan
 source .venv/bin/activate
@@ -46,7 +56,7 @@ python3 tools/build_source_bsp_assets.py \
   --scale 0.03
 ```
 
-3. Import a **GoldSrc/Xash3D** bundle (WAD textures; optional resource copy):
+1. Import a **GoldSrc/Xash3D** bundle (WAD textures; optional resource copy):
 ```bash
 cd apps/ivan
 source .venv/bin/activate
@@ -57,11 +67,42 @@ python3 tools/importers/goldsrc/import_goldsrc_bsp.py \
   --scale 0.03
 ```
 
-4. Run:
+GoldSrc analyze-only (prints WAD list + detected resource refs, no output written):
+```bash
+python3 tools/importers/goldsrc/import_goldsrc_bsp.py \
+  --bsp <path-to-goldsrc.bsp> \
+  --game-root <path-to-mod-root> \
+  --analyze
+```
+
+GoldSrc “drop-in incoming folder” example:
+```bash
+cd apps/ivan
+source .venv/bin/activate
+python3 tools/importers/goldsrc/import_goldsrc_bsp.py \
+  --bsp assets/incoming/halflife/valve/maps/crossfire.bsp \
+  --game-root assets/incoming/halflife/valve \
+  --out assets/imported/halflife/valve/crossfire \
+  --map-id crossfire \
+  --scale 0.03
+python -m ivan --map imported/halflife/valve/crossfire
+```
+
+1. Run:
 ```bash
 cd apps/ivan
 source .venv/bin/activate
 python -m ivan --map <bundle-dir>/map.json
+```
+
+You can also run via a short alias under `apps/ivan/assets/`:
+```bash
+python -m ivan --map imported/halflife/valve/crossfire
+```
+
+Half-Life map picker (imports GoldSrc maps on demand from a Steam install):
+```bash
+python -m ivan --hl-root "<Half-Life install root>" --hl-mod valve
 ```
 
 ## Output Format (Generated JSON)
@@ -118,3 +159,24 @@ Troubleshooting:
 - Lightmaps are not rendered yet. The runtime uses per-vertex color as a baked lighting tint.
 - No props, decals, or dynamic entities are imported (only the BSP face meshes).
 - GoldSrc sound/models are not used by runtime yet. The importer can optionally copy them into the bundle via `--copy-resources`.
+  - When copying resources, the importer intentionally skips executable code/binaries:
+    - directories: `dlls/`, `cl_dlls/`, `bin/`, `plugins/`
+    - extensions: `.dll`, `.exe`, `.dylib`, `.so`, etc
+
+## Collision/Rendering Import Policy (GoldSrc)
+
+The GoldSrc importer builds two triangle streams:
+- `triangles`: render geometry (skips common non-render textures like `trigger`, `skip`, `clip`, `nodraw`, etc).
+- `collision_triangles`: collision-only geometry with entity-aware filtering.
+
+Default collision filtering:
+- Worldspawn model (`*0`): renders + collides.
+- `trigger_*`: does not render and does not collide.
+- `func_illusionary`: renders, does not collide.
+- Common solid brush entities collide (doors, plats, trains, breakables, etc).
+- Conservative default for unknown brush entities: render but do not collide (avoids importing invisible blockers).
+
+## Troubleshooting
+
+- “Map loads but input feels dead”: toggle the input overlay (`F2`) and confirm key/mouse state.
+- “Spawn instantly resets”: check `bounds.min.z` and `kill_z` in the loaded `map.json` (respawn plane is derived from map bounds).

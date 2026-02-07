@@ -141,6 +141,8 @@ python -m ivan --map <bundle-dir>/map.json
 Notes:
 - By default, the importer extracts only textures referenced by the BSP into `<bundle-dir>/materials/` and does not
   copy other game assets. If you need extra assets copied, pass `--copy-resources`.
+- When copying resources, the importer intentionally skips executable code/binaries (e.g. `dlls/`, `cl_dlls/`, `bin/`,
+  and extensions like `.dll`, `.exe`, `.dylib`, `.so`).
 - Triangle-map collision response uses Bullet convex sweep tests and a Quake3-style kinematic controller
   (step + slide with plane clipping) for stable wall/ceiling/slope handling.
 - The Source build step converts `materials/**/*.vtf` into PNG so Panda3D can load them.
