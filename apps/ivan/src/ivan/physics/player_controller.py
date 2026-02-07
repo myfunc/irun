@@ -28,8 +28,10 @@ class PlayerController:
         self.pos = LVector3f(self.spawn_point)
         self.vel = LVector3f(0, 0, 0)
         self.player_half = LVector3f(tuning.player_radius, tuning.player_radius, tuning.player_half_height)
+        self._standing_half_height = float(tuning.player_half_height)
 
         self.grounded = False
+        self.crouched = False
         self._ground_timer = 0.0
         self._jump_buffer_timer = 0.0
         self._jump_pressed = False
@@ -45,18 +47,21 @@ class PlayerController:
         self.apply_hull_settings()
 
     def apply_hull_settings(self) -> None:
+        self._standing_half_height = float(self.tuning.player_half_height)
         self.player_half.x = float(self.tuning.player_radius)
         self.player_half.y = float(self.tuning.player_radius)
-        self.player_half.z = float(self.tuning.player_half_height)
+        self.player_half.z = self._current_target_half_height()
         if self.collision is not None:
             self.collision.update_player_sweep_shape(
                 player_radius=float(self.tuning.player_radius),
-                player_half_height=float(self.tuning.player_half_height),
+                player_half_height=float(self.player_half.z),
             )
 
     def respawn(self) -> None:
         self.pos = LVector3f(self.spawn_point)
         self.vel = LVector3f(0, 0, 0)
+        self.crouched = False
+        self.apply_hull_settings()
 
     def queue_jump(self) -> None:
         if self.tuning.enable_jump_buffer:
@@ -90,8 +95,9 @@ class PlayerController:
         forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0)
         self.vel += forward * 4.5 + LVector3f(0, 0, 1.8)
 
-    def step(self, *, dt: float, wish_dir: LVector3f, yaw_deg: float) -> None:
+    def step(self, *, dt: float, wish_dir: LVector3f, yaw_deg: float, crouching: bool) -> None:
         dt = float(dt)
+        self._update_crouch_state(crouching)
         self._wall_contact_timer += dt
         self._wall_jump_lock_timer += dt
         self._vault_cooldown_timer += dt
@@ -102,7 +108,8 @@ class PlayerController:
         if self.collision is not None:
             self._bullet_ground_trace()
 
-        target_ground_speed = float(self.tuning.max_ground_speed)
+        speed_scale = float(self.tuning.crouch_speed_multiplier) if self.crouched else 1.0
+        target_ground_speed = float(self.tuning.max_ground_speed) * speed_scale
 
         if self.grounded:
             self._apply_friction(dt)
@@ -278,6 +285,73 @@ class PlayerController:
         scale = new_speed / speed
         self.vel.x *= scale
         self.vel.y *= scale
+
+    def _current_target_half_height(self) -> float:
+        stand_h = max(0.15, float(self._standing_half_height))
+        if self.crouched and self.tuning.crouch_enabled:
+            return min(stand_h, max(0.15, float(self.tuning.crouch_half_height)))
+        return stand_h
+
+    def _update_crouch_state(self, crouching: bool) -> None:
+        if not self.tuning.crouch_enabled:
+            crouching = False
+
+        target = bool(crouching)
+        if target == self.crouched:
+            return
+        if target:
+            self._apply_crouch_hull(True)
+            self.crouched = True
+            return
+
+        if self._can_uncrouch():
+            self._apply_crouch_hull(False)
+            self.crouched = False
+
+    def _apply_crouch_hull(self, crouched: bool) -> None:
+        old_half = float(self.player_half.z)
+        stand_h = max(0.15, float(self._standing_half_height))
+        crouch_h = min(stand_h, max(0.15, float(self.tuning.crouch_half_height)))
+        new_half = crouch_h if crouched else stand_h
+        if abs(new_half - old_half) < 1e-6:
+            return
+
+        self.player_half.z = new_half
+        self.pos.z -= old_half - new_half
+        if self.collision is not None:
+            self.collision.update_player_sweep_shape(
+                player_radius=float(self.tuning.player_radius),
+                player_half_height=float(new_half),
+            )
+
+    def _can_uncrouch(self) -> bool:
+        if self.collision is None:
+            return True
+        stand_h = max(0.15, float(self._standing_half_height))
+        if stand_h <= self.player_half.z + 1e-6:
+            return True
+
+        from_pos = LVector3f(self.pos)
+        to_pos = LVector3f(self.pos.x, self.pos.y, self.pos.z + (stand_h - self.player_half.z))
+        old_half = float(self.player_half.z)
+        old_pos = LVector3f(self.pos)
+
+        self.player_half.z = stand_h
+        self.pos = LVector3f(to_pos)
+        self.collision.update_player_sweep_shape(
+            player_radius=float(self.tuning.player_radius),
+            player_half_height=float(stand_h),
+        )
+        hit = self._bullet_sweep_closest(from_pos, to_pos)
+
+        self.player_half.z = old_half
+        self.pos = old_pos
+        self.collision.update_player_sweep_shape(
+            player_radius=float(self.tuning.player_radius),
+            player_half_height=float(old_half),
+        )
+
+        return not hit.hasHit()
 
     def _accelerate(self, wish_dir: LVector3f, wish_speed: float, accel: float, dt: float) -> None:
         if wish_dir.lengthSquared() <= 0.0:

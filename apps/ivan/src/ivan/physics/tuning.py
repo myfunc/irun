@@ -7,14 +7,17 @@ from dataclasses import dataclass
 class PhysicsTuning:
     gravity: float = 24.0
     jump_height: float = 1.48
-    max_ground_speed: float = 8.976
+    max_ground_speed: float = 6.643
     max_air_speed: float = 11.258
-    ground_accel: float = 48.009
-    jump_accel: float = 11.408
+    ground_accel: float = 26.340
+    jump_accel: float = 1.000
     friction: float = 6.5
-    air_control: float = 0.35
-    air_counter_strafe_brake: float = 5.0
+    air_control: float = 0.241
+    air_counter_strafe_brake: float = 12.610
     mouse_sensitivity: float = 0.14
+    crouch_speed_multiplier: float = 0.65
+    crouch_half_height: float = 0.68
+    crouch_eye_height: float = 0.42
     wall_jump_boost: float = 5.534
     vault_jump_multiplier: float = 1.25
     vault_forward_boost: float = 2.0
@@ -25,9 +28,10 @@ class PhysicsTuning:
     jump_buffer_time: float = 0.14
     enable_coyote: bool = True
     enable_jump_buffer: bool = True
-    walljump_enabled: bool = False
+    walljump_enabled: bool = True
     wallrun_enabled: bool = True
-    vault_enabled: bool = False
+    vault_enabled: bool = True
+    crouch_enabled: bool = True
     grapple_enabled: bool = False
     # Quake3-style character collision parameters.
     max_ground_slope_deg: float = 46.0

@@ -44,6 +44,7 @@ python -m ivan --smoke
 
 ## Controls
 - `WASD`: move (US layout). On RU layout you can use `ЦФЫВ`. Arrow keys also work.
+- `C` (hold): crouch
 - `Space`: jump
 - `R`: reset to spawn
 - `Esc`: toggle pointer lock and debug/admin menu
@@ -65,7 +66,7 @@ Numeric settings include sliders + entry fields for precise tuning:
 - Gravity, jump height, ground/air speed caps
 - Ground acceleration, jump acceleration (bunnyhop/strafe), friction, air control
 - Air counter-strafe brake strength
-- Mouse sensitivity
+- Mouse sensitivity, crouch speed/height/camera
 - Wall jump boost, vault jump/speed/ledge window, coyote time, jump buffer time
 
 Boolean toggles are shown inline as labeled rows with `ON/OFF` buttons:
@@ -74,6 +75,7 @@ Boolean toggles are shown inline as labeled rows with `ON/OFF` buttons:
 - Wall jump
 - Wallrun (toggle only, prototype hook)
 - Vault (toggle only)
+- Crouch
 - Grapple (toggle + mock impulse)
 
 Movement notes:
