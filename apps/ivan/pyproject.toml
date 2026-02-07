@@ -12,14 +12,16 @@ license = { text = "Proprietary" }
 authors = [{ name = "IRUN Contributors" }]
 dependencies = [
   "panda3d>=1.10.16",
+  # Used by the in-game Half-Life map picker (GoldSrc import) and Source BSP converter tool.
+  "bsp_tool>=0.6.0",
+  # Used by import tools to write PNGs (WAD/VTF -> PNG).
+  "Pillow>=10.0.0",
 ]
 
 [project.optional-dependencies]
 dev = [
   "ruff>=0.5.0",
   "pytest>=8.0.0",
-  "bsp_tool>=0.6.0",
-  "Pillow>=10.0.0",
 ]
 
 [project.scripts]
