@@ -17,7 +17,8 @@ from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, resolve_bundle_handle
 from ivan.paths import app_root as ivan_app_root
 from ivan.state import IvanState, load_state, resolve_map_json, update_state
 from ivan.ui.native_dialogs import pick_directory
-from ivan.ui.retro_menu_ui import RetroMenuItem, RetroMenuUI
+from irun_ui_kit.theme import Theme
+from irun_ui_kit.widgets.list_menu import ListMenu, ListMenuItem
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class MainMenuController:
         self,
         *,
         aspect2d,
+        theme: Theme,
         initial_game_root: str | None,
         initial_mod: str | None,
         state: IvanState | None = None,
@@ -46,8 +48,9 @@ class MainMenuController:
 
         self._app_root = ivan_app_root()
         self._state = state or load_state()
-        self._ui = RetroMenuUI(
+        self._ui = ListMenu(
             aspect2d=aspect2d,
+            theme=theme,
             title="IVAN",
             hint="Up/Down: select | Enter: choose | Esc: back/quit",
         )
@@ -149,30 +152,30 @@ class MainMenuController:
 
     def _refresh_main(self) -> None:
         self._ui.set_title("IVAN :: Main Menu")
-        items: list[RetroMenuItem] = []
+        items: list[ListMenuItem] = []
 
         self._refresh_continue()
         self._normalize_game_root()
         if self._continue_map_json:
             label = self._continue_label or self._continue_map_json
-            items.append(RetroMenuItem(f"Continue: {label}", enabled=self._continue_enabled))
+            items.append(ListMenuItem(f"Continue: {label}", enabled=self._continue_enabled))
 
         # Quick start: Bounce if present.
         bounce_dir = self._app_root / "assets" / "imported" / "halflife" / "valve" / "bounce" / "map.json"
         bounce_packed = self._app_root / "assets" / "imported" / "halflife" / "valve" / f"bounce{PACKED_BUNDLE_EXT}"
         bounce = bounce_dir if bounce_dir.exists() else bounce_packed
-        items.append(RetroMenuItem("Quick Start: Bounce", enabled=bounce.exists()))
+        items.append(ListMenuItem("Quick Start: Bounce", enabled=bounce.exists()))
 
-        items.append(RetroMenuItem("Play Imported/Generated Map Bundle"))
-        items.append(RetroMenuItem("Import GoldSrc/Xash3D Map From Game Directory"))
-        items.append(RetroMenuItem("Auto-detect Steam Half-Life"))
+        items.append(ListMenuItem("Play Imported/Generated Map Bundle"))
+        items.append(ListMenuItem("Import GoldSrc/Xash3D Map From Game Directory"))
+        items.append(ListMenuItem("Auto-detect Steam Half-Life"))
 
         if self._game_root:
-            items.append(RetroMenuItem(f"Game dir: {self._game_root}"))
+            items.append(ListMenuItem(f"Game dir: {self._game_root}"))
         else:
-            items.append(RetroMenuItem("Game dir: (not set)"))
+            items.append(ListMenuItem("Game dir: (not set)"))
 
-        items.append(RetroMenuItem("Quit"))
+        items.append(ListMenuItem("Quit"))
         self._ui.set_items(items, selected=0)
         self._ui.set_status("")
 
@@ -225,7 +228,7 @@ class MainMenuController:
         if idx == 1:
             self._screen = "bundles"
             self._bundles = find_runnable_bundles(app_root=self._app_root)
-            items = [RetroMenuItem(b.label) for b in self._bundles]
+            items = [ListMenuItem(b.label) for b in self._bundles]
             self._ui.set_title("IVAN :: Map Bundles")
             self._ui.set_hint("Up/Down: select | Enter: options | Del/Backspace: delete | Esc: back")
             self._ui.set_items(items, selected=0)
@@ -254,7 +257,7 @@ class MainMenuController:
             selected = 0
             if self._mod and self._mod in self._mods:
                 selected = self._mods.index(self._mod)
-            self._ui.set_items([RetroMenuItem(m) for m in self._mods], selected=selected)
+            self._ui.set_items([ListMenuItem(m) for m in self._mods], selected=selected)
             self._ui.set_status(f"{len(self._mods)} mods found.")
             return
 
@@ -299,13 +302,13 @@ class MainMenuController:
         self._ui.set_hint("Up/Down: select | Enter: choose | Del/Backspace: delete | Esc: back")
         self._ui.set_items(
             [
-                RetroMenuItem("Run (saved config)"),
-                RetroMenuItem("Run: Lighting = Original (bundle)"),
-                RetroMenuItem("Run: Lighting = Server defaults"),
-                RetroMenuItem("Run: Lighting = Static (no animation)"),
-                RetroMenuItem("Save default: Lighting = Original (bundle)"),
-                RetroMenuItem("Save default: Lighting = Server defaults"),
-                RetroMenuItem("Save default: Lighting = Static (no animation)"),
+                ListMenuItem("Run (saved config)"),
+                ListMenuItem("Run: Lighting = Original (bundle)"),
+                ListMenuItem("Run: Lighting = Server defaults"),
+                ListMenuItem("Run: Lighting = Static (no animation)"),
+                ListMenuItem("Save default: Lighting = Original (bundle)"),
+                ListMenuItem("Save default: Lighting = Server defaults"),
+                ListMenuItem("Save default: Lighting = Static (no animation)"),
             ],
             selected=0,
         )
@@ -355,7 +358,7 @@ class MainMenuController:
         self._screen = "maps"
         self._ui.set_title(f"IVAN :: Select Map ({self._mod})")
         self._ui.set_hint("Up/Down: select | Enter: import+run | Esc: back")
-        self._ui.set_items([RetroMenuItem(m.label) for m in maps], selected=0)
+        self._ui.set_items([ListMenuItem(m.label) for m in maps], selected=0)
         self._ui.set_status(f"{len(maps)} maps found.")
 
     def _enter_map(self, idx: int) -> None:
@@ -410,7 +413,7 @@ class MainMenuController:
             return
 
     def _refresh_bundles(self) -> None:
-        items = [RetroMenuItem(b.label) for b in self._bundles]
+        items = [ListMenuItem(b.label) for b in self._bundles]
         self._ui.set_title("IVAN :: Map Bundles")
         self._ui.set_hint("Up/Down: select | Enter: options | Del/Backspace: delete | Esc: back")
         self._ui.set_items(items, selected=0)
@@ -425,8 +428,8 @@ class MainMenuController:
         self._ui.set_hint("Enter: confirm | Esc: cancel")
         self._ui.set_items(
             [
-                RetroMenuItem(f"DELETE permanently: {label}"),
-                RetroMenuItem("Cancel"),
+                ListMenuItem(f"DELETE permanently: {label}"),
+                ListMenuItem("Cancel"),
             ],
             selected=1,
         )

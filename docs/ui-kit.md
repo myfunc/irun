@@ -1,8 +1,7 @@
-# UI Kit (Experimental)
+# UI Kit
 
-The IRUN UI Kit is an **experimental, procedural** widget library targeting **Panda3D DirectGUI**.
-It lives under `apps/ui_kit/` and is designed to stabilize UI primitives and theme rules before
-wiring them into `apps/ivan`.
+The IRUN UI Kit is an internal, procedural widget library targeting **Panda3D DirectGUI**.
+It lives under `apps/ui_kit/` and is the default way to build Ivan's non-HUD UI (menus, panels, screens).
 
 ## Goals
 - Procedural-first: no required shipped textures to get usable UI.
@@ -53,6 +52,11 @@ Controls:
 - `Checkbox`: visual checkbox (box + mark) with hover/pressed feedback.
 - `Slider`: compact horizontal slider with value readout.
 - `TextInput`: DirectEntry wrapper with a consistent frame and basic editing hotkeys (macOS-focused).
+- `NumericControl`: label + normalized slider + entry for tuning numeric values.
+- `Dropdown`: compact select control with a popup list and wheel scrolling.
+- `Scrolled`: themed wrapper around `DirectScrolledFrame`.
+- `ListMenu`: keyboard-friendly menu list (title/hint/rows/status) with optional search.
+- `Tooltip`: minimal hover tooltip helper.
 
 ## Demo / Playground
 The kit includes an interactive playground to exercise the components on one screen:
@@ -67,7 +71,6 @@ PYTHONPATH=apps/ui_kit/src apps/ivan/.venv/bin/python -m irun_ui_kit.demo --smok
 ```
 
 ## Integration Plan
-- Iterate UI primitives and theme rules in `apps/ui_kit`.
-- Once stable, selectively port/wire components into `apps/ivan` UI screens.
+- The UI kit is the default for Ivan non-HUD UI.
 - Keep `apps/ui_kit` free of game-specific content; it should remain a reusable library.
-
+- If a shared UI feature is missing, implement it in `apps/ui_kit` rather than shipping custom UI in game code.

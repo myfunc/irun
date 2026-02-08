@@ -81,7 +81,7 @@ class DemoApp(ShowBase):
             if ch < 0.05:
                 ch = 0.05
             return DirectFrame(
-                parent=panel.node,
+                parent=panel.content,
                 frameColor=(0, 0, 0, 0),
                 relief=DGG.FLAT,
                 frameSize=(0.0, cw, 0.0, ch),

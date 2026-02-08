@@ -31,6 +31,8 @@ class Checkbox:
     text: DirectLabel
     checked: bool
     disabled: bool
+    theme: Theme
+    _sync_fn: callable
 
     @staticmethod
     def build(
@@ -116,6 +118,8 @@ class Checkbox:
             text=txt,
             checked=bool(checked),
             disabled=bool(disabled),
+            theme=theme,
+            _sync_fn=lambda: None,
         )
 
         def _sync() -> None:
@@ -162,5 +166,20 @@ class Checkbox:
         out.button.bind(DGG.ENTER, _hover_on)
         out.button.bind(DGG.EXIT, _hover_off)
 
+        out._sync_fn = _sync
         _sync()
         return out
+
+    def set_checked(self, checked: bool) -> None:
+        self.checked = bool(checked)
+        try:
+            self._sync_fn()
+        except Exception:
+            pass
+
+    def set_disabled(self, disabled: bool) -> None:
+        self.disabled = bool(disabled)
+        try:
+            self._sync_fn()
+        except Exception:
+            pass

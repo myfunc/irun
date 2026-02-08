@@ -16,6 +16,17 @@ python -m pip install -e ".[dev]"
 python -m ivan
 ```
 
+## Run Apps From Repo Root (Helper)
+If you prefer running apps from the repo root (and passing through args), use:
+```bash
+./runapp ivan --map imported/halflife/valve/bounce
+./runapp baker
+```
+
+List apps:
+```bash
+./runapp list
+```
 ## Quick Start (Baker / mapperoni)
 ```bash
 cd apps/baker

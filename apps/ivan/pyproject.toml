@@ -12,6 +12,8 @@ license = { text = "Proprietary" }
 authors = [{ name = "IRUN Contributors" }]
 dependencies = [
   "panda3d>=1.10.16",
+  # Shared internal UI library (monorepo path dependency).
+  "irun-ui-kit @ file:../ui_kit",
   # Used by the in-game Half-Life map picker (GoldSrc import) and Source BSP converter tool.
   "bsp_tool>=0.6.0",
   # Used by import tools to write PNGs (WAD/VTF -> PNG).

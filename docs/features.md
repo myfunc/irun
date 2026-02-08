@@ -26,7 +26,7 @@
   - Converts GoldSrc skybox textures from `gfx/env/` into bundle `materials/skybox/` (when present)
   - Extracts baked GoldSrc lightmaps (RGB) into bundle `lightmaps/` and renders them in runtime (supports up to 4 light styles per face)
 - Ivan: GoldSrc PVS visibility culling (BSP VISIBILITY + leaf surface lists) to avoid rendering geometry hidden behind walls (when cache is available)
-- Ivan: main menu (retro) with map bundle selection and on-demand GoldSrc/Xash3D import from a chosen game directory
+- Ivan: main menu (UI kit) with map bundle selection and on-demand GoldSrc/Xash3D import from a chosen game directory
   - Fast navigation: hold Up/Down for accelerated scrolling, Left/Right page jump, and `Cmd+F`/`Ctrl+F` search
   - Delete imported/generated map bundles from the UI (safe delete: `assets/imported/**` and `assets/generated/*`)
 - Ivan: CLI prefill for GoldSrc/Xash3D import flow (`--hl-root`, `--hl-mod`)
@@ -49,12 +49,13 @@
 - Baker: viewer MVP (`python -m baker --map ...`) reusing Ivan scene builder for WYSIWYG preview
   - Fly camera: WASD + mouse/trackpad look (Q/E vertical, Shift faster)
   - Preview view transforms: `1` gamma-only, `2` Reinhard, `3` ACES approx
-- UI Kit: experimental procedural DirectGUI kit (`apps/ui_kit`)
+- UI Kit: internal procedural DirectGUI kit (`apps/ui_kit`)
   - Theme tokens (layout + typography + palette) with JSON overrides
   - Best-effort DPI scaling (framebuffer/window ratio) for readable text on high-DPI displays
   - Console-friendly mono font selection with nearest filtering for low-res readability
   - Primitives: Window, Panel (accent outline + drop shadow), Tabs, CollapsiblePanel
   - Controls: Button (hover/pressed), Checkbox (visual), Slider (compact), TextInput (basic editing hotkeys on macOS)
+  - Higher-level widgets used by Ivan: ListMenu, Scrolled, Dropdown, NumericControl, Tooltip
   - Playground demo to exercise components in one place (`python -m irun_ui_kit.demo`)
 
 ## Planned (High-Level)
@@ -68,7 +69,7 @@
 - Rendering: retro texture filtering options (nearest-neighbor, mipmap strategy)
 - Game loop: pause, restart, level select
 - Debug: in-game tweakables and metrics
-- UI: procedural UI kit (experimental) to standardize windows/panels/controls and theme tokens before wiring into runtime UI
+- UI: extend the procedural UI kit to cover remaining runtime UI needs (avoid one-off custom UI)
 
 ## Out of Scope (For Now)
 - Multiplayer
