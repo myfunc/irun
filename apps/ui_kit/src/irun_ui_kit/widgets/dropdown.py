@@ -79,12 +79,19 @@ class Dropdown:
             frameSize=(0.0, w, -popup_h, 0.0),
             pos=(0.0, 0.0, -theme.gap),
         )
+        # Ensure the popup draws above other UI (e.g. scrolled frames) and receives clicks.
+        popup_outline.setBin("gui-popup", 60)
+        popup_outline.setDepthTest(False)
+        popup_outline.setDepthWrite(False)
         popup = DirectFrame(
             parent=popup_outline,
             frameColor=theme.panel,
             relief=DGG.FLAT,
             frameSize=(theme.outline_w, w - theme.outline_w, -popup_h + theme.outline_w, -theme.outline_w),
         )
+        popup.setBin("gui-popup", 61)
+        popup.setDepthTest(False)
+        popup.setDepthWrite(False)
 
         # Prevent popup from intercepting clicks when hidden.
         popup_outline.hide()
@@ -102,6 +109,10 @@ class Dropdown:
                 label="-",
                 on_click=lambda: None,
             )
+            # Row buttons must be above everything else to be clickable.
+            b.node.setBin("gui-popup", 62)
+            b.node.setDepthTest(False)
+            b.node.setDepthWrite(False)
             rows.append(b)
 
         out = Dropdown(
