@@ -5,6 +5,7 @@ from pathlib import Path
 
 from panda3d.core import (
     AmbientLight,
+    BitMask32,
     CardMaker,
     ColorBlendAttrib,
     CompassEffect,
@@ -29,6 +30,7 @@ from panda3d.core import (
 from ivan.common.aabb import AABB
 from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, resolve_bundle_handle_path
 from ivan.paths import app_root as ivan_app_root
+from ivan.world.goldsrc_visibility import GoldSrcBspVis, load_or_build_visibility_cache
 
 
 class WorldScene:
@@ -54,6 +56,19 @@ class WorldScene:
         self._map_id: str = "scene"
         self._course: dict | None = None
         self._skybox_np = None
+        self._world_root_np = None
+        self._camera_np = None
+
+        # Optional GoldSrc PVS visibility culling.
+        self._vis_goldsrc: GoldSrcBspVis | None = None
+        self._vis_mask = BitMask32.bit(19)
+        self._vis_current_leaf: int | None = None
+        # face_idx -> [NodePath...]
+        self._vis_face_nodes: dict[int, list[object]] = {}
+        # face_idx -> {"paths":[Path|None]*4, "styles":[int|None]*4, "nodepaths":[NodePath...]}
+        # Used to lazy-load per-face lightmap textures (big GoldSrc maps) when a face becomes visible via PVS.
+        self._vis_deferred_lightmaps: dict[int, dict] = {}
+        self._vis_initial_world_face_flags: bytearray | None = None
 
     @property
     def map_id(self) -> str:
@@ -64,6 +79,8 @@ class WorldScene:
         return self._course
 
     def build(self, *, cfg, loader, render, camera) -> None:
+        self._world_root_np = render
+        self._camera_np = camera
         self._build_lighting(render)
 
         # 1) Explicit map (CLI/config)
@@ -92,24 +109,116 @@ class WorldScene:
         Currently used for GoldSrc-style lightstyle animation (if patterns are present in the bundle).
         """
 
-        if not self._lightmap_nodes:
+        # 1) Lightstyle animation (10Hz like Quake/GoldSrc).
+        if self._lightmap_nodes and self._lightstyle_mode == "animate":
+            frame = int(float(now) * 10.0)
+            for np, styles in self._lightmap_nodes:
+                scales: list[float] = [0.0, 0.0, 0.0, 0.0]
+                for i in range(4):
+                    s = styles[i] if i < len(styles) else None
+                    if s is None or int(s) == 255:
+                        continue
+                    scales[i] = self._lightstyle_scale(style=int(s), frame=frame)
+                try:
+                    np.setShaderInput("lm_scales", LVector4f(*scales))
+                except Exception:
+                    # If the node was removed or shader isn't active, ignore.
+                    pass
+
+        # 2) Visibility culling (GoldSrc PVS) - only updates when camera leaf changes.
+        self._tick_visibility()
+
+    def _tick_visibility(self) -> None:
+        if self._vis_goldsrc is None:
             return
-        if self._lightstyle_mode != "animate":
+        if self._world_root_np is None or self._camera_np is None:
             return
-        # Update at 10Hz like Quake/GoldSrc lightstyles.
-        frame = int(float(now) * 10.0)
-        for np, styles in self._lightmap_nodes:
-            scales: list[float] = [0.0, 0.0, 0.0, 0.0]
-            for i in range(4):
-                s = styles[i] if i < len(styles) else None
-                if s is None or int(s) == 255:
-                    continue
-                scales[i] = self._lightstyle_scale(style=int(s), frame=frame)
+        if not self._vis_face_nodes:
+            return
+
+        try:
+            pos = self._camera_np.getPos(self._world_root_np)
+            leaf = self._vis_goldsrc.point_leaf(x=float(pos[0]), y=float(pos[1]), z=float(pos[2]))
+        except Exception:
+            return
+
+        if self._vis_current_leaf is not None and int(leaf) == int(self._vis_current_leaf):
+            return
+        self._vis_current_leaf = int(leaf)
+
+        # World-model faces are controlled by PVS; other faces (brush entity submodels) remain always visible.
+        flags = self._vis_goldsrc.visible_world_face_flags_for_leaf(int(leaf))
+        w0 = int(self._vis_goldsrc.world_first_face)
+        w1 = int(self._vis_goldsrc.world_face_end)
+        for face_idx, nodes in self._vis_face_nodes.items():
+            show = True
+            if int(w0) <= int(face_idx) < int(w1):
+                show = bool(flags[int(face_idx - w0)])
+            for np in nodes:
+                try:
+                    if show:
+                        np.show(self._vis_mask)
+                    else:
+                        np.hide(self._vis_mask)
+                except Exception:
+                    pass
+
+            # Lazy-load per-face lightmaps when a world face becomes visible for the first time.
+            if show and int(w0) <= int(face_idx) < int(w1):
+                self._ensure_deferred_lightmaps_loaded(face_idx=int(face_idx))
+
+    def _ensure_deferred_lightmaps_loaded(self, *, face_idx: int) -> None:
+        """
+        Load and bind per-face lightmap textures for a face that was previously deferred.
+        """
+
+        ent = self._vis_deferred_lightmaps.get(int(face_idx))
+        if not isinstance(ent, dict):
+            return
+        paths = ent.get("paths")
+        nps = ent.get("nodepaths")
+        if not (isinstance(paths, list) and len(paths) == 4):
+            self._vis_deferred_lightmaps.pop(int(face_idx), None)
+            return
+        if not isinstance(nps, list) or not nps:
+            self._vis_deferred_lightmaps.pop(int(face_idx), None)
+            return
+        loader = ent.get("loader")
+        if loader is None:
+            self._vis_deferred_lightmaps.pop(int(face_idx), None)
+            return
+
+        # Load any present textures and bind to all nodepaths for this face.
+        lm_texs: list[Texture | None] = [None, None, None, None]
+        for i in range(4):
+            p = paths[i]
+            if isinstance(p, Path) and p.exists():
+                try:
+                    t = loader.loadTexture(str(p))
+                except Exception:
+                    t = None
+                if t is not None:
+                    t.setWrapU(Texture.WM_clamp)
+                    t.setWrapV(Texture.WM_clamp)
+                    t.setMinfilter(Texture.FT_linear)
+                    t.setMagfilter(Texture.FT_linear)
+                    lm_texs[i] = t
+
+        for np in nps:
             try:
-                np.setShaderInput("lm_scales", LVector4f(*scales))
+                if lm_texs[0] is not None:
+                    np.setShaderInput("lm_tex0", lm_texs[0])
+                if lm_texs[1] is not None:
+                    np.setShaderInput("lm_tex1", lm_texs[1])
+                if lm_texs[2] is not None:
+                    np.setShaderInput("lm_tex2", lm_texs[2])
+                if lm_texs[3] is not None:
+                    np.setShaderInput("lm_tex3", lm_texs[3])
             except Exception:
-                # If the node was removed or shader isn't active, ignore.
                 pass
+
+        # Loaded; drop from deferred set so we don't re-load.
+        self._vis_deferred_lightmaps.pop(int(face_idx), None)
 
     def _build_lighting(self, render) -> None:
         ambient = AmbientLight("ambient")
@@ -320,6 +429,9 @@ class WorldScene:
             payload=payload, cfg=getattr(cfg, "lighting", None)
         )
         self._lightmap_nodes = []
+        self._vis_goldsrc = self._resolve_visibility(cfg=cfg, map_json=map_json, payload=payload)
+        self._vis_face_nodes = {}
+        self._vis_current_leaf = None
 
         collision_override = payload.get("collision_triangles")
 
@@ -351,7 +463,52 @@ class WorldScene:
             self._attach_triangle_map_geometry(render=render, triangles=triangles)
 
         self.triangle_collision_mode = True
+        # Apply visibility immediately after load to avoid a one-frame "everything visible" flash.
+        self._tick_visibility()
         return True
+
+    def _resolve_visibility(self, *, cfg, map_json: Path, payload: dict) -> GoldSrcBspVis | None:
+        """
+        Best-effort visibility (occlusion) culling.
+
+        Currently supported:
+        - GoldSrc PVS (BSP VISIBILITY lump), cached next to the bundle.
+        """
+
+        vis_cfg = getattr(cfg, "visibility", None)
+        enabled = True
+        mode = "auto"  # auto | goldsrc_pvs
+        build_cache = True
+        if isinstance(vis_cfg, dict):
+            if isinstance(vis_cfg.get("enabled"), bool):
+                enabled = bool(vis_cfg.get("enabled"))
+            m = vis_cfg.get("mode")
+            if isinstance(m, str) and m.strip():
+                mode = m.strip()
+            if isinstance(vis_cfg.get("build_cache"), bool):
+                build_cache = bool(vis_cfg.get("build_cache"))
+        if not enabled:
+            return None
+
+        # Decide whether this map is GoldSrc-like.
+        lm = payload.get("lightmaps")
+        lm_encoding = lm.get("encoding") if isinstance(lm, dict) else None
+        is_goldsrc = (isinstance(lm_encoding, str) and lm_encoding.strip() == "goldsrc_rgb")
+
+        if mode == "auto" and not is_goldsrc:
+            return None
+        if mode not in ("auto", "goldsrc_pvs"):
+            return None
+
+        cache_path = map_json.parent / "visibility.goldsrc.json"
+        source_bsp = payload.get("source_bsp")
+        source_bsp_path = Path(str(source_bsp)) if isinstance(source_bsp, str) and source_bsp.strip() else None
+        if not build_cache:
+            source_bsp_path = None
+        try:
+            return load_or_build_visibility_cache(cache_path=cache_path, source_bsp_path=source_bsp_path)
+        except Exception:
+            return None
 
     @staticmethod
     def _resolve_map_bundle_path(map_json: Path) -> Path | None:
@@ -511,14 +668,16 @@ class WorldScene:
         if isinstance(cached, Shader):
             return cached
 
+        # GLSL 1.30 fails on some macOS OpenGL contexts (e.g. 2.1 -> GLSL 1.20).
+        # Keep this shader compatible with GLSL 1.20 to avoid a hard fallback to unlit geometry.
         vshader = """
-#version 130
+#version 120
 uniform mat4 p3d_ModelViewProjectionMatrix;
-in vec4 p3d_Vertex;
-in vec2 p3d_MultiTexCoord0;
-in vec2 p3d_MultiTexCoord1;
-out vec2 v_uv0;
-out vec2 v_uv1;
+attribute vec4 p3d_Vertex;
+attribute vec2 p3d_MultiTexCoord0;
+attribute vec2 p3d_MultiTexCoord1;
+varying vec2 v_uv0;
+varying vec2 v_uv1;
 void main() {
   gl_Position = p3d_ModelViewProjectionMatrix * p3d_Vertex;
   v_uv0 = p3d_MultiTexCoord0;
@@ -527,7 +686,7 @@ void main() {
 """
 
         fshader = """
-#version 130
+#version 120
 uniform sampler2D base_tex;
 uniform sampler2D lm_tex0;
 uniform sampler2D lm_tex1;
@@ -535,18 +694,17 @@ uniform sampler2D lm_tex2;
 uniform sampler2D lm_tex3;
 uniform vec4 lm_scales;
 uniform int alpha_test;
-in vec2 v_uv0;
-in vec2 v_uv1;
-out vec4 fragColor;
+varying vec2 v_uv0;
+varying vec2 v_uv1;
 void main() {
-  vec4 base = texture(base_tex, v_uv0);
+  vec4 base = texture2D(base_tex, v_uv0);
   if (alpha_test != 0 && base.a < 0.5) discard;
   vec3 lm = vec3(0.0);
-  lm += lm_scales.x * texture(lm_tex0, v_uv1).rgb;
-  lm += lm_scales.y * texture(lm_tex1, v_uv1).rgb;
-  lm += lm_scales.z * texture(lm_tex2, v_uv1).rgb;
-  lm += lm_scales.w * texture(lm_tex3, v_uv1).rgb;
-  fragColor = vec4(base.rgb * lm, base.a);
+  lm += lm_scales.x * texture2D(lm_tex0, v_uv1).rgb;
+  lm += lm_scales.y * texture2D(lm_tex1, v_uv1).rgb;
+  lm += lm_scales.z * texture2D(lm_tex2, v_uv1).rgb;
+  lm += lm_scales.w * texture2D(lm_tex3, v_uv1).rgb;
+  gl_FragColor = vec4(base.rgb * lm, base.a);
 }
 """
 
@@ -576,6 +734,17 @@ void main() {
             black = self._make_solid_texture(name="lm-black", rgba=(0.0, 0.0, 0.0, 1.0))
             setattr(WorldScene, "_TEX_BLACK", black)
         sh = self._lightmap_shader()
+
+        # If PVS is active, precompute initial world-face visibility from the spawn point so we can
+        # avoid loading thousands of per-face lightmap textures for faces that start hidden.
+        self._vis_initial_world_face_flags = None
+        if self._vis_goldsrc is not None:
+            try:
+                pos = self.spawn_point
+                leaf = self._vis_goldsrc.point_leaf(x=float(pos[0]), y=float(pos[1]), z=float(pos[2]))
+                self._vis_initial_world_face_flags = self._vis_goldsrc.visible_world_face_flags_for_leaf(int(leaf))
+            except Exception:
+                self._vis_initial_world_face_flags = None
 
         for (mat_name, lmi), tris in tris_by_key.items():
             vdata = GeomVertexData(
@@ -632,6 +801,8 @@ void main() {
             np.setTwoSided(False)
             # Imported BSP geometry should be lit by baked lighting, not by the game's ambient/sun lights.
             np.setLightOff(1)
+            if isinstance(lmi, int):
+                self._vis_face_nodes.setdefault(int(lmi), []).append(np)
 
             meta = self._materials_meta.get(mat_name, {}) if self._materials_meta else {}
 
@@ -697,9 +868,22 @@ void main() {
 
                 lm_texs: list[Texture] = [black, black, black, black]
                 lm_scales = [0.0, 0.0, 0.0, 0.0]
+
+                # Defer per-face lightmap texture loading for world faces that start hidden (big GoldSrc maps).
+                defer = False
+                if (
+                    self._vis_goldsrc is not None
+                    and self._vis_initial_world_face_flags is not None
+                    and isinstance(lmi, int)
+                ):
+                    w0 = int(self._vis_goldsrc.world_first_face)
+                    w1 = int(self._vis_goldsrc.world_face_end)
+                    if int(w0) <= int(lmi) < int(w1):
+                        defer = not bool(self._vis_initial_world_face_flags[int(lmi - w0)])
+
                 for i in range(4):
                     p = paths[i]
-                    if isinstance(p, Path) and p.exists():
+                    if (not defer) and isinstance(p, Path) and p.exists():
                         t = loader.loadTexture(str(p))
                         if t is not None:
                             t.setWrapU(Texture.WM_clamp)
@@ -730,6 +914,15 @@ void main() {
                     self._lightmap_nodes.append((np, [int(x) if isinstance(x, int) else None for x in styles]))
                 except Exception:
                     pass
+
+                if defer and isinstance(lmi, int):
+                    ent = self._vis_deferred_lightmaps.get(int(lmi))
+                    if not isinstance(ent, dict):
+                        ent = {"paths": list(paths), "nodepaths": [], "loader": loader}
+                        self._vis_deferred_lightmaps[int(lmi)] = ent
+                    nps = ent.get("nodepaths")
+                    if isinstance(nps, list):
+                        nps.append(np)
 
     def _setup_skybox(self, *, loader, camera, skyname: str) -> None:
         # Source convention: materials/skybox/<skyname><face>.vtf -> we converted to PNG.

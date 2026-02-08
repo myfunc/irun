@@ -666,6 +666,7 @@ class RunnerDemo(ShowBase):
                 hl_root=self.cfg.hl_root,
                 hl_mod=self.cfg.hl_mod,
                 lighting=lighting_cfg if isinstance(lighting_cfg, dict) else None,
+                visibility=run_meta.visibility if isinstance(run_meta.visibility, dict) else None,
             )
             self.scene = WorldScene()
             self.scene.build(cfg=cfg, loader=self.loader, render=self.world_root, camera=self.camera)
