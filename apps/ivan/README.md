@@ -107,6 +107,7 @@ Panel layout:
 - Mouse wheel scroll is supported for the settings canvas and profile dropdown lists.
 - Hovering a setting name/control shows a tooltip with a short explanation.
 - Numeric sliders are normalized (`0..100`) while still mapping to each field's real min/max range.
+- Slider tracks are intentionally large for quick tuning while moving.
 - Top-right profile manager includes default presets (`surf_bhop`, `bhop`, `surf`) and a `save` action.
   - Saving a modified default profile creates a short `*_copy` custom profile.
   - Saving a custom profile updates that profile in place.
@@ -139,7 +140,7 @@ Movement notes:
 - Wallrun is lateral; vertical climb gain is capped.
 - `vault_enabled` is OFF by default. If enabled, pressing jump again near a ledge can trigger a vault: feet must be below ledge top, vault jump is higher than normal, and a small forward speed boost is applied.
 - Step risers are filtered out for wall-contact detection to reduce jitter and accidental wall-state hits on stairs/steps.
-- Surf prototype: on non-walkable slanted surfaces within the surf normal range, holding strafe input applies plane-projected acceleration and gravity so ramps can be surfed.
+- Surf prototype uses GoldSrc-like air movement on steep ramps: wish direction is projected to ramp plane, then normal air acceleration + collision clipping drive surf movement.
 
 ## Level Layout
 The map is generated in code and includes:

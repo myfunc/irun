@@ -232,4 +232,4 @@ def test_surf_strafe_accelerates_on_slanted_surface() -> None:
 
     base.step(dt=0.016, wish_dir=LVector3f(0.0, 1.0, 0.0), yaw_deg=0.0, crouching=False)
     strafe.step(dt=0.016, wish_dir=LVector3f(1.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
-    assert strafe.vel.y > base.vel.y
+    assert strafe.vel.x > base.vel.x
