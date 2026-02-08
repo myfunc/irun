@@ -48,3 +48,24 @@ Naming convention:
 - Python apps use a `src/` layout inside their app folder.
 - Primary project: `apps/ivan` (Ivan)
   - Entrypoint: `python -m ivan` (documented in `apps/ivan/README.md`).
+
+## Git Workflow (PR-Only, No Approvals)
+Goal: enable fast "wipe-coding" without stepping on each other, while keeping `main` always mergeable.
+
+- `main` is protected: no direct pushes, no force-pushes. Changes land in `main` only via Pull Requests.
+- Work happens in short-lived branches (one change / topic).
+- Branch naming:
+  - Use engineer-prefixed branches to avoid collisions: `myfunc/<topic>` and `ivan/<topic>`.
+  - When the agent creates branches, use `codex/<topic>`.
+- When asked to "push a new branch" or "push changes":
+  1. Create a branch if needed (never commit directly to `main`).
+  2. Push the branch to `origin` and create a PR targeting `main`.
+  3. Keep pushing additional commits to the same branch; the PR updates automatically.
+  4. Merge the PR into `main` (prefer squash) and delete the branch.
+
+Implementation notes for the agent:
+- Prefer GitHub CLI:
+  - Create PR: `gh pr create --base main --head <branch> --fill`
+  - Merge PR: `gh pr merge --squash --auto --delete-branch`
+- If `gh auth status -h github.com` fails, stop and ask the user to run `gh auth login -h github.com` before continuing.
+- "No approvals" means: do not request reviewers, and branch protection must not require PR reviews (0 required). Status checks may be required if the repo has CI.
