@@ -32,6 +32,9 @@
   - Supports common macOS Steam layout where the game content lives under `<Game>.app/Contents/Resources`
 - Ivan: optional Steam Half-Life auto-detect (manual action in main menu, not default)
 - Ivan: wall-jump cooldown tuning (default `1.0s`) replaces same-wall consecutive jump lock
+- Ivan: wall-jump is gated to airborne state (grounded wall contact cannot trigger wall-jump)
+- Ivan: wall-jump is blocked while coyote jump is available; corner jump input resolves to ground/coyote jump
+- Ivan: autojump queues only while ground/coyote jump is available (prevents airborne corner wall-jump retriggers)
 - Ivan: autojump toggle (hold jump to continue hopping)
 - Ivan: vault is disabled by default (runtime toggle in debug menu)
 - Ivan: surf prototype on slanted surfaces (strafe-held surf with live tuning controls)

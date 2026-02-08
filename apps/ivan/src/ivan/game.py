@@ -1007,7 +1007,13 @@ class RunnerDemo(ShowBase):
                 self._update_look()
             crouching = False if menu_open else self._is_crouching()
 
-            if not menu_open and self.tuning.autojump_enabled and self._is_key_down("space"):
+            if (
+                not menu_open
+                and self.tuning.autojump_enabled
+                and self._is_key_down("space")
+                and self.player.can_ground_jump()
+            ):
+                # Autojump is for ground/coyote hop continuity; don't feed airborne wall-jump retries.
                 self.player.queue_jump()
 
             if self.tuning.noclip_enabled:

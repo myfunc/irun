@@ -76,6 +76,11 @@ class PlayerController:
         return bool(self.tuning.enable_coyote) and self._ground_timer <= float(self.tuning.coyote_time)
 
     def has_wall_for_jump(self) -> bool:
+        if self.grounded:
+            return False
+        # During active coyote window, prefer ground-style jump over wall-jump in corners.
+        if bool(self.tuning.enable_coyote) and 0.0 < self._ground_timer <= float(self.tuning.coyote_time):
+            return False
         if self._wall_contact_timer > 0.18 or self._wall_normal.lengthSquared() <= 0.01:
             return False
         return self._wall_jump_lock_timer >= float(self.tuning.wall_jump_cooldown)
@@ -182,6 +187,8 @@ class PlayerController:
         self.vel.z = self._jump_up_speed()
         self._jump_buffer_timer = 0.0
         self.grounded = False
+        # Coyote time should only represent "just walked off a ledge", not "already jumped".
+        self._ground_timer = float(self.tuning.coyote_time) + 1.0
 
     def _apply_wall_jump(self, *, yaw_deg: float) -> None:
         away = LVector3f(self._wall_normal.x, self._wall_normal.y, 0)

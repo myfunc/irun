@@ -222,7 +222,7 @@ def test_crouch_speed_multiplier_reduces_ground_acceleration() -> None:
 
 
 def test_wall_detection_probe_refreshes_without_movement() -> None:
-    tuning = PhysicsTuning()
+    tuning = PhysicsTuning(enable_coyote=False)
     ctrl = PlayerController(
         tuning=tuning,
         spawn_point=LVector3f(0, 0, 3),
@@ -255,6 +255,77 @@ def test_walljump_respects_cooldown() -> None:
     ctrl._wall_contact_timer = 0.0
     ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
     assert ctrl.has_wall_for_jump()
+
+
+def test_walljump_not_allowed_while_grounded_even_with_wall_contact() -> None:
+    ctrl = _make_controller(PhysicsTuning(walljump_enabled=True))
+    ctrl.grounded = True
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
+    assert not ctrl.has_wall_for_jump()
+
+
+def test_walljump_not_available_during_coyote_window() -> None:
+    ctrl = _make_controller(PhysicsTuning(enable_coyote=True, coyote_time=0.12, walljump_enabled=True))
+    ctrl.grounded = False
+    ctrl._ground_timer = 0.05
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
+    assert not ctrl.has_wall_for_jump()
+
+
+def test_corner_jump_uses_ground_or_coyote_jump_not_walljump() -> None:
+    ctrl = _make_controller(
+        PhysicsTuning(
+            walljump_enabled=True,
+            enable_coyote=True,
+            coyote_time=0.12,
+            enable_jump_buffer=False,
+            wall_jump_boost=7.0,
+        )
+    )
+    ctrl.grounded = False
+    ctrl._ground_timer = 0.05  # coyote jump still available
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
+    ctrl._wall_jump_lock_timer = 999.0
+    ctrl.queue_jump()
+
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+
+    # Ground/coyote jump path should win; walljump should not inject horizontal boost.
+    assert abs(ctrl.vel.x) < 1e-5
+    assert abs(ctrl.vel.y) < 1e-5
+    assert ctrl.vel.z > 0.0
+
+
+def test_ground_jump_consumes_coyote_window_immediately() -> None:
+    ctrl = _make_controller(
+        PhysicsTuning(
+            autojump_enabled=True,
+            enable_coyote=True,
+            coyote_time=0.12,
+            walljump_enabled=True,
+            wall_jump_boost=7.0,
+            enable_jump_buffer=False,
+        )
+    )
+
+    # Frame 1: normal grounded jump near wall contact.
+    ctrl.grounded = True
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
+    ctrl.queue_jump()
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+    first_jump_vz = ctrl.vel.z
+    assert first_jump_vz > 0.0
+
+    # Frame 2: coyote window should already be consumed by the first jump.
+    assert not ctrl.can_ground_jump()
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+
+    # No second jump re-application should happen.
+    assert ctrl.vel.z < first_jump_vz
 
 
 def test_can_walljump_multiple_times_in_air_on_different_walls() -> None:
