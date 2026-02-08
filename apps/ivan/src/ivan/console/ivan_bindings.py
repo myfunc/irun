@@ -1,0 +1,269 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from ivan.console.core import CommandContext, Console
+from ivan.physics.tuning import PhysicsTuning
+
+
+def _read_exec_lines(path: Path) -> list[str]:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return []
+    out: list[str] = []
+    for raw in text.splitlines():
+        s = raw.strip()
+        if not s:
+            continue
+        if s.startswith("//") or s.startswith("#"):
+            continue
+        out.append(s)
+    return out
+
+
+def build_client_console(runner: Any) -> Console:
+    """
+    Build a minimal console bound to a running RunnerDemo instance.
+
+    We intentionally avoid an in-game UI for now; this is meant to be driven via MCP/control socket.
+    """
+
+    con = Console()
+
+    def _cmd_help(_ctx: CommandContext, _argv: list[str]) -> list[str]:
+        lines: list[str] = ["commands:"]
+        for name, help_s in con.list_commands():
+            lines.append(f"  {name} - {help_s}".rstrip(" -"))
+        lines.append("cvars:")
+        for name, typ, help_s in con.list_cvars():
+            lines.append(f"  {name} ({typ}) - {help_s}".rstrip(" -"))
+        return lines
+
+    def _cmd_echo(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        return [" ".join(argv)]
+
+    def _cmd_exec(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        if not argv:
+            return ["usage: exec <path>"]
+        p = Path(str(argv[0]))
+        if not p.is_absolute():
+            p = Path.cwd() / p
+        lines = _read_exec_lines(p)
+        out: list[str] = [f"exec {p} ({len(lines)} line(s))"]
+        for ln in lines:
+            out.extend(con.execute_line(ctx=CommandContext(role="client", origin="exec"), line=ln))
+        return out
+
+    def _cmd_connect(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        if not argv:
+            return ["usage: connect <host> [port]"]
+        host = str(argv[0]).strip()
+        port = None
+        if len(argv) >= 2:
+            try:
+                port = int(str(argv[1]).strip())
+            except Exception:
+                return ["error: port must be an int"]
+        if port is None:
+            port = int(getattr(runner, "_runtime_connect_port", 7777))
+        runner._on_connect_server_from_menu(host, str(port))  # noqa: SLF001
+        return [f"connect {host}:{port}"]
+
+    def _cmd_disconnect(_ctx: CommandContext, _argv: list[str]) -> list[str]:
+        runner._on_disconnect_server_from_menu()  # noqa: SLF001
+        return ["disconnect"]
+
+    def _registry() -> dict[str, Any]:
+        # Treat these as "entities" for now. We'll extend once map v3 entities exist.
+        return {
+            "runner": runner,
+            "scene": getattr(runner, "scene", None),
+            "player": getattr(runner, "player", None),
+            "camera": getattr(runner, "camera", None),
+            "world_root": getattr(runner, "world_root", None),
+        }
+
+    def _resolve_path(obj: Any, path: str | None) -> Any:
+        if not path:
+            return obj
+        cur = obj
+        for part in str(path).split("."):
+            if cur is None:
+                return None
+            if isinstance(cur, dict) and part in cur:
+                cur = cur.get(part)
+                continue
+            cur = getattr(cur, part, None)
+        return cur
+
+    def _cmd_ent_list(_ctx: CommandContext, _argv: list[str]) -> list[str]:
+        reg = _registry()
+        out: list[str] = ["entities:"]
+        for k in sorted(reg.keys()):
+            v = reg[k]
+            if v is None:
+                out.append(f"  {k}: <none>")
+            else:
+                out.append(f"  {k}: {type(v).__name__}")
+        return out
+
+    def _cmd_ent_get(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        if not argv:
+            return ["usage: ent_get <name> [path]"]
+        reg = _registry()
+        obj = reg.get(str(argv[0]))
+        if obj is None:
+            return [f"error: unknown entity {argv[0]!r}"]
+        path = str(argv[1]) if len(argv) >= 2 else None
+        val = _resolve_path(obj, path)
+        return [json.dumps(val, default=str, ensure_ascii=True)]
+
+    def _cmd_ent_dir(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        if not argv:
+            return ["usage: ent_dir <name> [path]"]
+        reg = _registry()
+        obj = reg.get(str(argv[0]))
+        if obj is None:
+            return [f"error: unknown entity {argv[0]!r}"]
+        path = str(argv[1]) if len(argv) >= 2 else None
+        cur = _resolve_path(obj, path)
+        if cur is None:
+            return ["<none>"]
+        keys: list[str] = []
+        if isinstance(cur, dict):
+            keys = [str(k) for k in cur.keys()]
+        else:
+            keys = [k for k in dir(cur) if k and not k.startswith("_")]
+        keys.sort()
+        keys = keys[:120]
+        return keys
+
+    def _cmd_ent_set(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        if len(argv) < 3:
+            return ["usage: ent_set <name> <path> <json>"]
+        reg = _registry()
+        obj = reg.get(str(argv[0]))
+        if obj is None:
+            return [f"error: unknown entity {argv[0]!r}"]
+        path = str(argv[1])
+        raw = " ".join(str(x) for x in argv[2:])
+        try:
+            val = json.loads(raw)
+        except Exception:
+            val = raw
+        parts = path.split(".")
+        parent = _resolve_path(obj, ".".join(parts[:-1]) if len(parts) > 1 else None)
+        leaf = parts[-1]
+        if parent is None:
+            return ["error: path resolve failed"]
+        if isinstance(parent, dict):
+            parent[leaf] = val
+            return ["ok"]
+        try:
+            setattr(parent, leaf, val)
+        except Exception as e:
+            return [f"error: setattr failed: {e}"]
+        return ["ok"]
+
+    def _cmd_ent_pos(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        if not argv:
+            return ["usage: ent_pos <name> [x y z]"]
+        reg = _registry()
+        obj = reg.get(str(argv[0]))
+        if obj is None:
+            return [f"error: unknown entity {argv[0]!r}"]
+
+        def _get_pos(o: Any):
+            if hasattr(o, "getPos"):
+                try:
+                    p = o.getPos()
+                    return [float(p.x), float(p.y), float(p.z)]
+                except Exception:
+                    pass
+            if hasattr(o, "pos"):
+                try:
+                    p = o.pos
+                    return [float(p.x), float(p.y), float(p.z)]
+                except Exception:
+                    pass
+            return None
+
+        def _set_pos(o: Any, x: float, y: float, z: float) -> bool:
+            if hasattr(o, "setPos"):
+                try:
+                    o.setPos(float(x), float(y), float(z))
+                    return True
+                except Exception:
+                    pass
+            if hasattr(o, "pos"):
+                try:
+                    p = o.pos
+                    p.x = float(x)
+                    p.y = float(y)
+                    p.z = float(z)
+                    o.pos = p
+                    return True
+                except Exception:
+                    pass
+            return False
+
+        if len(argv) == 1:
+            p = _get_pos(obj)
+            return [json.dumps(p, ensure_ascii=True)] if p is not None else ["<no position>"]
+
+        if len(argv) != 4:
+            return ["usage: ent_pos <name> [x y z]"]
+        try:
+            x = float(argv[1])
+            y = float(argv[2])
+            z = float(argv[3])
+        except Exception:
+            return ["error: x y z must be numbers"]
+        ok = _set_pos(obj, x, y, z)
+        return ["ok"] if ok else ["error: failed to set position"]
+
+    con.register_command(name="help", help="List commands and cvars.", handler=_cmd_help)
+    con.register_command(name="echo", help="Print text.", handler=_cmd_echo)
+    con.register_command(name="exec", help="Execute a .cfg-like script file.", handler=_cmd_exec)
+    con.register_command(name="connect", help="Connect to a multiplayer server.", handler=_cmd_connect)
+    con.register_command(name="disconnect", help="Disconnect from multiplayer.", handler=_cmd_disconnect)
+    con.register_command(name="ent_list", help="List registered entities/objects.", handler=_cmd_ent_list)
+    con.register_command(name="ent_get", help="Get a property by path (dot-separated).", handler=_cmd_ent_get)
+    con.register_command(name="ent_set", help="Set a property by path using JSON value.", handler=_cmd_ent_set)
+    con.register_command(name="ent_dir", help="List keys/attrs for an entity or sub-path.", handler=_cmd_ent_dir)
+    con.register_command(name="ent_pos", help="Get/set position for an entity.", handler=_cmd_ent_pos)
+
+    for field, anno in PhysicsTuning.__annotations__.items():
+        if not isinstance(field, str) or not field:
+            continue
+        # Keep types simple and predictable.
+        typ = "float"
+        if anno is bool:
+            typ = "bool"
+        elif anno is int:
+            typ = "int"
+        elif anno is str:
+            typ = "str"
+
+        def _make_getter(f: str):
+            return lambda: getattr(runner.tuning, f)
+
+        def _make_setter(f: str):
+            def _set(v: Any) -> None:
+                setattr(runner.tuning, f, v)
+                runner._on_tuning_change(f)  # noqa: SLF001
+
+            return _set
+
+        con.register_cvar(
+            name=field,
+            typ=typ,
+            get_value=_make_getter(field),
+            set_value=_make_setter(field),
+            help="Physics tuning field.",
+        )
+
+    return con

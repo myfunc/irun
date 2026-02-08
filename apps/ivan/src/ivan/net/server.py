@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import secrets
 import socket
 import threading
@@ -13,6 +14,9 @@ from pathlib import Path
 from panda3d.core import LVector3f, NodePath, PandaNode
 
 from ivan.common.aabb import AABB
+from ivan.console.control_server import ConsoleControlServer
+from ivan.console.server_bindings import build_server_console
+from ivan.console.line_bus import ThreadSafeLineBus
 from ivan.maps.bundle_io import resolve_bundle_handle
 from ivan.physics.collision_world import CollisionWorld
 from ivan.physics.player_controller import PlayerController
@@ -106,6 +110,17 @@ class MultiplayerServer:
         self._udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._udp_sock.bind((self.host, self.udp_port))
         self._udp_sock.setblocking(False)
+
+        # Minimal server console (no in-server UI). Primarily driven via MCP/control socket.
+        self.console = build_server_console(self)
+        self._console_bus = ThreadSafeLineBus(max_lines=1000)
+        self.console.register_listener(self._console_bus.listener)
+        self._console_control_port = int(os.environ.get("IRUN_IVAN_SERVER_CONSOLE_PORT", "39001"))
+        self.console_control = ConsoleControlServer(console=self.console, host="127.0.0.1", port=int(self._console_control_port))
+        try:
+            self.console_control.start()
+        except Exception:
+            self.console_control = None
         self._closed = False
 
     @staticmethod
@@ -200,6 +215,11 @@ class MultiplayerServer:
         if self._closed:
             return
         self._closed = True
+        if getattr(self, "console_control", None) is not None:
+            try:
+                self.console_control.close()
+            except Exception:
+                pass
         for cs in list(self._tcp_clients.keys()):
             self._safe_close_socket(cs)
         self._tcp_clients.clear()
