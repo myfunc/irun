@@ -11,9 +11,13 @@ from panda3d.core import LVector3f
 class _FakeUI:
     def __init__(self) -> None:
         self.last_status = ""
+        self.last_profiles: tuple[list[str], str] | None = None
 
     def set_status(self, text: str) -> None:
         self.last_status = str(text)
+
+    def set_profiles(self, names: list[str], active: str) -> None:
+        self.last_profiles = (list(names), str(active))
 
 
 class _FakeNetClient:
@@ -48,6 +52,10 @@ def test_network_respawn_button_sends_server_request() -> None:
     demo = RunnerDemo.__new__(RunnerDemo)
     demo._net_connected = True
     demo._net_client = _FakeNetClient()
+    demo._net_pending_inputs = [SimpleNamespace(seq=1, cmd="cmd")]
+    demo._net_predicted_states = [SimpleNamespace(seq=1)]
+    demo._net_last_acked_seq = 0
+    demo._net_seq_counter = 3
     demo.ui = _FakeUI()
     local_respawn_called = {"value": False}
     demo._do_respawn = lambda *, from_mode: local_respawn_called.__setitem__("value", True)
@@ -55,7 +63,10 @@ def test_network_respawn_button_sends_server_request() -> None:
     RunnerDemo._on_respawn_pressed(demo)
 
     assert demo._net_client.respawn_calls == 1
-    assert local_respawn_called["value"] is False
+    assert local_respawn_called["value"] is True
+    assert demo._net_pending_inputs == []
+    assert demo._net_predicted_states == []
+    assert demo._net_last_acked_seq == 3
     assert "Respawn requested" in demo.ui.last_status
 
 
@@ -186,8 +197,20 @@ def test_reconcile_uses_ack_state_and_replays_unacked_inputs() -> None:
     demo._angle_delta_deg = lambda a, b: float(b) - float(a)
     replayed: list[str] = []
     appended: list[int] = []
-    demo._simulate_input_tick = lambda *, cmd, menu_open, network_send, record_demo: replayed.append(cmd)
+    demo._simulate_input_tick = (
+        lambda *, cmd, menu_open, network_send, record_demo, capture_snapshot: replayed.append(cmd)
+    )
     demo._append_predicted_state = lambda *, seq: appended.append(int(seq))
+    demo._push_sim_snapshot = lambda: None
+    demo._net_perf = SimpleNamespace(
+        reconcile_count=0,
+        reconcile_pos_err_sum=0.0,
+        reconcile_pos_err_max=0.0,
+        replay_input_sum=0,
+        replay_input_max=0,
+        replay_time_sum_ms=0.0,
+        replay_time_max_ms=0.0,
+    )
     demo.player = SimpleNamespace(pos=LVector3f(5.0, 0.0, 0.0), vel=LVector3f(0.0, 0.0, 0.0))
 
     RunnerDemo._reconcile_local_from_server(
@@ -207,6 +230,50 @@ def test_reconcile_uses_ack_state_and_replays_unacked_inputs() -> None:
     assert [p.seq for p in demo._net_pending_inputs] == [6]
     assert replayed == ["cmd6"]
     assert appended == [6]
+
+
+def test_apply_profile_in_network_owner_pushes_to_server() -> None:
+    demo = RunnerDemo.__new__(RunnerDemo)
+    demo._profiles = {"p1": {"gravity": 30.0}}
+    demo._active_profile_name = "surf_bhop_c2"
+    demo._profile_names = lambda: ["p1"]
+    demo._net_connected = True
+    demo._net_can_configure = True
+    demo.ui = _FakeUI()
+    calls = {"apply": 0, "send": 0}
+    demo._apply_profile_snapshot = lambda values, persist: calls.__setitem__("apply", calls["apply"] + 1)
+    demo._send_tuning_to_server = lambda: calls.__setitem__("send", calls["send"] + 1)
+
+    RunnerDemo._apply_profile(demo, "p1")
+
+    assert demo._active_profile_name == "p1"
+    assert calls["apply"] == 1
+    assert calls["send"] == 1
+    assert demo.ui.last_profiles == (["p1"], "p1")
+
+
+def test_apply_profile_readonly_client_is_blocked() -> None:
+    demo = RunnerDemo.__new__(RunnerDemo)
+    demo._profiles = {"p1": {"gravity": 30.0}}
+    demo._active_profile_name = "surf_bhop_c2"
+    demo._profile_names = lambda: ["p1", "surf_bhop_c2"]
+    demo._net_connected = True
+    demo._net_can_configure = False
+    demo._net_authoritative_tuning = {"gravity": 39.6}
+    demo.ui = _FakeUI()
+    calls = {"apply": 0}
+
+    def _apply(values, persist):
+        calls["apply"] += 1
+
+    demo._apply_profile_snapshot = _apply
+
+    RunnerDemo._apply_profile(demo, "p1")
+
+    assert demo._active_profile_name == "surf_bhop_c2"
+    assert calls["apply"] == 1
+    assert "host-only" in demo.ui.last_status
+    assert demo.ui.last_profiles == (["p1", "surf_bhop_c2"], "surf_bhop_c2")
 
 
 def test_dedicated_server_defaults_match_surf_bhop_c2_core_values(monkeypatch) -> None:
