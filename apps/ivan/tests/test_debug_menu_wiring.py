@@ -122,6 +122,67 @@ def test_air_counter_strafe_brake_strength_affects_deceleration() -> None:
     assert abs(high_ctrl.vel.x) < abs(low_ctrl.vel.x)
 
 
+def test_surf_input_does_not_reverse_horizontal_direction_in_one_tick() -> None:
+    tuning = PhysicsTuning(
+        surf_enabled=True,
+        jump_accel=30.0,
+        surf_accel=80.0,
+        max_air_speed=24.0,
+    )
+    ctrl = _make_controller(tuning)
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(10.0, 0.0, 0.0)
+    ctrl._surf_contact_timer = 0.0
+    ctrl._surf_normal = LVector3f(0.65, 0.0, 0.76)
+
+    # Opposite wish should scrub speed first, not flip direction instantly.
+    ctrl.step(dt=0.016, wish_dir=LVector3f(-1.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+    assert ctrl.vel.x >= 0.0
+
+
+def test_surf_opposite_steer_redirects_momentum_without_killing_speed() -> None:
+    tuning = PhysicsTuning(
+        surf_enabled=True,
+        jump_accel=20.0,
+        surf_accel=60.0,
+        max_air_speed=24.0,
+    )
+    ctrl = _make_controller(tuning)
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(12.0, 0.0, 0.0)
+    ctrl._surf_contact_timer = 0.0
+    ctrl._surf_normal = LVector3f(0.65, 0.0, 0.76)
+    pre_hspeed = math.sqrt(ctrl.vel.x * ctrl.vel.x + ctrl.vel.y * ctrl.vel.y)
+
+    ctrl.step(dt=0.016, wish_dir=LVector3f(-1.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+
+    post_hspeed = math.sqrt(ctrl.vel.x * ctrl.vel.x + ctrl.vel.y * ctrl.vel.y)
+    assert post_hspeed > pre_hspeed * 0.40
+    assert ctrl.vel.z > -0.30
+
+
+def test_surf_accel_never_adds_downward_vertical_component() -> None:
+    ctrl = _make_controller(PhysicsTuning(surf_enabled=True, surf_accel=60.0))
+    ctrl.vel = LVector3f(8.0, 0.0, 0.0)
+    # Downhill-biased projected wish direction.
+    wish = LVector3f(0.8, 0.0, -0.6)
+    ctrl._accelerate_surf_redirect(wish, wish_speed=20.0, accel=18.0, dt=0.016)
+    assert ctrl.vel.z >= 0.0
+
+
+def test_stale_surf_contact_does_not_apply_surf_accel_after_leaving_ramp() -> None:
+    ctrl = _make_controller(PhysicsTuning(surf_enabled=True, jump_accel=20.0, surf_accel=60.0))
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(0.0, 0.0, 0.0)
+    # Old contact should not keep surf acceleration active.
+    ctrl._surf_contact_timer = 0.12
+    ctrl._surf_normal = LVector3f(0.7, 0.0, 0.7)
+
+    # This input would create positive Z if stale surf acceleration were still applied.
+    ctrl.step(dt=0.016, wish_dir=LVector3f(-1.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+    assert ctrl.vel.z < -0.35
+
+
 def test_wall_clip_preserves_upward_jump_velocity_near_vertical_surface() -> None:
     ctrl = _make_controller(PhysicsTuning())
     ctrl.grounded = False
