@@ -208,18 +208,9 @@ class RunnerDemo(ShowBase):
         if not self._suspend_tuning_persist:
             self._persist_tuning_field(field)
 
-    def _apply_persisted_tuning(self, overrides: dict[str, float | bool]) -> None:
-        fields = set(PhysicsTuning.__annotations__.keys())
-        for field, value in overrides.items():
-            if field not in fields:
-                continue
-            setattr(self.tuning, field, value)
-
     def _persist_tuning_field(self, field: str) -> None:
         if field not in PhysicsTuning.__annotations__:
             return
-        persisted_value = self._to_persisted_value(getattr(self.tuning, field))
-        update_state(tuning_overrides={field: persisted_value})
         self._persist_profiles_state()
 
     @staticmethod
@@ -344,15 +335,17 @@ class RunnerDemo(ShowBase):
         active = state.active_tuning_profile or "surf_bhop_c2"
         if active not in self._profiles:
             active = "surf_bhop_c2"
+
+        # One-way migration for old state files that only had global tuning_overrides.
+        # Apply those values to the chosen active profile once at load time.
+        if state.tuning_overrides and not state.tuning_profiles and active in self._profiles:
+            fields = set(PhysicsTuning.__annotations__.keys())
+            for k, v in state.tuning_overrides.items():
+                if k in fields:
+                    self._profiles[active][k] = v
+
         self._active_profile_name = active
         self._apply_profile_snapshot(self._profiles[self._active_profile_name], persist=False)
-
-        # Legacy compatibility: explicit tuning overrides still apply on top at boot.
-        if state.tuning_overrides:
-            self._apply_persisted_tuning(state.tuning_overrides)
-            if self._active_profile_name in self._profiles:
-                for k, v in state.tuning_overrides.items():
-                    self._profiles[self._active_profile_name][k] = v
 
     def _apply_profile_snapshot(self, values: dict[str, float | bool], *, persist: bool) -> None:
         fields = set(PhysicsTuning.__annotations__.keys())
@@ -366,6 +359,8 @@ class RunnerDemo(ShowBase):
             self._suspend_tuning_persist = False
         if getattr(self, "player", None) is not None:
             self.player.apply_hull_settings()
+        if hasattr(self, "ui") and self.ui is not None:
+            self.ui.sync_from_tuning()
         if persist:
             self._persist_profiles_state()
 
