@@ -36,13 +36,11 @@ class ListMenu:
             except Exception:
                 pass
 
-        # Full-height panel with a stable local coordinate system.
-        margin_x = 0.06
-        margin_y = 0.06
-        x = -aspect_ratio + margin_x
-        y = -1.0 + margin_y
-        w = max(1.2, (aspect_ratio * 2.0) - margin_x * 2.0)
-        h = max(1.2, 2.0 - margin_y * 2.0)
+        # Centered panel (avoid full-width "spreadsheet" look).
+        w = min((aspect_ratio * 2.0) - 0.18, 2.55)
+        h = min(1.80, 2.0 - 0.14)
+        x = -w / 2.0
+        y = -h / 2.0
 
         self._panel = Panel.build(parent=aspect2d, theme=theme, x=x, y=y, w=w, h=h, title=title, header=True)
         self._root = self._panel.node
@@ -51,7 +49,7 @@ class ListMenu:
 
         header_total_h = theme.header_h + (theme.outline_w * 2)
         self._content = DirectFrame(
-            parent=self._root,
+            parent=self._panel.content,
             frameColor=(0, 0, 0, 0),
             relief=DGG.FLAT,
             frameSize=(theme.pad, w - theme.pad, theme.pad, h - header_total_h),
@@ -83,6 +81,8 @@ class ListMenu:
         self._search_input: TextInput | None = None
         self._search_last_text: str = ""
 
+        self._sel_bg: DirectFrame | None = None
+
         # Rows.
         self._items: list[ListMenuItem] = []
         self._selected: int = 0
@@ -93,6 +93,17 @@ class ListMenu:
         rows_h = max(0.2, rows_top - rows_bottom)
         row_h = theme.label_scale * 1.50
         self._visible_rows = max(10, int(rows_h / max(0.01, row_h)))
+        self._row_h = float(row_h)
+        self._rows_top = float(rows_top)
+
+        # Selection highlight (a soft bar behind the selected row).
+        self._sel_bg = DirectFrame(
+            parent=self._content,
+            frameColor=(theme.panel2[0], theme.panel2[1], theme.panel2[2], 0.70),
+            relief=DGG.FLAT,
+            frameSize=(-0.01, self._content_w + 0.01, -row_h * 0.55, row_h * 0.55),
+            pos=(0.0, 0.0, rows_top),
+        )
 
         self._row_nodes: list[DirectLabel] = []
         for i in range(self._visible_rows):
@@ -115,6 +126,8 @@ class ListMenu:
     def destroy(self) -> None:
         self.hide_search()
         try:
+            if self._sel_bg is not None:
+                self._sel_bg.destroy()
             for r in self._row_nodes:
                 r.destroy()
         except Exception:
@@ -251,11 +264,15 @@ class ListMenu:
 
     def _redraw(self) -> None:
         if not self._items:
+            if self._sel_bg is not None:
+                self._sel_bg.hide()
             for r in self._row_nodes:
                 r["text"] = ""
             self._status["text"] = "No entries."
             return
 
+        if self._sel_bg is not None:
+            self._sel_bg.show()
         half = self._visible_rows // 2
         start = max(0, min(len(self._items) - self._visible_rows, self._selected - half))
         window = self._items[start : start + self._visible_rows]
@@ -274,6 +291,10 @@ class ListMenu:
 
             if idx == self._selected:
                 r["text_fg"] = self._theme.text if item.enabled else self._theme.text_muted
+                # Move selection highlight behind this row.
+                rpos = r.getPos()
+                if self._sel_bg is not None:
+                    self._sel_bg.setPos(0.0, 0.0, float(rpos.z))
             else:
                 r["text_fg"] = self._theme.text_muted if item.enabled else (
                     self._theme.text_muted[0] * 0.75,

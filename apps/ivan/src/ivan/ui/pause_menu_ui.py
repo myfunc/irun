@@ -60,7 +60,7 @@ class PauseMenuUI:
         content_w = w - theme.pad * 2
 
         self._content = DirectFrame(
-            parent=self.root,
+            parent=self._panel.content,
             frameColor=(0, 0, 0, 0),
             relief=DGG.FLAT,
             frameSize=(theme.pad, w - theme.pad, theme.pad, h - header_total_h),
@@ -238,4 +238,3 @@ class PauseMenuUI:
 
     def set_keybind_status(self, text: str) -> None:
         self._keybind_status["text"] = str(text)
-
