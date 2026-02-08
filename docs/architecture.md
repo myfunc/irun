@@ -45,6 +45,7 @@ See: `docs/ui-kit.md`.
 
 ## Runtime
 - Start: `python -m ivan` (from `apps/ivan`)
+- Repo root helper: `./runapp ivan` (recommended for quick iteration)
 - The game loop is driven by Panda3D's task manager.
 - In-game UI/input split:
   - `Esc` opens gameplay menu and unlocks cursor.
