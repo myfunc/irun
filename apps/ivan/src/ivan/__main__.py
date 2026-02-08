@@ -24,6 +24,7 @@ def main(argv: list[str] | None = None) -> None:
         help=(
             "Map bundle to load. Accepts:\n"
             "  - a path to map.json\n"
+            "  - a path to a packed bundle (.irunmap)\n"
             "  - an alias under apps/ivan/assets/, e.g. imported/halflife/valve/bounce\n"
             "Relative paths are resolved from the current working dir first, then from apps/ivan/assets/."
         ),

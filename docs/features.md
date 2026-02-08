@@ -15,6 +15,7 @@
 - Ivan: error console overlay (`F3`) that captures and shows unhandled exceptions without crashing the app (cycles hidden/collapsed/feed)
 - Ivan: generated test course with walls and jump obstacles
 - Ivan: BSP-to-map-bundle asset pipeline and runtime map loading (`--map`, including assets-relative aliases)
+- Ivan: packed map bundles (`.irunmap`) for imported maps (zip archive with runtime auto-extract cache)
 - Ivan: Source material extraction (VTF->PNG conversion), textured rendering, and skybox hookup
   - Basic VMT parsing for translucency/additive/alphatest and `$basetexture` indirection
   - Source baked lightmap extraction and runtime lightmap rendering (base texture * lightmap)

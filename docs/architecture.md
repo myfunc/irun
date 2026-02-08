@@ -40,7 +40,9 @@ Game apps use **Panda3D** directly to keep iteration fast for movement-focused p
 - Texture sizing: IVAN disables Panda3D's default power-of-two rescaling for textures (`textures-power-2 none`).
   - Reason: imported GoldSrc maps commonly reference non-power-of-two textures; automatic rescaling breaks BSP UV mapping.
 - Imported BSP bundles render with baked lightmaps (Source/GoldSrc) and disable dynamic scene lights for map geometry.
-- Per-map run options can be stored in `<bundle>/run.json` (mode/spawn/lighting presets).
+- Per-map run options can be stored in:
+  - directory bundles: `<bundle>/run.json`
+  - packed bundles (`.irunmap`): `<bundle>.run.json` (sidecar file next to the archive)
 
 ## Dependencies
 - `panda3d`: 3D engine and window/event loop
@@ -50,6 +52,11 @@ Game apps use **Panda3D** directly to keep iteration fast for movement-focused p
 
 ## Maps (Planned: Format v3)
 Maps are distributed as **map bundles** rooted at a `map.json` manifest plus adjacent assets (textures/resources).
+
+Bundle storage formats:
+- **Directory bundle**: `<bundle>/map.json` plus folders like `materials/`, `lightmaps/`, `resources/`.
+- **Packed bundle**: a single `.irunmap` file (zip archive) containing `map.json` at the archive root plus the same folder layout.
+  - Runtime extracts `.irunmap` bundles to a local cache under `~/.irun/ivan/cache/bundles/<hash>/` before loading assets.
 
 Planned format v3 extends the current v2 triangle bundles with:
 - **Entities**: triggers, spawners, buttons, ladders, movers, lights (engine-agnostic model).

@@ -283,6 +283,7 @@ def resolve_map_json(map_json: str) -> Path | None:
 
     Supported:
     - absolute path to `map.json` (or `*_map.json`)
+    - absolute/relative path to a packed bundle `.irunmap`
     - relative path (cwd first, then apps/ivan/assets/)
     - assets alias directory, e.g. `imported/halflife/valve/bounce` (implies `<alias>/map.json`)
     """
@@ -298,8 +299,14 @@ def resolve_map_json(map_json: str) -> Path | None:
     expanded: list[Path] = []
     for c in candidates:
         expanded.append(c)
-        if c.suffix.lower() != ".json":
+        suf = c.suffix.lower()
+        if suf not in (".json", ".irunmap"):
             expanded.append(c / "map.json")
+            # Allow passing a suffix-less alias for packed bundles, e.g. imported/.../bounce -> bounce.irunmap
+            try:
+                expanded.append(c.with_suffix(".irunmap"))
+            except Exception:
+                pass
 
     for c in expanded:
         if c.exists() and c.is_file():

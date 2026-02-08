@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ivan.ui.map_select_ui import MapEntry
+from ivan.maps.bundle_io import PACKED_BUNDLE_EXT
 
 
 @dataclass(frozen=True)
@@ -47,14 +48,18 @@ def find_runnable_bundles(*, app_root: Path) -> list[MapBundle]:
 
     Sources:
     - `assets/imported/**/map.json` (GoldSrc/Xash3D imports)
+    - `assets/imported/**/*.irunmap` (packed imports)
     - `assets/maps/**/map.json` (hand-authored bundles)
+    - `assets/maps/**/*.irunmap` (packed bundles)
     - `assets/generated/*_map.json` (single-file generated bundles)
     """
 
     assets = app_root / "assets"
     candidates: list[Path] = []
     candidates.extend((assets / "imported").glob("**/map.json"))
+    candidates.extend((assets / "imported").glob(f"**/*{PACKED_BUNDLE_EXT}"))
     candidates.extend((assets / "maps").glob("**/map.json"))
+    candidates.extend((assets / "maps").glob(f"**/*{PACKED_BUNDLE_EXT}"))
     candidates.extend((assets / "generated").glob("*_map.json"))
 
     out: list[MapBundle] = []

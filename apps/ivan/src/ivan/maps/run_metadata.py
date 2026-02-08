@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from ivan.maps.bundle_io import run_json_path_for_bundle_ref
+
 
 @dataclass(frozen=True)
 class RunMetadata:
@@ -19,8 +21,16 @@ class RunMetadata:
     lighting: dict | None = None  # {"preset": str, "overrides": {style(str): pattern(str)}}
 
 
-def load_run_metadata(*, bundle_root: Path) -> RunMetadata:
-    p = bundle_root / "run.json"
+def load_run_metadata(*, bundle_ref: Path) -> RunMetadata:
+    """
+    Load per-bundle runtime metadata.
+
+    Storage:
+    - directory bundle: <bundle>/run.json
+    - packed bundle (.irunmap): <bundle>.run.json (sidecar)
+    """
+
+    p = run_json_path_for_bundle_ref(bundle_ref)
     if not p.exists() or not p.is_file():
         return RunMetadata()
     try:
@@ -50,14 +60,14 @@ def load_run_metadata(*, bundle_root: Path) -> RunMetadata:
     return RunMetadata(mode=mode, mode_config=mode_config, spawn_override=spawn, lighting=lighting)
 
 
-def set_run_metadata_lighting(*, bundle_root: Path, lighting: dict | None) -> None:
+def set_run_metadata_lighting(*, bundle_ref: Path, lighting: dict | None) -> None:
     """
     Persist a lighting preset for this bundle in <bundle>/run.json.
 
     This is intended to be set from the main menu after the user tries a preset.
     """
 
-    p = bundle_root / "run.json"
+    p = run_json_path_for_bundle_ref(bundle_ref)
     payload: dict = {}
     if p.exists():
         try:
