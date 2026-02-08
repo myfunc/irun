@@ -159,7 +159,9 @@ def _pick_spawn(entities, scale: float) -> tuple[list[float], float]:
             continue
         angles = _parse_angles(ent.get("angles"))
         yaw = float(angles[1]) if angles else 0.0
-        pos = [origin[0] * scale, -origin[1] * scale, origin[2] * scale]
+        # GoldSrc BSP coordinates match Panda3D's world axes for our runtime:
+        # X right, Y forward, Z up. Keep positions in the same space (scale only).
+        pos = [origin[0] * scale, origin[1] * scale, origin[2] * scale]
         return (pos, yaw)
     return fallback
 
@@ -810,24 +812,28 @@ def main() -> None:
                         continue
                     verts = poly.vertices
                     for i in range(1, len(verts) - 1):
+                        # Use a consistent winding order for Panda3D (CCW in view space).
+                        # Historically we achieved this by mirroring the coordinate system (Y flip),
+                        # but that made the whole map mirrored. Keep coordinates unmirrored and instead
+                        # flip the triangle winding here.
                         v0 = verts[0]
-                        v1 = verts[i]
-                        v2 = verts[i + 1]
+                        v1 = verts[i + 1]
+                        v2 = verts[i]
 
-                        # Same coordinate convention as Source conversion: flip Y.
+                        # Keep GoldSrc BSP coordinates in the same space as the runtime (scale only).
                         p0 = [
                             float(v0.position.x) * args.scale,
-                            -float(v0.position.y) * args.scale,
+                            float(v0.position.y) * args.scale,
                             float(v0.position.z) * args.scale,
                         ]
                         p1 = [
                             float(v1.position.x) * args.scale,
-                            -float(v1.position.y) * args.scale,
+                            float(v1.position.y) * args.scale,
                             float(v1.position.z) * args.scale,
                         ]
                         p2 = [
                             float(v2.position.x) * args.scale,
-                            -float(v2.position.y) * args.scale,
+                            float(v2.position.y) * args.scale,
                             float(v2.position.z) * args.scale,
                         ]
                         pos9 = [*p0, *p1, *p2]
@@ -836,9 +842,9 @@ def main() -> None:
                             collision_triangles.append(pos9)
 
                         if tri_renders:
-                            n0 = [float(v0.normal.x), -float(v0.normal.y), float(v0.normal.z)]
-                            n1 = [float(v1.normal.x), -float(v1.normal.y), float(v1.normal.z)]
-                            n2 = [float(v2.normal.x), -float(v2.normal.y), float(v2.normal.z)]
+                            n0 = [float(v0.normal.x), float(v0.normal.y), float(v0.normal.z)]
+                            n1 = [float(v1.normal.x), float(v1.normal.y), float(v1.normal.z)]
+                            n2 = [float(v2.normal.x), float(v2.normal.y), float(v2.normal.z)]
 
                             # Some GoldSrc branches may not provide UV pairs; treat as best-effort.
                             try:

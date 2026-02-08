@@ -24,7 +24,13 @@ See: `docs/ui-kit.md`.
 - `apps/ui_kit/src/irun_ui_kit/`: Internal procedural UI kit (Panda3D DirectGUI) used by Ivan UI screens
 - `apps/ivan/src/ivan/__main__.py`: Ivan entrypoint (`python -m ivan`)
 - `apps/ivan/src/ivan/__init__.py`: package bootstrap (includes monorepo fallback path injection for `apps/ui_kit/src` when `irun-ui-kit` is not installed in the active venv)
-- `apps/ivan/src/ivan/game.py`: App wiring (Panda3D ShowBase), input, camera, and frame update loop
+- `apps/ivan/src/ivan/game/`: IVAN client app wiring (Panda3D ShowBase), split into focused modules:
+  - `apps/ivan/src/ivan/game/app.py`: composition root (`RunnerDemo`) + frame loop orchestration
+  - `apps/ivan/src/ivan/game/netcode.py`: client prediction/reconciliation + remote interpolation helpers
+  - `apps/ivan/src/ivan/game/tuning_profiles.py`: tuning profile defaults + persistence helpers
+  - `apps/ivan/src/ivan/game/input_system.py`: mouse/keyboard sampling + input command helpers
+  - `apps/ivan/src/ivan/game/menu_flow.py`: main menu controller + import worker glue
+  - `apps/ivan/src/ivan/game/grapple_rope.py`: grapple rope rendering helper
 - `apps/ivan/src/ivan/maps/catalog.py`: runtime catalog helpers for shipped bundles and GoldSrc-like map discovery
 - `apps/ivan/src/ivan/state.py`: small persistent user state (last launched map, last game dir/mod, tuning profiles + active profile snapshot)
 - `apps/ivan/src/ivan/world/scene.py`: Scene building, external map-bundle loading (`--map`), spawn point/yaw
@@ -96,6 +102,7 @@ See: `docs/ui-kit.md`.
 - Baker adds a viewer-only post-process view transform (tonemap + gamma) toggled via `1`/`2`/`3`.
 - Texture sizing: IVAN disables Panda3D's default power-of-two rescaling for textures (`textures-power-2 none`).
   - Reason: imported GoldSrc maps commonly reference non-power-of-two textures; automatic rescaling breaks BSP UV mapping.
+- Coordinate system: IVAN uses Panda3D's default world axes (`X` right, `Y` forward, `Z` up). GoldSrc BSP imports keep the same axes and only apply a uniform scale.
 - Imported BSP bundles render with baked lightmaps (Source/GoldSrc) and disable dynamic scene lights for map geometry.
 - Optional visibility culling:
   - GoldSrc bundles can use BSP PVS (VISIBILITY + leaf face lists) to avoid rendering world geometry behind walls.

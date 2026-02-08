@@ -8,7 +8,6 @@ import sys
 import threading
 import time
 import traceback
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -17,12 +16,7 @@ from direct.task import Task
 from panda3d.core import (
     ButtonHandle,
     Filename,
-    Geom,
     GeomNode,
-    GeomTriangles,
-    GeomVertexData,
-    GeomVertexFormat,
-    GeomVertexWriter,
     KeyboardButton,
     LVector3f,
     PNMImage,
@@ -67,115 +61,14 @@ from ivan.world.scene import WorldScene
 from irun_ui_kit.renderer import UIRenderer
 from irun_ui_kit.theme import Theme
 
-
-class _InputCommand:
-    def __init__(
-        self,
-        *,
-        look_dx: int = 0,
-        look_dy: int = 0,
-        look_scale: int = 1,
-        move_forward: int = 0,
-        move_right: int = 0,
-        jump_pressed: bool = False,
-        jump_held: bool = False,
-        crouch_held: bool = False,
-        grapple_pressed: bool = False,
-        noclip_toggle_pressed: bool = False,
-    ) -> None:
-        self.look_dx = int(look_dx)
-        self.look_dy = int(look_dy)
-        self.look_scale = max(1, int(look_scale))
-        self.move_forward = int(move_forward)
-        self.move_right = int(move_right)
-        self.jump_pressed = bool(jump_pressed)
-        self.jump_held = bool(jump_held)
-        self.crouch_held = bool(crouch_held)
-        self.grapple_pressed = bool(grapple_pressed)
-        self.noclip_toggle_pressed = bool(noclip_toggle_pressed)
-
-    def to_demo_frame(self) -> DemoFrame:
-        return DemoFrame(
-            look_dx=self.look_dx,
-            look_dy=self.look_dy,
-            move_forward=self.move_forward,
-            move_right=self.move_right,
-            jump_pressed=self.jump_pressed,
-            jump_held=self.jump_held,
-            crouch_held=self.crouch_held,
-            grapple_pressed=self.grapple_pressed,
-            noclip_toggle_pressed=self.noclip_toggle_pressed,
-        )
-
-    @classmethod
-    def from_demo_frame(cls, frame: DemoFrame, *, look_scale: int) -> "_InputCommand":
-        return cls(
-            look_dx=frame.look_dx,
-            look_dy=frame.look_dy,
-            look_scale=look_scale,
-            move_forward=frame.move_forward,
-            move_right=frame.move_right,
-            jump_pressed=frame.jump_pressed,
-            jump_held=frame.jump_held,
-            crouch_held=frame.crouch_held,
-            grapple_pressed=frame.grapple_pressed,
-            noclip_toggle_pressed=frame.noclip_toggle_pressed,
-        )
-
-
-@dataclass
-class _RemotePlayerVisual:
-    player_id: int
-    root_np: object
-    head_np: object
-    hp: int = 100
-    name: str = "player"
-    respawn_seq: int = 0
-    sample_ticks: list[int] = field(default_factory=list)
-    sample_pos: list[LVector3f] = field(default_factory=list)
-    sample_vel: list[LVector3f] = field(default_factory=list)
-    sample_yaw: list[float] = field(default_factory=list)
-
-
-@dataclass
-class _PredictedInput:
-    seq: int
-    cmd: _InputCommand
-
-
-@dataclass
-class _PredictedState:
-    seq: int
-    pos: LVector3f
-    vel: LVector3f
-    yaw: float
-    pitch: float
-
-
-@dataclass
-class _NetPerfStats:
-    snapshot_count: int = 0
-    snapshot_dt_sum: float = 0.0
-    snapshot_dt_max: float = 0.0
-    reconcile_count: int = 0
-    reconcile_pos_err_sum: float = 0.0
-    reconcile_pos_err_max: float = 0.0
-    replay_input_sum: int = 0
-    replay_input_max: int = 0
-    replay_time_sum_ms: float = 0.0
-    replay_time_max_ms: float = 0.0
-
-    def reset(self) -> None:
-        self.snapshot_count = 0
-        self.snapshot_dt_sum = 0.0
-        self.snapshot_dt_max = 0.0
-        self.reconcile_count = 0
-        self.reconcile_pos_err_sum = 0.0
-        self.reconcile_pos_err_max = 0.0
-        self.replay_input_sum = 0
-        self.replay_input_max = 0
-        self.replay_time_sum_ms = 0.0
-        self.replay_time_max_ms = 0.0
+from . import grapple_rope as _grapple_rope
+from . import input_system as _input
+from . import menu_flow as _menu
+from . import netcode as _net
+from . import tuning_profiles as _profiles
+from .hooks import EventHooks
+from .input_system import _InputCommand
+from .netcode import _NetPerfStats, _PredictedInput, _PredictedState, _RemotePlayerVisual
 
 
 class RunnerDemo(ShowBase):
@@ -206,6 +99,8 @@ class RunnerDemo(ShowBase):
         self._active_profile_name: str = "surf_bhop_c2"
         self._load_profiles_from_state(self._loaded_state)
         self.disableMouse()
+
+        self._hooks = EventHooks(base=self, safe_call=self._safe_call)
 
         self._yaw = 0.0
         self._pitch = 0.0
@@ -438,85 +333,27 @@ class RunnerDemo(ShowBase):
         self.accept("keystroke", lambda key: self._safe_call("input.keystroke", lambda: self._on_keystroke(key)))
 
     def _on_tuning_change(self, field: str) -> None:
-        if self._net_connected and not self._net_can_configure:
-            if self._net_authoritative_tuning:
-                self._apply_profile_snapshot(dict(self._net_authoritative_tuning), persist=False)
-            self.ui.set_status("Server config is host-only. Local tuning changes are blocked.")
-            return
-        if field in ("player_radius", "player_half_height", "crouch_half_height"):
-            if self.player is not None:
-                self.player.apply_hull_settings()
-        if field == "vis_culling_enabled":
-            if self.scene is not None:
-                try:
-                    self.scene.set_visibility_enabled(bool(self.tuning.vis_culling_enabled))
-                except Exception:
-                    pass
-        if self._active_profile_name in self._profiles:
-            self._profiles[self._active_profile_name][field] = self._to_persisted_value(getattr(self.tuning, field))
-        if not self._suspend_tuning_persist:
-            self._persist_tuning_field(field)
-        if self._net_connected and self._net_can_configure:
-            self._send_tuning_to_server()
+        _profiles.on_tuning_change(self, field)
 
     def _persist_tuning_field(self, field: str) -> None:
         if field not in PhysicsTuning.__annotations__:
             return
-        self._persist_profiles_state()
+        _profiles.persist_profiles_state(self)
 
     def _current_tuning_snapshot(self) -> dict[str, float | bool]:
-        return {
-            field: self._to_persisted_value(getattr(self.tuning, field))
-            for field in PhysicsTuning.__annotations__.keys()
-        }
+        return _profiles.current_tuning_snapshot(self)
 
     def _apply_authoritative_tuning(self, *, tuning: dict[str, float | bool], version: int) -> None:
-        if not isinstance(tuning, dict):
-            return
-        self._net_authoritative_tuning = dict(tuning)
-        self._net_authoritative_tuning_version = max(int(self._net_authoritative_tuning_version), int(version))
-        self._apply_profile_snapshot(dict(self._net_authoritative_tuning), persist=False)
-        if (
-            int(self._net_cfg_apply_pending_version) > 0
-            and int(self._net_authoritative_tuning_version) >= int(self._net_cfg_apply_pending_version)
-        ):
-            self._net_cfg_apply_pending_version = 0
-            self._net_cfg_apply_sent_at = 0.0
-            self.ui.set_status(f"Server config updated (cfg_v={self._net_authoritative_tuning_version}).")
+        _profiles.apply_authoritative_tuning(self, tuning=tuning, version=version)
 
     def _send_tuning_to_server(self) -> None:
-        if not self._net_connected or not self._net_can_configure or self._net_client is None:
-            return
-        snap = self._current_tuning_snapshot()
-        self._net_authoritative_tuning = dict(snap)
-        self._net_cfg_apply_pending_version = max(
-            int(self._net_cfg_apply_pending_version),
-            int(self._net_authoritative_tuning_version) + 1,
-        )
-        self._net_cfg_apply_sent_at = time.monotonic()
-        self._net_client.send_tuning(snap)
+        _profiles.send_tuning_to_server(self)
 
     def _append_predicted_state(self, *, seq: int) -> None:
-        if self.player is None:
-            return
-        self._net_predicted_states.append(
-            _PredictedState(
-                seq=int(seq),
-                pos=LVector3f(self.player.pos),
-                vel=LVector3f(self.player.vel),
-                yaw=float(self._yaw),
-                pitch=float(self._pitch),
-            )
-        )
-        if len(self._net_predicted_states) > 256:
-            self._net_predicted_states = self._net_predicted_states[-256:]
+        _net.append_predicted_state(self, seq=seq)
 
     def _state_for_ack(self, ack: int) -> _PredictedState | None:
-        ack_i = int(ack)
-        for st in reversed(self._net_predicted_states):
-            if int(st.seq) == ack_i:
-                return st
-        return None
+        return _net.state_for_ack(self, ack)
 
     def _reconcile_local_from_server(
         self,
@@ -531,276 +368,47 @@ class RunnerDemo(ShowBase):
         pitch: float,
         ack: int,
     ) -> None:
-        if self.player is None or self._playback_active:
-            return
-        ack_i = int(ack)
-        ack_advanced = ack_i > int(self._net_last_acked_seq)
-        ack_state = self._state_for_ack(ack_i) if ack_advanced else None
-        if ack_advanced:
-            self._net_last_acked_seq = ack_i
-            self._net_pending_inputs = [p for p in self._net_pending_inputs if int(p.seq) > ack_i]
-            self._net_predicted_states = [s for s in self._net_predicted_states if int(s.seq) > ack_i]
-
-        server_pos = LVector3f(x, y, z)
-        server_vel = LVector3f(vx, vy, vz)
-        if ack_state is not None:
-            ref_pos = LVector3f(ack_state.pos)
-            ref_vel = LVector3f(ack_state.vel)
-            ref_yaw = float(ack_state.yaw)
-            ref_pitch = float(ack_state.pitch)
-        else:
-            ref_pos = LVector3f(self.player.pos)
-            ref_vel = LVector3f(self.player.vel)
-            ref_yaw = float(self._yaw)
-            ref_pitch = float(self._pitch)
-
-        pos_err = float((server_pos - ref_pos).length())
-        vel_err = float((server_vel - ref_vel).length())
-        yaw_err = abs(float(self._angle_delta_deg(ref_yaw, float(yaw))))
-        pitch_err = abs(float(self._angle_delta_deg(ref_pitch, float(pitch))))
-        needs_correction = pos_err > 0.02 or vel_err > 0.20 or yaw_err > 0.35 or pitch_err > 0.35
-        if not needs_correction:
-            return
-        self._net_perf.reconcile_count += 1
-        self._net_perf.reconcile_pos_err_sum += float(pos_err)
-        self._net_perf.reconcile_pos_err_max = max(float(self._net_perf.reconcile_pos_err_max), float(pos_err))
-
-        if ack_advanced:
-            pre_reconcile_pos = LVector3f(self.player.pos)
-            self.player.pos = LVector3f(server_pos)
-            self.player.vel = LVector3f(server_vel)
-            self._yaw = float(yaw)
-            self._pitch = float(pitch)
-            t_replay_start = time.monotonic()
-            replay_count = 0
-            for p in self._net_pending_inputs:
-                self._simulate_input_tick(
-                    cmd=p.cmd,
-                    menu_open=False,
-                    network_send=False,
-                    record_demo=False,
-                    capture_snapshot=False,
-                )
-                self._append_predicted_state(seq=int(p.seq))
-                replay_count += 1
-            self._push_sim_snapshot()
-            replay_ms = max(0.0, (time.monotonic() - t_replay_start) * 1000.0)
-            self._net_perf.replay_input_sum += int(replay_count)
-            self._net_perf.replay_input_max = max(int(self._net_perf.replay_input_max), int(replay_count))
-            self._net_perf.replay_time_sum_ms += float(replay_ms)
-            self._net_perf.replay_time_max_ms = max(float(self._net_perf.replay_time_max_ms), float(replay_ms))
-            post_reconcile_pos = LVector3f(self.player.pos)
-            self._net_reconcile_pos_offset += pre_reconcile_pos - post_reconcile_pos
-            return
-
-        if not self._net_pending_inputs:
-            self.player.pos = LVector3f(server_pos)
-            self.player.vel = LVector3f(server_vel)
-            self._yaw = float(yaw)
-            self._pitch = float(pitch)
+        _net.reconcile_local_from_server(
+            self,
+            x=x,
+            y=y,
+            z=z,
+            vx=vx,
+            vy=vy,
+            vz=vz,
+            yaw=yaw,
+            pitch=pitch,
+            ack=ack,
+        )
 
     @staticmethod
     def _to_persisted_value(value: object) -> float | bool:
-        if isinstance(value, bool):
-            return value
-        return float(value)
+        return _profiles.to_persisted_value(value)
 
     @staticmethod
     def _build_default_profiles() -> dict[str, dict[str, float | bool]]:
-        base = PhysicsTuning()
-        field_names = list(PhysicsTuning.__annotations__.keys())
-        snap = {f: (bool(getattr(base, f)) if isinstance(getattr(base, f), bool) else float(getattr(base, f))) for f in field_names}
-
-        surf_bhop_c2 = dict(snap)
-        surf_bhop_c2.update(
-            {
-                "surf_enabled": True,
-                "autojump_enabled": True,
-                "enable_jump_buffer": True,
-                "gravity": 39.6196435546875,
-                "jump_height": 1.0108081703186036,
-                "max_ground_speed": 6.622355737686157,
-                "max_air_speed": 6.845157165527343,
-                "ground_accel": 49.44859447479248,
-                "jump_accel": 31.738659286499026,
-                "friction": 13.672204017639162,
-                "air_control": 0.24100000381469727,
-                "air_counter_strafe_brake": 23.000001525878908,
-                "mouse_sensitivity": 0.09978364143371583,
-                "jump_buffer_time": 0.2329816741943359,
-                "wall_jump_cooldown": 0.9972748947143555,
-                "surf_accel": 23.521632385253906,
-                "surf_gravity_scale": 0.33837084770202636,
-                "surf_min_normal_z": 0.05,
-                "surf_max_normal_z": 0.72,
-                "grapple_enabled": True,
-                "grapple_attach_shorten_speed": 7.307412719726562,
-                "grapple_attach_shorten_time": 0.35835513305664063,
-                "grapple_pull_strength": 30.263092041015625,
-                "grapple_min_length": 0.7406494271755218,
-                "grapple_rope_half_width": 0.015153287963867187,
-            }
-        )
-        surf_bhop = dict(surf_bhop_c2)
-
-        bhop = dict(snap)
-        bhop.update(
-            {
-                "surf_enabled": False,
-                "autojump_enabled": True,
-                "enable_jump_buffer": True,
-                "jump_accel": 34.0,
-                "max_air_speed": 14.0,
-                "air_control": 0.30,
-                "air_counter_strafe_brake": 18.0,
-                "friction": 4.8,
-            }
-        )
-
-        surf = dict(snap)
-        surf.update(
-            {
-                "surf_enabled": True,
-                "autojump_enabled": False,
-                "enable_jump_buffer": False,
-                "jump_accel": 10.0,
-                "max_air_speed": 22.0,
-                "air_control": 0.10,
-                "air_counter_strafe_brake": 9.0,
-                "surf_accel": 70.0,
-                "surf_gravity_scale": 0.82,
-                "surf_min_normal_z": 0.05,
-                "surf_max_normal_z": 0.76,
-                "friction": 3.8,
-            }
-        )
-
-        surf_sky2_server = dict(snap)
-        surf_sky2_server.update(
-            {
-                # Approximation of publicly listed surf_ski_2/surf_sky_2 server cvars:
-                # sv_accelerate 5, sv_airaccelerate 100, sv_friction 4, sv_maxspeed 900, sv_gravity 800.
-                "gravity": 24.0,
-                "max_ground_speed": 23.90,
-                "max_air_speed": 23.90,
-                "ground_accel": 5.0,
-                "jump_accel": 3.0,
-                "friction": 4.0,
-                "air_control": 0.10,
-                "air_counter_strafe_brake": 8.0,
-                "surf_enabled": True,
-                "surf_accel": 10.0,
-                "surf_gravity_scale": 1.0,
-                "surf_min_normal_z": 0.05,
-                "surf_max_normal_z": 0.72,
-                "autojump_enabled": False,
-                "enable_jump_buffer": False,
-                "walljump_enabled": False,
-                "wallrun_enabled": False,
-                "vault_enabled": False,
-            }
-        )
-        return {
-            "surf_bhop_c2": surf_bhop_c2,
-            "surf_bhop": surf_bhop,
-            "bhop": bhop,
-            "surf": surf,
-            "surf_sky2_server": surf_sky2_server,
-        }
+        return _profiles.build_default_profiles()
 
     def _profile_names(self) -> list[str]:
-        ordered = ["surf_bhop_c2", "surf_bhop", "bhop", "surf", "surf_sky2_server"]
-        extras = sorted([n for n in self._profiles.keys() if n not in ordered])
-        return [n for n in ordered if n in self._profiles] + extras
+        return _profiles.profile_names(self)
 
     def _load_profiles_from_state(self, state: IvanState) -> None:
-        self._profiles = {name: dict(values) for name, values in self._default_profiles.items()}
-        for name, values in state.tuning_profiles.items():
-            self._profiles[name] = dict(values)
-
-        active = state.active_tuning_profile or "surf_bhop_c2"
-        if active not in self._profiles:
-            active = "surf_bhop_c2"
-
-        # One-way migration for old state files that only had global tuning_overrides.
-        # Apply those values to the chosen active profile once at load time.
-        if state.tuning_overrides and not state.tuning_profiles and active in self._profiles:
-            fields = set(PhysicsTuning.__annotations__.keys())
-            for k, v in state.tuning_overrides.items():
-                if k in fields:
-                    self._profiles[active][k] = v
-
-        self._active_profile_name = active
-        self._apply_profile_snapshot(self._profiles[self._active_profile_name], persist=False)
+        _profiles.load_profiles_from_state(self, state)
 
     def _apply_profile_snapshot(self, values: dict[str, float | bool], *, persist: bool) -> None:
-        fields = set(PhysicsTuning.__annotations__.keys())
-        self._suspend_tuning_persist = True
-        try:
-            for field, value in values.items():
-                if field not in fields:
-                    continue
-                setattr(self.tuning, field, value)
-        finally:
-            self._suspend_tuning_persist = False
-        if getattr(self, "player", None) is not None:
-            self.player.apply_hull_settings()
-        if hasattr(self, "ui") and self.ui is not None:
-            self.ui.sync_from_tuning()
-        if persist:
-            self._persist_profiles_state()
+        _profiles.apply_profile_snapshot(self, values, persist=persist)
 
     def _apply_profile(self, profile_name: str) -> None:
-        if profile_name not in self._profiles:
-            return
-        if self._net_connected and not self._net_can_configure:
-            if self._net_authoritative_tuning:
-                self._apply_profile_snapshot(dict(self._net_authoritative_tuning), persist=False)
-            self.ui.set_status("Server config is host-only. Profile switch is blocked for this client.")
-            self.ui.set_profiles(self._profile_names(), self._active_profile_name)
-            return
-        self._active_profile_name = profile_name
-        self._apply_profile_snapshot(self._profiles[profile_name], persist=True)
-        if self._net_connected and self._net_can_configure:
-            self._send_tuning_to_server()
-            self.ui.set_status(f"Applying profile '{profile_name}' to server...")
-        self.ui.set_profiles(self._profile_names(), self._active_profile_name)
+        _profiles.apply_profile(self, profile_name)
 
     def _save_active_profile(self) -> None:
-        snapshot = {
-            field: self._to_persisted_value(getattr(self.tuning, field))
-            for field in PhysicsTuning.__annotations__.keys()
-        }
-
-        if self._active_profile_name in self._default_profile_names:
-            new_name = self._make_profile_copy_name(self._active_profile_name)
-            self._profiles[new_name] = snapshot
-            self._active_profile_name = new_name
-        else:
-            self._profiles[self._active_profile_name] = snapshot
-        self._persist_profiles_state()
-        self.ui.set_profiles(self._profile_names(), self._active_profile_name)
+        _profiles.save_active_profile(self)
 
     def _make_profile_copy_name(self, base_name: str) -> str:
-        root = (base_name[:12] if base_name else "profile").strip("_-")
-        if not root:
-            root = "profile"
-        candidate = f"{root}_copy"
-        if candidate not in self._profiles:
-            return candidate
-        for i in range(2, 100):
-            name = f"{root}_c{i}"
-            if name not in self._profiles:
-                return name
-        return f"{root}_{len(self._profiles)}"
+        return _profiles.make_profile_copy_name(self, base_name)
 
     def _persist_profiles_state(self) -> None:
-        active_snapshot = self._profiles.get(self._active_profile_name, {})
-        update_state(
-            tuning_profiles=self._profiles,
-            active_tuning_profile=self._active_profile_name,
-            tuning_overrides=active_snapshot,
-        )
+        _profiles.persist_profiles_state(self)
 
     def _on_debug_wheel(self, direction: int) -> None:
         if self._mode != "game" or not self._debug_menu_open:
@@ -1051,217 +659,34 @@ class RunnerDemo(ShowBase):
 
     @staticmethod
     def _normalize_bind_key(key: str) -> str | None:
-        k = (key or "").strip().lower()
-        if not k:
-            return None
-        aliases = {
-            "space": "space",
-            "spacebar": "space",
-            "grave": "`",
-            "backquote": "`",
-            "backtick": "`",
-        }
-        if k in aliases:
-            return aliases[k]
-        if len(k) == 1 and ord(k) < 128:
-            return k
-        if k in {"tab", "enter", "escape", "shift", "control", "alt"}:
-            return k
-        return None
+        return _input.normalize_bind_key(key)
 
     def _enter_main_menu(self) -> None:
-        self._mode = "menu"
-        self._menu_hold_dir = 0
-        self._pause_menu_open = False
-        self._debug_menu_open = False
-        self._replay_browser_open = False
-        self._awaiting_noclip_rebind = False
-        self._active_recording = None
-        self._playback_active = False
-        self._playback_frames = None
-        self._playback_index = 0
-        if self._net_client is not None:
-            try:
-                self._net_client.close()
-            except Exception:
-                pass
-        self._net_client = None
-        self._net_connected = False
-        self._net_player_id = 0
-        self._clear_remote_players()
-        self._stop_embedded_server()
-        self._set_pointer_lock(False)
-
-        # Hide in-game HUD while picking.
-        self.ui.set_speed_hud_visible(False)
-        self.ui.set_crosshair_visible(False)
-        self._grapple_rope_np.hide()
-        self.ui.hide()
-        self.pause_ui.hide()
-        self.replay_browser_ui.hide()
-
-        self._menu = MainMenuController(
-            aspect2d=self.aspect2d,
-            theme=self.ui_theme,
-            initial_game_root=self.cfg.hl_root,
-            initial_mod=self.cfg.hl_mod if self.cfg.hl_root else None,
-            on_start_map_json=self._start_game,
-            on_import_bsp=self._start_import_from_request,
-            on_quit=self.userExit,
-        )
+        _menu.enter_main_menu(self)
 
     def _back_to_menu(self) -> None:
-        if self._mode != "game":
-            return
-        if self._importing:
-            return
-        self._teardown_game_mode()
-
-        # Tear down active world state so returning to menu doesn't leak nodes/state.
-        self.scene = None
-        self.collision = None
-        self.player = None
-        try:
-            self.world_root.removeNode()
-        except Exception:
-            pass
-        self.world_root = self.render.attachNewNode("world-root")
-
-        self.input_debug.hide()
-        self._grapple_rope_np.hide()
-        self.ui.hide()
-        self.pause_ui.hide()
-        self.replay_browser_ui.hide()
-        self._replay_browser_open = False
-        self._playback_active = False
-        self._clear_remote_players()
-        if self._net_client is not None:
-            try:
-                self._net_client.close()
-            except Exception:
-                pass
-        self._net_client = None
-        self._net_connected = False
-        self._net_player_id = 0
-        self._stop_embedded_server()
-
-        self._enter_main_menu()
+        _menu.back_to_menu(self)
 
     def _menu_toggle_search(self) -> None:
-        if self._mode == "menu" and self._menu is not None and not self._importing:
-            self._menu.toggle_search()
+        _menu.menu_toggle_search(self)
 
     def _menu_nav_press(self, dir01: int) -> None:
-        if self._mode == "game" and self._replay_browser_open:
-            d = -1 if dir01 < 0 else 1
-            self.replay_browser_ui.move(d)
-            return
-        if self._mode != "menu" or self._menu is None or self._importing:
-            return
-        if self._menu.is_search_active():
-            return
-        now = float(globalClock.getFrameTime())
-        d = -1 if dir01 < 0 else 1
-        if self._menu_hold_dir != d:
-            self._menu_hold_dir = d
-            self._menu_hold_since = now
-            self._menu_hold_next = now + 0.28
-        self._safe_call("menu.move", lambda: self._menu.move(d))
+        _menu.menu_nav_press(self, dir01)
 
     def _menu_nav_release(self, dir01: int) -> None:
-        d = -1 if dir01 < 0 else 1
-        if self._menu_hold_dir == d:
-            self._menu_hold_dir = 0
+        _menu.menu_nav_release(self, dir01)
 
     def _menu_page(self, dir01: int) -> None:
-        if self._mode == "game" and self._replay_browser_open:
-            d = -1 if dir01 < 0 else 1
-            self.replay_browser_ui.move(d * 10)
-            return
-        if self._mode != "menu" or self._menu is None or self._importing:
-            return
-        if self._menu.is_search_active():
-            return
-        d = -1 if dir01 < 0 else 1
-        shift = False
-        try:
-            if self.mouseWatcherNode is not None:
-                shift = bool(self.mouseWatcherNode.isButtonDown(KeyboardButton.shift()))
-        except Exception:
-            shift = False
-        jump = 20 if shift else 10
-        self._safe_call("menu.page", lambda: self._menu.move(d * jump))
+        _menu.menu_page(self, dir01)
 
     def _menu_select(self) -> None:
-        if self._mode == "game" and self._replay_browser_open:
-            self.replay_browser_ui.on_enter()
-            return
-        if self._mode != "menu" or self._menu is None or self._importing:
-            return
-        self._safe_call("menu.enter", self._menu.on_enter)
+        _menu.menu_select(self)
 
     def _menu_delete(self) -> None:
-        if self._mode != "menu" or self._menu is None or self._importing:
-            return
-        self._safe_call("menu.delete", self._menu.on_delete)
+        _menu.menu_delete(self)
 
     def _start_import_from_request(self, req: ImportRequest) -> None:
-        update_state(last_game_root=req.game_root, last_mod=req.mod)
-
-        app_root = ivan_app_root()
-        # Default to a packed bundle so imported maps don't create huge file trees in git.
-        out_ref = app_root / "assets" / "imported" / "halflife" / req.mod / f"{req.map_label}{PACKED_BUNDLE_EXT}"
-        game_root = Path(req.game_root) / req.mod
-
-        script = app_root / "tools" / "importers" / "goldsrc" / "import_goldsrc_bsp.py"
-        venv_py = app_root / ".venv" / "bin" / "python"
-        python_exe = str(venv_py) if venv_py.exists() else sys.executable
-        cmd = [
-            python_exe,
-            str(script),
-            "--bsp",
-            req.bsp_path,
-            "--game-root",
-            str(game_root),
-            "--out",
-            str(out_ref),
-            "--map-id",
-            req.map_label,
-            "--scale",
-            "0.03",
-        ]
-
-        self._importing = True
-        self._import_error = None
-        self._pending_map_json = None
-        if self._menu is not None:
-            self._menu.set_loading_status(f"Importing {req.map_label}", started_at=globalClock.getFrameTime())
-
-        def worker() -> None:
-            try:
-                out_ref.parent.mkdir(parents=True, exist_ok=True)
-                proc = subprocess.run(cmd, capture_output=True, text=True)
-                if proc.returncode != 0:
-                    err = (proc.stderr or proc.stdout or "").strip()
-                    # Prefer the last non-empty line (usually the exception), but keep a short tail for context.
-                    if err:
-                        lines = [l for l in err.splitlines() if l.strip()]
-                        tail = "\n".join(lines[-6:]) if lines else err
-                        self._import_error = tail[-800:]
-                    else:
-                        self._import_error = f"Importer failed with code {proc.returncode}"
-                    return
-                # Importer writes either:
-                # - <out-dir>/map.json  (directory bundle)
-                # - <out>.irunmap       (packed bundle)
-                self._pending_map_json = str(out_ref)
-            except Exception as e:
-                self._import_error = str(e)
-            finally:
-                self._importing = False
-
-        self._import_thread = threading.Thread(target=worker, daemon=True)
-        self._import_thread.start()
+        _menu.start_import_from_request(self, req)
 
     def _start_game(self, map_json: str | None, lighting: dict | None = None) -> None:
         try:
@@ -1398,8 +823,13 @@ class RunnerDemo(ShowBase):
         try:
             bindings = mode.bindings()
             for evt, cb in getattr(bindings, "events", []) or []:
-                self.accept(evt, lambda cb=cb, e=evt: self._safe_call(f"mode.{mode.id}.{e}", cb))
-                self._game_mode_events.append(evt)
+                self._hooks.bind(
+                    group="mode",
+                    event=str(evt),
+                    context=f"mode.{mode.id}.{evt}",
+                    fn=cb,
+                )
+                self._game_mode_events.append(str(evt))
         except Exception as e:
             self._handle_unhandled_error(context="mode.bindings", exc=e)
         try:
@@ -1410,11 +840,7 @@ class RunnerDemo(ShowBase):
     def _teardown_game_mode(self) -> None:
         if self._game_mode is None:
             return
-        for evt in self._game_mode_events:
-            try:
-                self.ignore(evt)
-            except Exception:
-                pass
+        self._hooks.unbind_group("mode")
         try:
             self._game_mode.on_exit()
         except Exception as e:
@@ -1453,47 +879,10 @@ class RunnerDemo(ShowBase):
         self.win.movePointer(0, x, y)
 
     def _poll_mouse_look_delta(self) -> None:
-        if self.cfg.smoke or not self._pointer_locked:
-            self._last_mouse = None
-            return
-
-        # Primary path: normalized mouse coords (works well with relative mouse mode).
-        if self.mouseWatcherNode is not None and self.mouseWatcherNode.hasMouse():
-            mx = float(self.mouseWatcherNode.getMouseX())
-            my = float(self.mouseWatcherNode.getMouseY())
-            if self._last_mouse is None:
-                self._last_mouse = (mx, my)
-                return
-            lmx, lmy = self._last_mouse
-            self._last_mouse = (mx, my)
-
-            dx_norm = mx - lmx
-            # Keep non-inverted vertical look (mouse up -> look up).
-            dy_norm = lmy - my
-            self._mouse_dx_accum += dx_norm * (self.win.getXSize() * 0.5)
-            self._mouse_dy_accum += dy_norm * (self.win.getYSize() * 0.5)
-            return
-
-        # Fallback: pointer delta vs screen center (useful if hasMouse() stays false on some macOS setups).
-        cx = self.win.getXSize() // 2
-        cy = self.win.getYSize() // 2
-        pointer = self.win.getPointer(0)
-        dx = float(pointer.getX() - cx)
-        dy = float(pointer.getY() - cy)
-
-        if dx == 0.0 and dy == 0.0:
-            return
-        self._mouse_dx_accum += dx
-        self._mouse_dy_accum += dy
-        self._center_mouse()
+        _input.poll_mouse_look_delta(self)
 
     def _consume_mouse_look_delta(self) -> tuple[int, int]:
-        s = float(self._look_input_scale)
-        dx = int(round(self._mouse_dx_accum * s))
-        dy = int(round(self._mouse_dy_accum * s))
-        self._mouse_dx_accum -= float(dx) / s
-        self._mouse_dy_accum -= float(dy) / s
-        return (dx, dy)
+        return _input.consume_mouse_look_delta(self)
 
     def _apply_look_delta(self, *, dx: int, dy: int, look_scale: int, allow_look: bool) -> None:
         if not allow_look:
@@ -1660,45 +1049,19 @@ class RunnerDemo(ShowBase):
                 self._stop_embedded_server()
 
     def _disconnect_multiplayer(self) -> None:
-        if self._net_client is not None:
-            try:
-                self._net_client.close()
-            except Exception:
-                pass
-        self._net_client = None
-        self._net_connected = False
-        self._net_can_configure = False
-        self._net_player_id = 0
-        self._net_seq_counter = 0
-        self._net_last_server_tick = 0
-        self._net_last_acked_seq = 0
-        self._net_local_respawn_seq = 0
-        self._net_last_snapshot_local_time = 0.0
-        self._net_pending_inputs.clear()
-        self._net_predicted_states.clear()
-        self._net_authoritative_tuning = {}
-        self._net_authoritative_tuning_version = 0
-        self._net_snapshot_intervals.clear()
-        self._net_server_tick_offset_ready = False
-        self._net_server_tick_offset_ticks = 0.0
-        self._net_reconcile_pos_offset = LVector3f(0, 0, 0)
-        self._net_reconcile_yaw_offset = 0.0
-        self._net_reconcile_pitch_offset = 0.0
-        self._net_local_cam_ready = False
-        self._net_cfg_apply_pending_version = 0
-        self._net_cfg_apply_sent_at = 0.0
-        self._net_perf.reset()
-        self._net_perf_last_publish = 0.0
-        self._net_perf_text = ""
-        self._clear_remote_players()
-        self.pause_ui.set_multiplayer_status("Not connected.")
+        _net.disconnect_multiplayer(self)
 
     def _start_embedded_server(self) -> bool:
+        # Import from the package at call time so tests can monkeypatch
+        # `ivan.game.EmbeddedHostServer` and `ivan.game.time.sleep`.
+        from . import EmbeddedHostServer as _EmbeddedHostServer
+        from . import time as _time
+
         if self._embedded_server is not None:
             return True
         host = "0.0.0.0" if self._open_to_network else "127.0.0.1"
         try:
-            self._embedded_server = EmbeddedHostServer(
+            self._embedded_server = _EmbeddedHostServer(
                 host=host,
                 tcp_port=int(self._runtime_connect_port),
                 udp_port=int(self._runtime_connect_port) + 1,
@@ -1712,7 +1075,7 @@ class RunnerDemo(ShowBase):
                 return False
             raise
         # Give server a brief warmup window before local connect.
-        time.sleep(0.12)
+        _time.sleep(0.12)
         return True
 
     def _stop_embedded_server(self) -> None:
@@ -1741,263 +1104,25 @@ class RunnerDemo(ShowBase):
         self._connect_multiplayer_if_requested()
 
     def _on_toggle_open_network(self, enabled: bool) -> None:
-        self._open_to_network = bool(enabled)
-        self.pause_ui.set_open_to_network(self._open_to_network)
-        if self._open_to_network:
-            self._runtime_connect_host = None
-            self.pause_ui.set_keybind_status("Starting local host...")
-            self.pause_ui.set_connect_target(host="127.0.0.1", port=int(self._runtime_connect_port))
-            self._connect_multiplayer_if_requested()
-            if self._net_connected:
-                self.pause_ui.set_keybind_status("Open to network enabled.")
-            else:
-                self.pause_ui.set_keybind_status("Failed to start local host.")
-        else:
-            self._disconnect_multiplayer()
-            self._stop_embedded_server()
-            self.pause_ui.set_keybind_status("Open to network disabled (local offline mode).")
+        _net.on_toggle_open_network(self, enabled)
 
     def _on_connect_server_from_menu(self, host: str, port_text: str) -> None:
-        host_clean = str(host or "").strip()
-        if not host_clean:
-            self.pause_ui.set_multiplayer_status("Host/IP is required.")
-            return
-        try:
-            port = int(str(port_text).strip())
-        except Exception:
-            self.pause_ui.set_multiplayer_status("Port must be a number.")
-            return
-        if port <= 0 or port > 65535:
-            self.pause_ui.set_multiplayer_status("Port must be between 1 and 65535.")
-            return
-
-        update_state(last_net_host=host_clean, last_net_port=int(port))
-        self._runtime_connect_host = host_clean
-        self._runtime_connect_port = int(port)
-        self.pause_ui.set_connect_target(host=self._runtime_connect_host, port=self._runtime_connect_port)
-        if self._open_to_network:
-            self._open_to_network = False
-            self.pause_ui.set_open_to_network(False)
-            self._stop_embedded_server()
-        self._connect_multiplayer_if_requested()
+        _net.on_connect_server_from_menu(self, host, port_text)
 
     def _on_disconnect_server_from_menu(self) -> None:
-        self._disconnect_multiplayer()
-        if self._open_to_network:
-            self._open_to_network = False
-            self.pause_ui.set_open_to_network(False)
-            self._stop_embedded_server()
+        _net.on_disconnect_server_from_menu(self)
 
     def _clear_remote_players(self) -> None:
-        for rp in self._remote_players.values():
-            try:
-                rp.root_np.removeNode()
-            except Exception:
-                pass
-        self._remote_players.clear()
-        self._net_pending_inputs.clear()
-        self._net_predicted_states.clear()
+        _net.clear_remote_players(self)
 
     def _ensure_remote_player_visual(self, *, player_id: int, name: str) -> _RemotePlayerVisual:
-        rp = self._remote_players.get(int(player_id))
-        if rp is not None:
-            return rp
-        # Simple two-box avatar: body + head.
-        body = self.loader.loadModel("models/box")
-        body.reparentTo(self.world_root)
-        body.setScale(0.28, 0.28, 0.92)
-        body.setColor(0.22, 0.72, 0.95, 1.0)
-        head = self.loader.loadModel("models/box")
-        head.reparentTo(body)
-        head.setPos(0.0, 0.0, 1.20)
-        head.setScale(0.18, 0.18, 0.18)
-        head.setColor(0.95, 0.85, 0.70, 1.0)
-        rp = _RemotePlayerVisual(player_id=int(player_id), root_np=body, head_np=head, name=str(name or "player"))
-        self._remote_players[int(player_id)] = rp
-        return rp
+        return _net.ensure_remote_player_visual(self, player_id=player_id, name=name)
 
     def _poll_network_snapshot(self) -> None:
-        if not self._net_connected or self._net_client is None:
-            return
-        snap = self._net_client.poll()
-        if not isinstance(snap, dict):
-            return
-        tick = int(snap.get("tick") or 0)
-        now_mono = time.monotonic()
-        self._net_last_server_tick = max(self._net_last_server_tick, tick)
-        if self._net_last_snapshot_local_time > 0.0:
-            dt_snap = max(0.0, float(now_mono - float(self._net_last_snapshot_local_time)))
-            if dt_snap > 0.0:
-                self._net_perf.snapshot_count += 1
-                self._net_perf.snapshot_dt_sum += float(dt_snap)
-                self._net_perf.snapshot_dt_max = max(float(self._net_perf.snapshot_dt_max), float(dt_snap))
-                self._net_snapshot_intervals.append(dt_snap)
-                if len(self._net_snapshot_intervals) > 64:
-                    self._net_snapshot_intervals = self._net_snapshot_intervals[-64:]
-                mean = sum(self._net_snapshot_intervals) / float(len(self._net_snapshot_intervals))
-                var = sum((d - mean) * (d - mean) for d in self._net_snapshot_intervals) / float(
-                    len(self._net_snapshot_intervals)
-                )
-                std = math.sqrt(max(0.0, var))
-                delay_sec = mean + std * 2.0 + 0.005
-                self._net_interp_delay_ticks = max(2.0, min(12.0, delay_sec * float(self._sim_tick_rate_hz)))
-        self._net_last_snapshot_local_time = float(now_mono)
-        if (
-            int(self._net_cfg_apply_pending_version) > 0
-            and self._net_cfg_apply_sent_at > 0.0
-            and (float(now_mono) - float(self._net_cfg_apply_sent_at)) >= 0.8
-        ):
-            self.ui.set_status(
-                "Waiting for server config acknowledgement..."
-                f" (cfg_v target={int(self._net_cfg_apply_pending_version)})"
-            )
-        tick_offset_sample = float(tick) - float(now_mono) * float(self._sim_tick_rate_hz)
-        if not self._net_server_tick_offset_ready:
-            self._net_server_tick_offset_ready = True
-            self._net_server_tick_offset_ticks = float(tick_offset_sample)
-        else:
-            k = max(0.01, min(1.0, float(self._net_server_tick_offset_smooth)))
-            self._net_server_tick_offset_ticks += (float(tick_offset_sample) - float(self._net_server_tick_offset_ticks)) * k
-        cfg_v = int(snap.get("cfg_v") or 0)
-        cfg_tuning = snap.get("tuning")
-        if isinstance(cfg_tuning, dict) and int(cfg_v) > int(self._net_authoritative_tuning_version):
-            normalized: dict[str, float | bool] = {}
-            for field in PhysicsTuning.__annotations__.keys():
-                value = cfg_tuning.get(field)
-                if isinstance(value, bool):
-                    normalized[field] = bool(value)
-                elif isinstance(value, (int, float)):
-                    normalized[field] = float(value)
-            if normalized:
-                self._apply_authoritative_tuning(tuning=normalized, version=int(cfg_v))
-        players = snap.get("players")
-        if not isinstance(players, list):
-            return
-
-        seen: set[int] = set()
-        for row in players:
-            if not isinstance(row, dict):
-                continue
-            pid = int(row.get("id") or 0)
-            if pid <= 0:
-                continue
-            seen.add(pid)
-            x = float(row.get("x") or 0.0)
-            y = float(row.get("y") or 0.0)
-            z = float(row.get("z") or 0.0)
-            yaw = float(row.get("yaw") or 0.0)
-            pitch = float(row.get("pitch") or 0.0)
-            vx = float(row.get("vx") or 0.0)
-            vy = float(row.get("vy") or 0.0)
-            vz = float(row.get("vz") or 0.0)
-            ack = int(row.get("ack") or 0)
-            hp = int(row.get("hp") or 0)
-            rs = int(row.get("rs") or 0)
-            if pid == self._net_player_id:
-                self._local_hp = max(0, hp)
-                if self.player is not None and not self._playback_active:
-                    if int(rs) > int(self._net_local_respawn_seq):
-                        self._net_local_respawn_seq = int(rs)
-                        self._net_pending_inputs.clear()
-                        self._net_predicted_states.clear()
-                        self._net_last_acked_seq = max(int(self._net_last_acked_seq), int(ack))
-                        self.player.pos = LVector3f(x, y, z)
-                        self.player.vel = LVector3f(vx, vy, vz)
-                        self._yaw = float(yaw)
-                        self._pitch = float(pitch)
-                        self._net_reconcile_pos_offset = LVector3f(0, 0, 0)
-                        self._net_reconcile_yaw_offset = 0.0
-                        self._net_reconcile_pitch_offset = 0.0
-                        self._net_local_cam_ready = False
-                        if not self._playback_active:
-                            self._start_new_demo_recording()
-                        continue
-                    self._reconcile_local_from_server(
-                        x=x,
-                        y=y,
-                        z=z,
-                        vx=vx,
-                        vy=vy,
-                        vz=vz,
-                        yaw=yaw,
-                        pitch=pitch,
-                        ack=ack,
-                    )
-                continue
-            rp = self._ensure_remote_player_visual(player_id=pid, name=str(row.get("n") or "player"))
-            if int(rs) > int(rp.respawn_seq):
-                rp.respawn_seq = int(rs)
-                rp.sample_ticks.clear()
-                rp.sample_pos.clear()
-                rp.sample_vel.clear()
-                rp.sample_yaw.clear()
-            rp.sample_ticks.append(int(tick))
-            rp.sample_pos.append(LVector3f(x, y, z))
-            rp.sample_vel.append(LVector3f(vx, vy, vz))
-            rp.sample_yaw.append(float(yaw))
-            if len(rp.sample_ticks) > 48:
-                rp.sample_ticks = rp.sample_ticks[-48:]
-                rp.sample_pos = rp.sample_pos[-48:]
-                rp.sample_vel = rp.sample_vel[-48:]
-                rp.sample_yaw = rp.sample_yaw[-48:]
-            rp.hp = max(0, hp)
-
-        stale = [pid for pid in self._remote_players.keys() if pid not in seen]
-        for pid in stale:
-            rp = self._remote_players.pop(pid)
-            try:
-                rp.root_np.removeNode()
-            except Exception:
-                pass
+        _net.poll_network_snapshot(self)
 
     def _render_remote_players(self, *, alpha: float) -> None:
-        if self._net_server_tick_offset_ready:
-            now_mono = float(time.monotonic())
-            est_server_tick = float(now_mono) * float(self._sim_tick_rate_hz) + float(self._net_server_tick_offset_ticks)
-            est_server_tick = max(float(self._net_last_server_tick), est_server_tick)
-        elif self._net_last_snapshot_local_time > 0.0:
-            est_server_tick = float(self._net_last_server_tick) + (
-                float(time.monotonic()) - float(self._net_last_snapshot_local_time)
-            ) * float(self._sim_tick_rate_hz)
-        else:
-            est_server_tick = float(self._net_last_server_tick)
-        target_tick = est_server_tick - float(self._net_interp_delay_ticks)
-        for rp in self._remote_players.values():
-            if not rp.sample_ticks:
-                continue
-            i1 = 0
-            while i1 < len(rp.sample_ticks) and float(rp.sample_ticks[i1]) < float(target_tick):
-                i1 += 1
-            if i1 <= 0:
-                p = rp.sample_pos[0]
-                y = rp.sample_yaw[0]
-            elif i1 >= len(rp.sample_ticks):
-                p = rp.sample_pos[-1]
-                y = rp.sample_yaw[-1]
-                # Short dead reckoning to reduce "stuck remote players" when snapshots stall.
-                if rp.sample_vel:
-                    dt_ticks = float(target_tick) - float(rp.sample_ticks[-1])
-                    if dt_ticks > 0.0:
-                        dt_ticks = min(float(dt_ticks), float(self._net_remote_extrapolate_max_ticks))
-                        dt_s = dt_ticks / float(self._sim_tick_rate_hz)
-                        v = rp.sample_vel[-1]
-                        p = LVector3f(
-                            float(p.x) + float(v.x) * float(dt_s),
-                            float(p.y) + float(v.y) * float(dt_s),
-                            float(p.z) + float(v.z) * float(dt_s),
-                        )
-            else:
-                t0 = float(rp.sample_ticks[i1 - 1])
-                t1 = float(rp.sample_ticks[i1])
-                denom = max(1e-6, t1 - t0)
-                a = max(0.0, min(1.0, (float(target_tick) - t0) / denom))
-                p = self._lerp_vec(rp.sample_pos[i1 - 1], rp.sample_pos[i1], a)
-                y = self._lerp_angle_deg(rp.sample_yaw[i1 - 1], rp.sample_yaw[i1], a)
-            try:
-                rp.root_np.setPos(p)
-                rp.root_np.setHpr(y, 0, 0)
-            except Exception:
-                pass
+        _net.render_remote_players(self, alpha=alpha)
 
     def _wish_direction_from_axes(self, *, move_forward: int, move_right: int) -> LVector3f:
         h_rad = math.radians(self._yaw)
@@ -2019,79 +1144,13 @@ class RunnerDemo(ShowBase):
         return move
 
     def _is_key_down(self, key_name: str) -> bool:
-        if self.mouseWatcherNode is None:
-            return False
-        k = (key_name or "").lower().strip()
-        if not k:
-            return False
-        if k in {"space", "spacebar"}:
-            return bool(self.mouseWatcherNode.isButtonDown(KeyboardButton.space()))
-        if len(k) == 1 and ord(k) < 128:
-            # ASCII key (layout-dependent) + raw key (layout-independent).
-            if self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key(k)):
-                return True
-            return bool(self.mouseWatcherNode.isButtonDown(ButtonHandle(f"raw-{k}")))
-        if k in {"tab", "enter", "escape", "shift", "control", "alt"}:
-            return bool(self.mouseWatcherNode.isButtonDown(ButtonHandle(k)))
-        return bool(self.mouseWatcherNode.isButtonDown(ButtonHandle(k)))
+        return _input.is_key_down(self, key_name)
 
     def _move_axes_from_keyboard(self) -> tuple[int, int]:
-        if self.mouseWatcherNode is None:
-            return (0, 0)
-        fwd = 0
-        right = 0
-        # Support non-US keyboard layouts by checking Cyrillic equivalents of WASD (RU):
-        # W/A/S/D -> Ц/Ф/Ы/В. Arrow keys are also supported as a fallback.
-        if self._is_key_down("w") or self._is_key_down("ц") or self.mouseWatcherNode.isButtonDown(KeyboardButton.up()):
-            fwd += 1
-        if self._is_key_down("s") or self._is_key_down("ы") or self.mouseWatcherNode.isButtonDown(KeyboardButton.down()):
-            fwd -= 1
-        if self._is_key_down("d") or self._is_key_down("в") or self.mouseWatcherNode.isButtonDown(KeyboardButton.right()):
-            right += 1
-        if self._is_key_down("a") or self._is_key_down("ф") or self.mouseWatcherNode.isButtonDown(KeyboardButton.left()):
-            right -= 1
-        return (max(-1, min(1, fwd)), max(-1, min(1, right)))
+        return _input.move_axes_from_keyboard(self)
 
     def _sample_live_input_command(self, *, menu_open: bool) -> _InputCommand:
-        look_dx, look_dy = (0, 0) if menu_open else self._consume_mouse_look_delta()
-        move_forward = 0
-        move_right = 0
-        jump_held = False
-        crouch_held = False
-        grapple_down = False
-        noclip_toggle_down = False
-        demo_save_down = False
-        if not menu_open:
-            move_forward, move_right = self._move_axes_from_keyboard()
-            jump_held = self._is_key_down("space")
-            crouch_held = self._is_crouching()
-            grapple_down = self._is_key_down("mouse1")
-            noclip_toggle_down = self._is_key_down(self._noclip_toggle_key)
-            demo_save_down = self._is_key_down(self._demo_save_key)
-
-        cmd = _InputCommand(
-            look_dx=look_dx,
-            look_dy=look_dy,
-            look_scale=self._look_input_scale,
-            move_forward=move_forward,
-            move_right=move_right,
-            jump_pressed=(not menu_open) and jump_held and (not self._prev_jump_down),
-            jump_held=(not menu_open) and jump_held,
-            crouch_held=(not menu_open) and crouch_held,
-            grapple_pressed=(not menu_open) and grapple_down and (not self._prev_grapple_down),
-            noclip_toggle_pressed=(not menu_open) and noclip_toggle_down and (not self._prev_noclip_toggle_down),
-        )
-
-        self._prev_jump_down = (not menu_open) and jump_held
-        self._prev_grapple_down = (not menu_open) and grapple_down
-        self._prev_noclip_toggle_down = (not menu_open) and noclip_toggle_down
-
-        # Save is sampled here so it can be edge-triggered alongside the fixed tick input.
-        save_pressed = (not menu_open) and demo_save_down and (not self._prev_demo_save_down)
-        self._prev_demo_save_down = (not menu_open) and demo_save_down
-        if save_pressed:
-            self._save_current_demo()
-        return cmd
+        return _input.sample_live_input_command(self, menu_open=menu_open)
 
     def _sample_replay_input_command(self) -> _InputCommand:
         if not self._playback_frames or self._playback_index >= len(self._playback_frames):
@@ -2230,77 +1289,10 @@ class RunnerDemo(ShowBase):
 
     @staticmethod
     def _build_grapple_rope_texture() -> Texture:
-        img = PNMImage(8, 128, 4)
-        for y in range(128):
-            t = 0.35 if (y // 6) % 2 == 0 else 0.55
-            for x in range(8):
-                shade = t * (0.85 if (x // 2) % 2 == 0 else 1.0)
-                img.setXelA(x, y, shade, shade * 0.85, shade * 0.52, 0.95)
-        tex = Texture("grapple-rope")
-        tex.load(img)
-        tex.setWrapU(Texture.WMClamp)
-        tex.setWrapV(Texture.WMRepeat)
-        tex.setMinfilter(Texture.FTLinearMipmapLinear)
-        tex.setMagfilter(Texture.FTLinear)
-        return tex
+        return _grapple_rope.build_grapple_rope_texture()
 
     def _update_grapple_rope_visual(self) -> None:
-        self._grapple_rope_node.removeAllGeoms()
-        if (
-            self.player is None
-            or self._mode != "game"
-            or self._pause_menu_open
-            or self._debug_menu_open
-            or not self.player.is_grapple_attached()
-        ):
-            self._grapple_rope_np.hide()
-            return
-
-        anchor = self.player.grapple_anchor()
-        if anchor is None:
-            self._grapple_rope_np.hide()
-            return
-        end = LVector3f(self.player.pos)
-        rope = end - anchor
-        length = float(rope.length())
-        if length <= 1e-4:
-            self._grapple_rope_np.hide()
-            return
-        rope_dir = rope / length
-
-        center = (anchor + end) * 0.5
-        cam_pos = LVector3f(self.camera.getPos(self.render))
-        to_cam = cam_pos - center
-        side = rope_dir.cross(to_cam)
-        if side.lengthSquared() <= 1e-10:
-            side = rope_dir.cross(LVector3f(0.0, 0.0, 1.0))
-        if side.lengthSquared() <= 1e-10:
-            side = rope_dir.cross(LVector3f(1.0, 0.0, 0.0))
-        side.normalize()
-        half_w = max(0.002, float(self.tuning.grapple_rope_half_width))
-        side *= half_w
-
-        p0 = anchor + side
-        p1 = anchor - side
-        p2 = end - side
-        p3 = end + side
-
-        vrep = max(1.0, length * 2.2)
-        vdata = GeomVertexData("grapple-rope", GeomVertexFormat.getV3t2(), Geom.UHDynamic)
-        vdata.setNumRows(4)
-        vw = GeomVertexWriter(vdata, "vertex")
-        tw = GeomVertexWriter(vdata, "texcoord")
-        for p, uv in ((p0, (0.0, 0.0)), (p1, (1.0, 0.0)), (p2, (1.0, vrep)), (p3, (0.0, vrep))):
-            vw.addData3f(p.x, p.y, p.z)
-            tw.addData2f(float(uv[0]), float(uv[1]))
-
-        prim = GeomTriangles(Geom.UHStatic)
-        prim.addVertices(0, 1, 2)
-        prim.addVertices(0, 2, 3)
-        geom = Geom(vdata)
-        geom.addPrimitive(prim)
-        self._grapple_rope_node.addGeom(geom)
-        self._grapple_rope_np.show()
+        _grapple_rope.update_grapple_rope_visual(self)
 
     def request_respawn(self) -> None:
         self._do_respawn(from_mode=True)
@@ -2517,31 +1509,7 @@ class RunnerDemo(ShowBase):
             return Task.cont
 
     def _update_menu_hold(self, *, now: float) -> None:
-        if self._menu_hold_dir == 0 or self._menu is None or self._importing:
-            return
-        if self._menu.is_search_active():
-            return
-        if now < self._menu_hold_next:
-            return
-
-        t = max(0.0, now - self._menu_hold_since)
-        # Accelerate by shortening interval and increasing step size.
-        if t < 0.8:
-            interval = 0.11
-            step = 1
-        elif t < 1.6:
-            interval = 0.08
-            step = 2
-        elif t < 3.0:
-            interval = 0.05
-            step = 4
-        else:
-            interval = 0.03
-            step = 8
-
-        d = self._menu_hold_dir * step
-        self._safe_call("menu.hold", lambda: self._menu.move(d))
-        self._menu_hold_next = now + interval
+        _menu.update_menu_hold(self, now=now)
 
     def _is_crouching(self) -> bool:
         return self._is_key_down("c")

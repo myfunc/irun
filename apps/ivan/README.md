@@ -54,7 +54,13 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 ```
 
 ## Code Layout
-- `src/ivan/game.py`: App wiring, input, camera, and update loop.
+- `src/ivan/game/`: App wiring, input, camera, and update loop (split into focused modules).
+  - `src/ivan/game/app.py`: composition root (`RunnerDemo`) + frame loop orchestration
+  - `src/ivan/game/menu_flow.py`: main menu controller + import worker glue
+  - `src/ivan/game/input_system.py`: mouse/keyboard sampling + input command helpers
+  - `src/ivan/game/tuning_profiles.py`: tuning profile defaults + persistence helpers
+  - `src/ivan/game/netcode.py`: client prediction/reconciliation + remote interpolation helpers
+  - `src/ivan/game/grapple_rope.py`: grapple rope rendering helper
 - `src/ivan/world/scene.py`: Scene building and external map loading (`--map` bundles).
 - `src/ivan/physics/tuning.py`: Movement/physics tuning parameters (editable at runtime via the debug/admin menu).
 - `src/ivan/physics/player_controller.py`: Kinematic character movement (step + slide) and jump/wall interactions.
