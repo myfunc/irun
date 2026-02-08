@@ -40,6 +40,11 @@ Smoke run:
 python -m ivan --smoke
 ```
 
+Smoke run with a screenshot (offscreen):
+```bash
+python -m ivan --smoke --smoke-screenshot /tmp/ivan-smoke.png
+```
+
 Prefill the menu with a Half-Life install (imports GoldSrc/Xash3D maps on demand):
 ```bash
 python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steamapps/common/Half-Life" --hl-mod valve
@@ -59,6 +64,7 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 - `R`: reset to spawn
 - `Esc`: in-game toggles pointer lock and opens the debug/admin menu plus a right-side system panel (Resume / Back to Menu / Quit); in the main menu it acts as back/quit
 - `F2`: toggle input debug overlay (useful when keyboard/mouse don't seem to register)
+- `F3`: toggle error console overlay (shows recent errors without crashing)
 - `LMB`: mock grapple impulse (only if grapple toggle enabled)
 
 ## Main Menu
@@ -66,6 +72,11 @@ Booting without `--map` starts in the main menu:
 - Run an existing bundle shipped under `apps/ivan/assets/` (imported/generated/hand-authored).
 - Pick a GoldSrc/Xash3D game directory, select a mod, then select a `.bsp` to import and run.
 - `Continue` runs the last launched map (persisted in a small local state file).
+
+Navigation:
+- Up/Down: move selection (hold accelerates)
+- Left/Right: page jump by 10 items (hold `Shift` for 20)
+- `Cmd+F` (macOS) / `Ctrl+F`: search (jumps selection to first match as you type)
 
 Notes:
 - Directory picking uses a native dialog via `tkinter` (stdlib). If Tk is unavailable, the menu will show an error.

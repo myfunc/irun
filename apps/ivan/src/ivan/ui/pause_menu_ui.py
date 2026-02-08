@@ -18,8 +18,8 @@ class PauseMenuUI:
 
         panel_top = 0.95
         panel_bottom = -0.25
-        panel_width = 0.62
-        right = aspect_ratio - 0.04
+        panel_width = 0.56
+        right = aspect_ratio - 0.02
         left = right - panel_width
 
         self.root = DirectFrame(
@@ -53,14 +53,17 @@ class PauseMenuUI:
 
         btn_w = (right - left) - 0.12
         btn_x = left + 0.06 + (btn_w / 2.0)
-        btn_scale = 0.065
-        btn_frame = (-btn_w / 2.0, btn_w / 2.0, -0.58, 0.58)
+
+        # DirectGUI sizing is `scale * frameSize`. Use a stable base frame size and compute scale
+        # so the buttons actually match the panel width (avoids tiny button backgrounds).
+        btn_frame = (-4.0, 4.0, -0.55, 0.55)  # width=8.0, height=1.1 in local units
+        btn_scale = btn_w / 8.0
 
         def _btn(*, label: str, y: float, command):
             return DirectButton(
                 parent=self.root,
                 text=(label, label, label, label),
-                text_scale=0.60,
+                text_scale=0.62,
                 text_fg=(0.95, 0.95, 0.95, 1),
                 frameColor=(0.18, 0.18, 0.18, 0.95),
                 relief=DGG.FLAT,
@@ -84,4 +87,3 @@ class PauseMenuUI:
 
     def destroy(self) -> None:
         self.root.destroy()
-

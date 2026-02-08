@@ -171,10 +171,12 @@ class DebugUI:
         right_bound = aspect_ratio - 0.04
         max_panel_width = right_bound - panel_left
         max_columns = max(1, int((max_panel_width - (panel_inner_padding_x * 2.0)) // column_width))
-        columns = min(desired_columns, max_columns)
+        # Keep the panel readable when shown alongside the System panel: prefer fewer, wider columns.
+        columns = min(desired_columns, max_columns, 2)
         rows_per_col = int(math.ceil(total_items / columns))
         row_step = list_height / max(1, rows_per_col - 1)
         row_step = min(base_row_step, row_step)
+        row_step = max(0.060, row_step)
 
         panel_width = (panel_inner_padding_x * 2.0) + (columns * column_width)
         panel_width = min(panel_width, max_panel_width)

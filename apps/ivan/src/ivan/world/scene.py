@@ -6,6 +6,7 @@ from pathlib import Path
 from panda3d.core import (
     AmbientLight,
     CardMaker,
+    DepthOffsetAttrib,
     DirectionalLight,
     Geom,
     GeomNode,
@@ -345,6 +346,13 @@ class WorldScene:
             # Enable binary transparency so the alpha channel from imported PNGs is respected.
             if mat_name.startswith("{"):
                 np.setTransparency(TransparencyAttrib.M_binary)
+                # Help avoid z-fighting and colorkey edge artifacts compared to GoldSrc's
+                # alpha-tested + nearest-filtered masked textures.
+                # Panda3D 1.10 uses DepthOffsetAttrib for depth bias.
+                try:
+                    np.setAttrib(DepthOffsetAttrib.make(1))
+                except Exception:
+                    pass
 
             tex_path = self._resolve_material_texture_path(material_name=mat_name)
             if tex_path and tex_path.exists():
@@ -352,6 +360,9 @@ class WorldScene:
                 if tex is not None:
                     tex.setWrapU(Texture.WM_repeat)
                     tex.setWrapV(Texture.WM_repeat)
+                    if mat_name.startswith("{"):
+                        tex.setMinfilter(Texture.FT_nearest)
+                        tex.setMagfilter(Texture.FT_nearest)
                     np.setTexture(tex, 1)
             else:
                 np.setTexture(self._make_debug_checker_texture(), 1)

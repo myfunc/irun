@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from direct.gui import DirectGuiGlobals as DGG
+from direct.gui.DirectGui import DirectEntry, DirectLabel
 from direct.gui.OnscreenText import OnscreenText
 from panda3d.core import (
     CardMaker,
@@ -36,6 +38,10 @@ class RetroMenuUI:
         self._root = aspect2d.attachNewNode("retro-menu-root")
         self._bg = self._root.attachNewNode("retro-menu-bg")
         self._build_background()
+
+        self._search_label: DirectLabel | None = None
+        self._search_entry: DirectEntry | None = None
+        self._search_last_text: str = ""
 
         self._title = OnscreenText(
             text=title,
@@ -87,6 +93,7 @@ class RetroMenuUI:
         self._loader_started_at: float = 0.0
 
     def destroy(self) -> None:
+        self.hide_search()
         for r in self._rows:
             r.removeNode()
         self._rows.clear()
@@ -112,6 +119,61 @@ class RetroMenuUI:
         self._selected = max(0, min(len(self._items) - 1, self._selected + delta))
         self._redraw()
 
+    def is_search_active(self) -> bool:
+        return self._search_entry is not None
+
+    def toggle_search(self) -> None:
+        if self._search_entry is not None:
+            self.hide_search()
+            return
+
+        # Keep it lightweight: search is a "jump to match" helper, not a filter.
+        # We intentionally avoid altering indices in controllers.
+        self._search_last_text = ""
+        self._search_label = DirectLabel(
+            parent=self._root,
+            text="Search:",
+            text_scale=0.045,
+            text_align=TextNode.ALeft,
+            text_fg=(0.95, 0.92, 0.65, 1.0),
+            frameColor=(0, 0, 0, 0),
+            pos=(-1.30, 0, 0.77),
+        )
+        self._search_entry = DirectEntry(
+            parent=self._root,
+            initialText="",
+            numLines=1,
+            focus=1,
+            width=22,
+            text_align=TextNode.ALeft,
+            text_fg=(0.08, 0.08, 0.08, 1),
+            frameColor=(0.9, 0.9, 0.9, 1),
+            relief=DGG.FLAT,
+            scale=0.045,
+            pos=(-1.06, 0, 0.75),
+            command=self._on_search_submit,
+            suppressMouse=False,
+        )
+
+    def hide_search(self) -> None:
+        try:
+            if self._search_entry is not None:
+                self._search_entry.destroy()
+        except Exception:
+            pass
+        try:
+            if self._search_label is not None:
+                self._search_label.destroy()
+        except Exception:
+            pass
+        self._search_entry = None
+        self._search_label = None
+        self._search_last_text = ""
+
+    def _on_search_submit(self, _text: str) -> None:
+        # Selection has already been updated as the user typed.
+        self.hide_search()
+
     def selected_index(self) -> int | None:
         if not self._items:
             return None
@@ -127,12 +189,41 @@ class RetroMenuUI:
         self._status.setText(text)
 
     def tick(self, now: float) -> None:
-        if not self._loader_base_status:
+        if self._loader_base_status:
+            # Animate with a simple dot cycle. Keep it stable under low FPS.
+            t = max(0.0, float(now) - self._loader_started_at)
+            dots = int(t * 2.5) % 4
+            self._status.setText(self._loader_base_status + ("." * dots))
+
+        if self._search_entry is not None:
+            try:
+                text = str(self._search_entry.get())
+            except Exception:
+                text = ""
+            if text != self._search_last_text:
+                self._search_last_text = text
+                self._apply_search(text)
+
+    def _apply_search(self, text: str) -> None:
+        q = (text or "").strip().casefold()
+        if not q or not self._items:
             return
-        # Animate with a simple dot cycle. Keep it stable under low FPS.
-        t = max(0.0, float(now) - self._loader_started_at)
-        dots = int(t * 2.5) % 4
-        self._status.setText(self._loader_base_status + ("." * dots))
+
+        best: int | None = None
+        for i, it in enumerate(self._items):
+            if it.label.casefold().startswith(q):
+                best = i
+                break
+        if best is None:
+            for i, it in enumerate(self._items):
+                if q in it.label.casefold():
+                    best = i
+                    break
+        if best is None:
+            return
+        if best != self._selected:
+            self._selected = best
+            self._redraw()
 
     def _redraw(self) -> None:
         if not self._items:
@@ -260,4 +351,3 @@ def _make_vignette_texture(w: int, h: int) -> Texture:
     tex.load(img)
     _set_common_sampler(tex)
     return tex
-

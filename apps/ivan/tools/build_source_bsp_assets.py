@@ -37,6 +37,11 @@ def convert_normal(n) -> list[float]:
     # Flip Y to match convert_pos; normals are unit vectors (no scaling).
     return [float(n.x), -float(n.y), float(n.z)]
 
+def convert_uv(uv) -> list[float]:
+    # Source BSP UV convention is effectively upside-down compared to how Panda3D
+    # samples images loaded from PNG. Flip V to match expected in-game orientation.
+    return [float(uv.x), -float(uv.y)]
+
 
 def pick_spawn(entities, scale: float) -> tuple[list[float], float]:
     fallback = ([0.0, 0.0, 2.0], 0.0)
@@ -135,12 +140,12 @@ def main() -> None:
                 n2 = convert_normal(v2.normal)
 
                 # bsp_tool provides UV pairs: [base, lightmap].
-                uv0 = [float(v0.uv[0].x), float(v0.uv[0].y)]
-                uv1 = [float(v1.uv[0].x), float(v1.uv[0].y)]
-                uv2 = [float(v2.uv[0].x), float(v2.uv[0].y)]
-                lm0 = [float(v0.uv[1].x), float(v0.uv[1].y)]
-                lm1 = [float(v1.uv[1].x), float(v1.uv[1].y)]
-                lm2 = [float(v2.uv[1].x), float(v2.uv[1].y)]
+                uv0 = convert_uv(v0.uv[0])
+                uv1 = convert_uv(v1.uv[0])
+                uv2 = convert_uv(v2.uv[0])
+                lm0 = convert_uv(v0.uv[1])
+                lm1 = convert_uv(v1.uv[1])
+                lm2 = convert_uv(v2.uv[1])
 
                 c0 = list(map(float, v0.colour))
                 c1 = list(map(float, v1.colour))
@@ -200,4 +205,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

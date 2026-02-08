@@ -69,6 +69,12 @@ class MainMenuController:
     def tick(self, now: float) -> None:
         self._ui.tick(now)
 
+    def is_search_active(self) -> bool:
+        return self._ui.is_search_active()
+
+    def toggle_search(self) -> None:
+        self._ui.toggle_search()
+
     def set_status(self, text: str) -> None:
         self._ui.set_status(text)
 
@@ -76,12 +82,24 @@ class MainMenuController:
         self._ui.set_loading_status(text, started_at=started_at)
 
     def on_up(self) -> None:
+        if self._ui.is_search_active():
+            return
         self._ui.move(-1)
 
     def on_down(self) -> None:
+        if self._ui.is_search_active():
+            return
         self._ui.move(1)
 
+    def move(self, delta: int) -> None:
+        if self._ui.is_search_active():
+            return
+        self._ui.move(int(delta))
+
     def on_escape(self) -> None:
+        if self._ui.is_search_active():
+            self._ui.hide_search()
+            return
         if self._screen == "main":
             self._on_quit()
             return
@@ -89,6 +107,9 @@ class MainMenuController:
         self._refresh_main()
 
     def on_enter(self) -> None:
+        if self._ui.is_search_active():
+            self._ui.hide_search()
+            return
         idx = self._ui.selected_index()
         if idx is None:
             return

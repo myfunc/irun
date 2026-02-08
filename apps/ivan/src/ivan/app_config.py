@@ -6,6 +6,9 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class RunConfig:
     smoke: bool = False
+    # Optional screenshot output path in smoke mode (offscreen render).
+    # Useful for verifying map/material changes in CI or scripted checks.
+    smoke_screenshot: str | None = None
     # Path to a generated map JSON bundle (see docs/skills/map-conversion/SKILL.md).
     # If None, the app falls back to the graybox scene (or optionally offers a map picker if --hl-root is set).
     map_json: str | None = None
