@@ -35,6 +35,8 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (CS-style grouped boxes, collapsible sections, scrollable content, normalized sliders, profile dropdown/save)
 - `apps/ivan/src/ivan/ui/main_menu.py`: main menu controller (bundle list + import flow)
 - `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game ESC menu (Resume/Map Selector/Key Bindings/Back/Quit) and keybinding controls
+- `apps/ivan/src/ivan/ui/replay_browser_ui.py`: in-game replay browser overlay (UI kit list menu)
+- `apps/ivan/src/ivan/replays/demo.py`: input-demo storage (record/save/load/list) using repository-local storage under `apps/ivan/replays/`
 - `apps/ivan/src/ivan/common/error_log.py`: small in-memory error feed used to prevent hard crashes and surface unhandled exceptions in-game
 - `apps/ivan/src/ivan/ui/error_console_ui.py`: bottom-screen error console (toggle with `F3`)
 - `apps/ivan/src/ivan/common/aabb.py`: Shared AABB type used for graybox fallback
@@ -48,10 +50,12 @@ See: `docs/ui-kit.md`.
 - Start: `python -m ivan` (from `apps/ivan`)
 - Repo root helper: `./runapp ivan` (recommended for quick iteration)
 - The game loop is driven by Panda3D's task manager.
+- Movement simulation runs at a fixed `60 Hz` tick to support deterministic input replay.
 - In-game UI/input split:
   - `Esc` opens gameplay menu and unlocks cursor.
   - `` ` `` opens debug/admin tuning menu and unlocks cursor.
   - While either menu is open, gameplay input is blocked but simulation continues.
+  - `Esc` menu can open a replay browser (`Replays`) to load saved input demos.
   - Gameplay movement step supports optional noclip mode, optional autojump queueing, surf behavior on configured slanted surfaces, and grapple-rope constraint movement.
   - Grapple targeting uses collision-world ray queries (`ray_closest`) from camera center.
 

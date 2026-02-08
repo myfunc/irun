@@ -35,6 +35,11 @@
 - Ivan: wall-jump cooldown tuning (default `1.0s`) replaces same-wall consecutive jump lock
 - Ivan: wall-jump is gated to airborne state (grounded wall contact cannot trigger wall-jump)
 - Ivan: autojump queues only while grounded (prevents airborne corner wall-jump retriggers)
+- Ivan: input-only demo recording/replay pipeline
+  - recording starts on spawn/respawn and can be saved with `F`
+  - saved demos are stored in-repo under `apps/ivan/replays/`
+  - replay browser available from `Esc -> Replays`
+  - playback re-simulates recorded per-tick input (no position samples) at fixed `60 Hz`
 - Ivan: autojump toggle (hold jump to continue hopping)
 - Ivan: grapple hook traversal (attach/detach on LMB, one-shot attach boost, rope swing constraint)
 - Ivan: vault is disabled by default (runtime toggle in debug menu)
