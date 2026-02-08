@@ -55,9 +55,14 @@ class RunnerDemo(ShowBase):
         self._yaw = 0.0
         self._pitch = 0.0
         self._pointer_locked = True
+        self._pause_menu_open = False
+        self._debug_menu_open = False
         self._mode: str = "boot"  # boot | menu | game
         self._last_mouse: tuple[float, float] | None = None
         self._input_debug_until: float = 0.0
+        self._noclip_toggle_key: str = "v"
+        self._noclip_toggle_prev_down: bool = False
+        self._awaiting_noclip_rebind: bool = False
 
         self.scene: WorldScene | None = None
         self.collision: CollisionWorld | None = None
@@ -81,10 +86,14 @@ class RunnerDemo(ShowBase):
         self.error_console = ErrorConsoleUI(aspect2d=self.aspect2d, error_log=self.error_log)
         self.pause_ui = PauseMenuUI(
             aspect2d=self.aspect2d,
-            on_resume=self._toggle_pointer_lock,
+            on_resume=self._close_all_game_menus,
+            on_map_selector=self._back_to_menu,
             on_back_to_menu=self._back_to_menu,
             on_quit=self.userExit,
+            on_open_keybindings=self._open_keybindings_menu,
+            on_rebind_noclip=self._start_rebind_noclip,
         )
+        self.pause_ui.set_noclip_binding(self._noclip_toggle_key)
         self.input_debug = InputDebugUI(aspect2d=self.aspect2d)
         self._setup_input()
 
@@ -120,6 +129,9 @@ class RunnerDemo(ShowBase):
 
     def _setup_input(self) -> None:
         self.accept("escape", lambda: self._safe_call("input.escape", self._on_escape))
+        self.accept("`", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
+        self.accept("ascii`", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
+        self.accept("grave", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
         self.accept("r", lambda: self._safe_call("input.respawn", self._respawn))
         self.accept("space", lambda: self._safe_call("input.jump", self._queue_jump))
         self.accept("mouse1", lambda: self._safe_call("input.grapple", self._grapple_mock))
@@ -139,28 +151,66 @@ class RunnerDemo(ShowBase):
         self.accept("s-up", lambda: self._menu_nav_release(1))
         self.accept("control-f", lambda: self._safe_call("menu.search", self._menu_toggle_search))
         self.accept("meta-f", lambda: self._safe_call("menu.search", self._menu_toggle_search))
+        if hasattr(self, "buttonThrowers") and self.buttonThrowers:
+            try:
+                self.buttonThrowers[0].node().setKeystrokeEvent("keystroke")
+            except Exception:
+                pass
+        self.accept("keystroke", lambda key: self._safe_call("input.keystroke", lambda: self._on_keystroke(key)))
 
     def _on_tuning_change(self, field: str) -> None:
         if field in ("player_radius", "player_half_height", "crouch_half_height"):
             if self.player is not None:
                 self.player.apply_hull_settings()
 
-    def _toggle_pointer_lock(self) -> None:
-        self._pointer_locked = not self._pointer_locked
+    def _set_pointer_lock(self, locked: bool) -> None:
+        self._pointer_locked = bool(locked)
         self._last_mouse = None
         props = WindowProperties()
         props.setCursorHidden(self._pointer_locked)
         props.setMouseMode(WindowProperties.M_relative if self._pointer_locked else WindowProperties.M_absolute)
         self.win.requestProperties(props)
-        if self._mode == "game":
-            if self._pointer_locked:
-                self.ui.hide()
-                self.pause_ui.hide()
-            else:
-                self.ui.show()
-                self.pause_ui.show()
         if self._pointer_locked:
             self._center_mouse()
+
+    def _close_all_game_menus(self) -> None:
+        if self._mode != "game":
+            return
+        self._pause_menu_open = False
+        self._debug_menu_open = False
+        self._awaiting_noclip_rebind = False
+        self.pause_ui.hide()
+        self.ui.hide()
+        self._set_pointer_lock(True)
+
+    def _open_pause_menu(self) -> None:
+        if self._mode != "game":
+            return
+        self._pause_menu_open = True
+        self._debug_menu_open = False
+        self._awaiting_noclip_rebind = False
+        self.pause_ui.show_main()
+        self.pause_ui.set_keybind_status("")
+        self.pause_ui.show()
+        self.ui.hide()
+        self._set_pointer_lock(False)
+
+    def _toggle_debug_menu(self) -> None:
+        if self._mode != "game":
+            return
+        self._debug_menu_open = not self._debug_menu_open
+        if self._debug_menu_open:
+            self._pause_menu_open = False
+            self.pause_ui.hide()
+            self.ui.show()
+            self._set_pointer_lock(False)
+            return
+        self.ui.hide()
+        if self._pause_menu_open:
+            self.pause_ui.show()
+            self._set_pointer_lock(False)
+        else:
+            self._set_pointer_lock(True)
 
     def _on_escape(self) -> None:
         if self._mode == "menu":
@@ -169,17 +219,64 @@ class RunnerDemo(ShowBase):
             if self._menu is not None:
                 self._safe_call("menu.escape", self._menu.on_escape)
                 return
-        self._toggle_pointer_lock()
+        if self._mode != "game":
+            return
+        if self._debug_menu_open or self._pause_menu_open:
+            self._close_all_game_menus()
+            return
+        self._open_pause_menu()
+
+    def _open_keybindings_menu(self) -> None:
+        if self._mode != "game":
+            return
+        self.pause_ui.show_keybindings()
+        self.pause_ui.set_noclip_binding(self._noclip_toggle_key)
+        self.pause_ui.set_keybind_status("")
+
+    def _start_rebind_noclip(self) -> None:
+        if self._mode != "game":
+            return
+        self._awaiting_noclip_rebind = True
+        self.pause_ui.set_keybind_status("Press a key to assign noclip toggle.")
+
+    def _on_keystroke(self, key: str) -> None:
+        if not self._awaiting_noclip_rebind:
+            return
+        key_name = self._normalize_bind_key(key)
+        if not key_name:
+            return
+        self._noclip_toggle_key = key_name
+        self._awaiting_noclip_rebind = False
+        self.pause_ui.set_noclip_binding(self._noclip_toggle_key)
+        self.pause_ui.set_keybind_status(f"Noclip key set to {self._noclip_toggle_key.upper()}.")
+
+    @staticmethod
+    def _normalize_bind_key(key: str) -> str | None:
+        k = (key or "").strip().lower()
+        if not k:
+            return None
+        aliases = {
+            "space": "space",
+            "spacebar": "space",
+            "grave": "`",
+            "backquote": "`",
+            "backtick": "`",
+        }
+        if k in aliases:
+            return aliases[k]
+        if len(k) == 1 and ord(k) < 128:
+            return k
+        if k in {"tab", "enter", "escape", "shift", "control", "alt"}:
+            return k
+        return None
 
     def _enter_main_menu(self) -> None:
         self._mode = "menu"
         self._menu_hold_dir = 0
-        self._pointer_locked = False
-        self._last_mouse = None
-        props = WindowProperties()
-        props.setCursorHidden(False)
-        props.setMouseMode(WindowProperties.M_absolute)
-        self.win.requestProperties(props)
+        self._pause_menu_open = False
+        self._debug_menu_open = False
+        self._awaiting_noclip_rebind = False
+        self._set_pointer_lock(False)
 
         # Hide in-game HUD while picking.
         self.ui.speed_hud_label.hide()
@@ -324,13 +421,13 @@ class RunnerDemo(ShowBase):
                 self._menu = None
 
             self._mode = "game"
+            self._pause_menu_open = False
+            self._debug_menu_open = False
+            self._awaiting_noclip_rebind = False
             self._pointer_locked = True
             self._last_mouse = None
             if not self.cfg.smoke:
-                props = WindowProperties()
-                props.setCursorHidden(True)
-                props.setMouseMode(WindowProperties.M_relative)
-                self.win.requestProperties(props)
+                self._set_pointer_lock(True)
             self.ui.speed_hud_label.show()
             self.ui.hide()
             self.pause_ui.hide()
@@ -440,20 +537,6 @@ class RunnerDemo(ShowBase):
         if self.mouseWatcherNode is None:
             return LVector3f(0, 0, 0)
 
-        def down(*names: str) -> bool:
-            for name in names:
-                n = name.lower()
-                if len(n) == 1 and ord(n) < 128:
-                    # ASCII key (layout-dependent) + raw key (layout-independent).
-                    if self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key(n)):
-                        return True
-                    if self.mouseWatcherNode.isButtonDown(ButtonHandle(f"raw-{n}")):
-                        return True
-                    continue
-                if self.mouseWatcherNode.isButtonDown(ButtonHandle(n)):
-                    return True
-            return False
-
         h_rad = math.radians(self._yaw)
         forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0)
         right = LVector3f(forward.y, -forward.x, 0)
@@ -461,25 +544,42 @@ class RunnerDemo(ShowBase):
         move = LVector3f(0, 0, 0)
         # Support non-US keyboard layouts by checking Cyrillic equivalents of WASD (RU):
         # W/A/S/D -> Ц/Ф/Ы/В. Arrow keys are also supported as a fallback.
-        if down("w", "ц") or self.mouseWatcherNode.isButtonDown(KeyboardButton.up()):
+        if self._is_key_down("w") or self._is_key_down("ц") or self.mouseWatcherNode.isButtonDown(KeyboardButton.up()):
             move += forward
-        if down("s", "ы") or self.mouseWatcherNode.isButtonDown(KeyboardButton.down()):
+        if self._is_key_down("s") or self._is_key_down("ы") or self.mouseWatcherNode.isButtonDown(KeyboardButton.down()):
             move -= forward
-        if down("d", "в") or self.mouseWatcherNode.isButtonDown(KeyboardButton.right()):
+        if self._is_key_down("d") or self._is_key_down("в") or self.mouseWatcherNode.isButtonDown(KeyboardButton.right()):
             move += right
-        if down("a", "ф") or self.mouseWatcherNode.isButtonDown(KeyboardButton.left()):
+        if self._is_key_down("a") or self._is_key_down("ф") or self.mouseWatcherNode.isButtonDown(KeyboardButton.left()):
             move -= right
 
         if move.lengthSquared() > 0:
             move.normalize()
         return move
 
+    def _is_key_down(self, key_name: str) -> bool:
+        if self.mouseWatcherNode is None:
+            return False
+        k = (key_name or "").lower().strip()
+        if not k:
+            return False
+        if k in {"space", "spacebar"}:
+            return bool(self.mouseWatcherNode.isButtonDown(KeyboardButton.space()))
+        if len(k) == 1 and ord(k) < 128:
+            # ASCII key (layout-dependent) + raw key (layout-independent).
+            if self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key(k)):
+                return True
+            return bool(self.mouseWatcherNode.isButtonDown(ButtonHandle(f"raw-{k}")))
+        if k in {"tab", "enter", "escape", "shift", "control", "alt"}:
+            return bool(self.mouseWatcherNode.isButtonDown(ButtonHandle(k)))
+        return bool(self.mouseWatcherNode.isButtonDown(ButtonHandle(k)))
+
     def _queue_jump(self) -> None:
-        if self.player is not None:
+        if self.player is not None and self._mode == "game" and not self._pause_menu_open and not self._debug_menu_open:
             self.player.queue_jump()
 
     def _grapple_mock(self) -> None:
-        if self.player is not None:
+        if self.player is not None and self._mode == "game" and not self._pause_menu_open and not self._debug_menu_open:
             self.player.apply_grapple_impulse(yaw_deg=self._yaw)
 
     def _respawn(self) -> None:
@@ -489,6 +589,22 @@ class RunnerDemo(ShowBase):
         self._yaw = float(self.scene.spawn_yaw)
         self._pitch = 0.0
         self.player_node.setPos(self.player.pos)
+
+    def _toggle_noclip(self) -> None:
+        self.tuning.noclip_enabled = not bool(self.tuning.noclip_enabled)
+
+    def _step_noclip(self, *, dt: float, wish_dir: LVector3f, crouching: bool) -> None:
+        if self.player is None:
+            return
+        up = 1.0 if self._is_key_down("space") else 0.0
+        down = 1.0 if crouching else 0.0
+        move = LVector3f(wish_dir.x, wish_dir.y, up - down)
+        if move.lengthSquared() > 1e-12:
+            move.normalize()
+        speed = max(0.0, float(self.tuning.noclip_speed))
+        self.player.vel = move * speed
+        self.player.pos += self.player.vel * dt
+        self.player.grounded = False
 
     def _update(self, task: Task) -> int:
         try:
@@ -513,6 +629,10 @@ class RunnerDemo(ShowBase):
 
             # Precompute wish so debug overlay can show it even if movement seems dead.
             wish = self._wish_direction()
+            noclip_toggle_down = self._is_key_down(self._noclip_toggle_key)
+            if noclip_toggle_down and not self._noclip_toggle_prev_down:
+                self._toggle_noclip()
+            self._noclip_toggle_prev_down = noclip_toggle_down
 
             if self.mouseWatcherNode is not None:
                 has_mouse = self.mouseWatcherNode.hasMouse()
@@ -539,9 +659,19 @@ class RunnerDemo(ShowBase):
                 self._input_debug_until = 0.0
                 self.input_debug.hide()
 
-            self._update_look()
+            if self._pause_menu_open or self._debug_menu_open:
+                return Task.cont
 
-            self.player.step(dt=dt, wish_dir=wish, yaw_deg=self._yaw, crouching=self._is_crouching())
+            self._update_look()
+            crouching = self._is_crouching()
+
+            if self.tuning.autojump_enabled and self._is_key_down("space"):
+                self.player.queue_jump()
+
+            if self.tuning.noclip_enabled:
+                self._step_noclip(dt=dt, wish_dir=wish, crouching=crouching)
+            else:
+                self.player.step(dt=dt, wish_dir=wish, yaw_deg=self._yaw, crouching=crouching)
 
             if self.scene is not None and self.player.pos.z < float(self.scene.kill_z):
                 self._respawn()
@@ -597,9 +727,7 @@ class RunnerDemo(ShowBase):
         self._menu_hold_next = now + interval
 
     def _is_crouching(self) -> bool:
-        if self.mouseWatcherNode is None:
-            return False
-        return self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key("c"))
+        return self._is_key_down("c")
 
     def _smoke_exit(self, task: Task) -> int:
         self._smoke_frames -= 1

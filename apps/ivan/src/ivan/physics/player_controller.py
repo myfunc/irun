@@ -39,12 +39,9 @@ class PlayerController:
         self._wall_contact_timer = 999.0
         self._wall_normal = LVector3f(0, 0, 0)
         self._wall_contact_point = LVector3f(0, 0, 0)
-        self._last_wall_jump_normal = LVector3f(0, 0, 0)
-        self._last_wall_jump_point = LVector3f(0, 0, 0)
         self._wall_jump_lock_timer = 999.0
         self._vault_cooldown_timer = 999.0
         self._ground_normal = LVector3f(0, 0, 1)
-        self._prev_wish_dir = LVector3f(0, 0, 0)
 
         self.apply_hull_settings()
 
@@ -79,21 +76,7 @@ class PlayerController:
     def has_wall_for_jump(self) -> bool:
         if self._wall_contact_timer > 0.18 or self._wall_normal.lengthSquared() <= 0.01:
             return False
-        n = LVector3f(self._wall_normal)
-        l = LVector3f(self._last_wall_jump_normal)
-        if n.lengthSquared() > 1e-12:
-            n.normalize()
-        if l.lengthSquared() > 1e-12:
-            l.normalize()
-        # Disallow repeated wall-jumps off the same wall plane in a row.
-        if l.lengthSquared() <= 1e-12:
-            return True
-        same_plane = n.dot(l) > 0.9
-        if not same_plane:
-            return True
-        plane_d = l.dot(self._last_wall_jump_point)
-        dist = abs(l.dot(self._wall_contact_point) - plane_d)
-        return dist > 0.45
+        return self._wall_jump_lock_timer >= float(self.tuning.wall_jump_cooldown)
 
     def apply_grapple_impulse(self, *, yaw_deg: float) -> None:
         if not self.tuning.grapple_enabled:
@@ -143,7 +126,10 @@ class PlayerController:
             self.vel.z -= float(self.tuning.gravity) * gravity_scale * dt
 
             if self._consume_jump_request():
-                if self.tuning.vault_enabled and self._try_vault(yaw_deg=yaw_deg):
+                # Coyote jump must also be available from the airborne branch.
+                if self.can_ground_jump():
+                    self._apply_jump()
+                elif self.tuning.vault_enabled and self._try_vault(yaw_deg=yaw_deg):
                     pass
                 elif self.tuning.walljump_enabled and self.has_wall_for_jump():
                     self._apply_wall_jump(yaw_deg=yaw_deg)
@@ -162,14 +148,7 @@ class PlayerController:
             self._ground_timer += dt
         else:
             self._ground_timer = 0.0
-            self._last_wall_jump_normal = LVector3f(0, 0, 0)
-            self._last_wall_jump_point = LVector3f(0, 0, 0)
             self._wall_jump_lock_timer = 999.0
-
-        if wish_dir.lengthSquared() > 0.0:
-            self._prev_wish_dir = LVector3f(wish_dir.x, wish_dir.y, 0.0)
-        else:
-            self._prev_wish_dir = LVector3f(0, 0, 0)
 
     def _consume_jump_request(self) -> bool:
         if self._jump_pressed:
@@ -193,8 +172,6 @@ class PlayerController:
         self.vel.x = boost.x
         self.vel.y = boost.y
         self.vel.z = self._jump_up_speed() * 0.95
-        self._last_wall_jump_normal = LVector3f(away)
-        self._last_wall_jump_point = LVector3f(self._wall_contact_point)
         self._wall_jump_lock_timer = 0.0
         self._wall_contact_timer = 999.0
         self._wall_normal = LVector3f(0, 0, 0)
@@ -210,7 +187,7 @@ class PlayerController:
             return False
         if self._vault_cooldown_timer < float(self.tuning.vault_cooldown):
             return False
-        if self._wall_contact_timer > 0.16 or self._wall_normal.lengthSquared() <= 0.01:
+        if self._wall_contact_timer > 0.30 or self._wall_normal.lengthSquared() <= 0.01:
             return False
 
         edge_z = self._find_vault_edge_height()
@@ -401,15 +378,10 @@ class PlayerController:
         if dot_now > -0.25:
             return
 
-        prev = LVector3f(self._prev_wish_dir)
-        was_opposite = False
-        if prev.lengthSquared() > 1e-12:
-            prev.normalize()
-            was_opposite = horiz.dot(prev) < -0.25
-
-        # Aggressive air braking with no reverse acceleration.
-        bonus = speed * (14.0 if not was_opposite else 10.0) * dt
-        decel = float(self.tuning.air_counter_strafe_brake) * dt + bonus
+        # Pure tuning-based deceleration so the slider is authoritative.
+        brake = max(0.0, float(self.tuning.air_counter_strafe_brake))
+        strength = min(1.0, max(0.0, (-dot_now - 0.25) / 0.75))
+        decel = brake * (0.55 + 0.45 * strength) * dt
         new_speed = max(0.0, speed - decel)
         self.vel.x = horiz.x * new_speed
         self.vel.y = horiz.y * new_speed
@@ -449,8 +421,15 @@ class PlayerController:
                     p = self.pos + d * (probe_dist * frac)
                     if hasattr(hit, "getHitPos"):
                         p = LVector3f(hit.getHitPos())
+                    if not self._is_valid_wall_contact(point=p):
+                        continue
                     return wall_n, p
         return LVector3f(0, 0, 0), LVector3f(0, 0, 0)
+
+    def _is_valid_wall_contact(self, *, point: LVector3f) -> bool:
+        feet_z = float(self.pos.z - self.player_half.z)
+        min_height = max(0.12, min(0.65, float(self.tuning.step_height) + 0.05))
+        return float(point.z) >= (feet_z + min_height)
 
     def _set_wall_contact(self, normal: LVector3f, point: LVector3f) -> None:
         self._wall_normal = LVector3f(normal.x, normal.y, 0.0)
@@ -574,7 +553,8 @@ class PlayerController:
                 hit_pos = pos
                 if hasattr(hit, "getHitPos"):
                     hit_pos = LVector3f(hit.getHitPos())
-                self._set_wall_contact(LVector3f(n.x, n.y, 0.0), hit_pos)
+                if self._is_valid_wall_contact(point=hit_pos):
+                    self._set_wall_contact(LVector3f(n.x, n.y, 0.0), hit_pos)
             elif n.z < -0.65 and self.vel.z > 0.0:
                 # Ceiling.
                 self.vel.z = 0.0

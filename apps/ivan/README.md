@@ -62,10 +62,12 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 - `C` (hold): crouch
 - `Space`: jump
 - `R`: reset to spawn
-- `Esc`: in-game toggles pointer lock and opens the debug/admin menu plus a right-side system panel (Resume / Back to Menu / Quit); in the main menu it acts as back/quit
+- `Esc`: opens the in-game menu (Resume / Map Selector / Key Bindings / Back to Main Menu / Quit); in the main menu it acts as back/quit
+- `` ` `` (tilde/backtick): opens the debug/admin tuning menu
 - `F2`: toggle input debug overlay (useful when keyboard/mouse don't seem to register)
 - `F3`: toggle error console overlay (shows recent errors without crashing)
 - `LMB`: mock grapple impulse (only if grapple toggle enabled)
+- `V` (default): toggle noclip (rebindable from `Esc -> Key Bindings`)
 
 ## Main Menu
 Booting without `--map` starts in the main menu:
@@ -99,11 +101,14 @@ Numeric settings include sliders + entry fields for precise tuning:
 - Ground acceleration, jump acceleration (bunnyhop/strafe), friction, air control
 - Air counter-strafe brake strength
 - Mouse sensitivity, crouch speed/height/camera
-- Wall jump boost, vault jump/speed/ledge window, coyote time, jump buffer time
+- Wall jump boost + cooldown, vault jump/speed/ledge window, coyote time, jump buffer time
+- Noclip fly speed
 
 Boolean toggles are shown inline as labeled rows with `ON/OFF` buttons:
 - Coyote time
 - Jump buffer
+- Autojump (hold jump to keep hopping)
+- Noclip
 - Wall jump
 - Wallrun (toggle only, prototype hook)
 - Vault (toggle only)
@@ -111,11 +116,11 @@ Boolean toggles are shown inline as labeled rows with `ON/OFF` buttons:
 - Grapple (toggle + mock impulse)
 
 Movement notes:
-- Counter-strafe braking in air aggressively decelerates horizontal speed and does not accelerate in reverse while opposite input is held.
-- Default `air_counter_strafe_brake` is set to `5.0`.
-- Repeated wall-jumps from the same wall face are temporarily blocked.
+- Counter-strafe braking in air decelerates horizontal speed based on `air_counter_strafe_brake` without hidden hardcoded bonus deceleration.
+- Repeated wall-jumps are controlled by `wall_jump_cooldown` (default: `1.0s`).
 - Wallrun is lateral; vertical climb gain is capped.
-- If `vault_enabled` is on, pressing jump again near a ledge can trigger a vault: feet must be below ledge top, vault jump is higher than normal, and a small forward speed boost is applied.
+- `vault_enabled` is OFF by default. If enabled, pressing jump again near a ledge can trigger a vault: feet must be below ledge top, vault jump is higher than normal, and a small forward speed boost is applied.
+- Step risers are filtered out for wall-contact detection to reduce jitter and accidental wall-state hits on stairs/steps.
 
 ## Level Layout
 The map is generated in code and includes:

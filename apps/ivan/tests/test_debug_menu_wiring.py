@@ -171,22 +171,28 @@ def test_wall_detection_probe_refreshes_without_movement() -> None:
     assert ctrl.has_wall_for_jump()
 
 
-def test_cannot_walljump_same_wall_twice_in_a_row() -> None:
-    ctrl = _make_controller(PhysicsTuning(walljump_enabled=True))
+def test_walljump_respects_cooldown() -> None:
+    ctrl = _make_controller(PhysicsTuning(walljump_enabled=True, wall_jump_cooldown=1.0))
     ctrl.grounded = False
     ctrl._wall_contact_timer = 0.0
     ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
     ctrl._wall_contact_point = LVector3f(10.0, 0.0, 2.0)
     assert ctrl.has_wall_for_jump()
     ctrl._apply_wall_jump(yaw_deg=0.0)
+
+    # Still touching a wall but cooldown should block another jump.
     ctrl._wall_contact_timer = 0.0
     ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
     ctrl._wall_contact_point = LVector3f(10.1, 0.0, 2.2)
     assert not ctrl.has_wall_for_jump()
+    ctrl.step(dt=1.01, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
+    assert ctrl.has_wall_for_jump()
 
 
 def test_can_walljump_multiple_times_in_air_on_different_walls() -> None:
-    ctrl = _make_controller(PhysicsTuning(walljump_enabled=True))
+    ctrl = _make_controller(PhysicsTuning(walljump_enabled=True, wall_jump_cooldown=0.0))
     ctrl.grounded = False
     ctrl._wall_contact_timer = 0.0
     ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
@@ -199,3 +205,12 @@ def test_can_walljump_multiple_times_in_air_on_different_walls() -> None:
     ctrl._wall_normal = LVector3f(0.0, 1.0, 0.0)
     ctrl._wall_contact_point = LVector3f(0.0, 10.0, 2.0)
     assert ctrl.has_wall_for_jump()
+
+
+def test_coyote_time_allows_jump_briefly_after_leaving_ground() -> None:
+    ctrl = _make_controller(PhysicsTuning(enable_coyote=True, coyote_time=0.12))
+    ctrl.grounded = False
+    ctrl._ground_timer = 0.05
+    ctrl.queue_jump()
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+    assert ctrl.vel.z > 0.0
