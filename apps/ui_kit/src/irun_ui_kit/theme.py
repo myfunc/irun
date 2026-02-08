@@ -17,26 +17,32 @@ class Theme:
     """
 
     # Layout
-    pad: float = 0.07
-    gap: float = 0.040
+    # Smaller default padding to reduce "air" in the kit.
+    pad: float = 0.045
+    gap: float = 0.028
     outline_w: float = 0.008
     header_h: float = 0.085
+    # Thin accent thickness (used for underlines/indicators).
+    accent_h: float = 0.010
 
     # Typography (DirectGUI `text_scale` in aspect2d units)
-    title_scale: float = 0.052
-    label_scale: float = 0.040
-    small_scale: float = 0.032
+    title_scale: float = 0.056
+    label_scale: float = 0.044
+    small_scale: float = 0.038
 
-    # Palette (retro industrial baseline: dark panels + warm orange accent)
-    bg: Color = (0.06, 0.055, 0.050, 1.0)
-    panel: Color = (0.15, 0.14, 0.13, 0.98)
-    panel2: Color = (0.21, 0.20, 0.19, 0.98)
-    outline: Color = (0.62, 0.60, 0.58, 1.0)
-    # Slightly desaturated "burnt orange" so it reads more PS2/industrial than neon.
-    header: Color = (0.88, 0.44, 0.12, 1.0)  # orange accent
-    text: Color = (0.93, 0.92, 0.89, 1.0)
-    text_muted: Color = (0.68, 0.66, 0.60, 1.0)
-    ink: Color = (0.07, 0.06, 0.05, 1.0)
+    # Optional font preference. When None, the renderer picks a console-friendly default
+    # (and falls back to Panda3D's bundled fonts).
+    font: str | None = None
+
+    # Palette (darker retro industrial baseline + subtle warm orange notes)
+    bg: Color = (0.035, 0.033, 0.030, 1.0)
+    panel: Color = (0.105, 0.100, 0.092, 0.98)
+    panel2: Color = (0.145, 0.138, 0.128, 0.98)
+    outline: Color = (0.50, 0.48, 0.46, 1.0)
+    header: Color = (0.78, 0.34, 0.10, 1.0)  # accent (subtle)
+    text: Color = (0.92, 0.91, 0.88, 1.0)
+    text_muted: Color = (0.62, 0.60, 0.56, 1.0)
+    ink: Color = (0.055, 0.050, 0.045, 1.0)
     danger: Color = (255 / 255, 86 / 255, 120 / 255, 1.0)
 
     # Retro depth cues (procedural, no textures required)
@@ -47,6 +53,36 @@ class Theme:
     def with_overrides(self, **kwargs) -> "Theme":
         """Return a copy with overridden fields (simple project-side customization hook)."""
         return replace(self, **kwargs)
+
+    def with_dpi(self, dpi_scale: float) -> "Theme":
+        """
+        Return a copy adjusted for high-DPI displays.
+
+        We scale typography aggressively (to preserve physical size) and layout
+        more conservatively (to avoid the UI ballooning).
+        """
+
+        s = float(dpi_scale)
+        if s <= 1.0:
+            return self
+
+        # Conservative layout scaling.
+        layout_s = 1.0 + (s - 1.0) * 0.35
+        layout_s = max(1.0, min(1.5, layout_s))
+
+        return replace(
+            self,
+            pad=self.pad * layout_s,
+            gap=self.gap * layout_s,
+            outline_w=self.outline_w * layout_s,
+            header_h=self.header_h * layout_s,
+            accent_h=self.accent_h * layout_s,
+            title_scale=self.title_scale * s,
+            label_scale=self.label_scale * s,
+            small_scale=self.small_scale * s,
+            shadow_off_x=self.shadow_off_x * layout_s,
+            shadow_off_y=self.shadow_off_y * layout_s,
+        )
 
     @staticmethod
     def from_json(path: str | Path) -> "Theme":

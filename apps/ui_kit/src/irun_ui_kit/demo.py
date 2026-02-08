@@ -12,6 +12,7 @@ from irun_ui_kit.renderer import UIRenderer
 from irun_ui_kit.theme import Theme
 from irun_ui_kit.widgets.button import Button
 from irun_ui_kit.widgets.checkbox import Checkbox
+from irun_ui_kit.widgets.collapsible import CollapsiblePanel
 from irun_ui_kit.widgets.slider import Slider
 from irun_ui_kit.widgets.tabs import Tabs
 from irun_ui_kit.widgets.text_input import TextInput
@@ -29,6 +30,8 @@ class DemoApp(ShowBase):
         theme = Theme()
         self.ui = UIRenderer(base=self, theme=theme)
         self.ui.set_background()
+        # Renderer may apply DPI scaling and font defaults; use its theme for all widgets.
+        theme = self.ui.theme
 
         aspect = float(self.getAspectRatio())
         win = self.ui.create_window(title="UI KIT PLAYGROUND", x=-aspect + 0.08, y=-0.92, w=2.95, h=1.84)
@@ -51,7 +54,7 @@ class DemoApp(ShowBase):
             w=tabs_w,
             tab_h=tabs_tab_h,
             page_h=tabs_page_h,
-            labels=["Button", "TextInput", "Checkbox", "Slider"],
+            labels=["Button", "TextInput", "Checkbox", "Slider", "Layouts"],
             active=0,
         )
 
@@ -185,7 +188,7 @@ class DemoApp(ShowBase):
             x=col_w / 2,
             y=row0,
             w=col_w - 0.18,
-            h=0.11,
+            h=0.10,
             initial=state["button_label"],
             on_submit=lambda text: (state.__setitem__("button_label", text), _render_button_preview()),
         )
@@ -195,7 +198,7 @@ class DemoApp(ShowBase):
             x=col_w / 2,
             y=row1,
             w=col_w - 0.18,
-            h=0.11,
+            h=0.10,
             label="Disabled",
             checked=state["button_disabled"],
             on_change=lambda v: (state.__setitem__("button_disabled", v), _render_button_preview()),
@@ -232,7 +235,7 @@ class DemoApp(ShowBase):
             x=col_w / 2,
             y=row0,
             w=col_w - 0.18,
-            h=0.11,
+            h=0.10,
             label="Use panel2",
             frame_color=theme.panel2,
             on_click=lambda: (state.__setitem__("button_color", theme.panel2), _render_button_preview()),
@@ -243,7 +246,7 @@ class DemoApp(ShowBase):
             x=col_w / 2,
             y=row1,
             w=col_w - 0.18,
-            h=0.11,
+            h=0.10,
             label="Use danger",
             frame_color=theme.danger,
             on_click=lambda: (state.__setitem__("button_color", theme.danger), _render_button_preview()),
@@ -263,7 +266,7 @@ class DemoApp(ShowBase):
             x=ti_cw / 2,
             y=ti_ch / 2,
             w=min(ti_cw, preview_w) - 0.10,
-            h=0.11,
+            h=0.10,
             initial="Type and press Enter...",
             on_submit=lambda _t: None,
         )
@@ -274,7 +277,7 @@ class DemoApp(ShowBase):
             x=float(ti_controls_content["frameSize"][1]) / 2,
             y=float(ti_controls_content["frameSize"][3]) - 0.18,
             w=float(ti_controls_content["frameSize"][1]) - 0.18,
-            h=0.11,
+            h=0.10,
             label="(Placeholder) Disabled",
             checked=False,
             on_change=lambda _v: None,
@@ -293,7 +296,7 @@ class DemoApp(ShowBase):
             x=cb_cw / 2,
             y=cb_ch / 2,
             w=cb_cw - 0.10,
-            h=0.11,
+            h=0.10,
             label="Enable something",
             checked=True,
             on_change=lambda _v: None,
@@ -304,7 +307,7 @@ class DemoApp(ShowBase):
             x=float(cb_controls_content["frameSize"][1]) / 2,
             y=float(cb_controls_content["frameSize"][3]) - 0.18,
             w=float(cb_controls_content["frameSize"][1]) - 0.18,
-            h=0.11,
+            h=0.10,
             label="(No extra props yet)",
             checked=False,
             on_change=lambda _v: None,
@@ -335,10 +338,130 @@ class DemoApp(ShowBase):
             x=float(sl_controls_content["frameSize"][1]) / 2,
             y=float(sl_controls_content["frameSize"][3]) - 0.18,
             w=float(sl_controls_content["frameSize"][1]) - 0.18,
-            h=0.11,
+            h=0.10,
             label="(No extra props yet)",
             checked=False,
             on_change=lambda _v: None,
+            disabled=True,
+        )
+
+        # --- Layout examples page ---
+        ly_page = top_tabs.page(4)
+        ly_preview, ly_preview_content = _build_preview_panel(parent=ly_page, title="Preview")
+        ly_controls_panel, ly_controls_content, ly_controls_tabs = _build_controls_panel(parent=ly_page, title="Notes")
+
+        # A mini settings-style screen using collapsible panels.
+        p_w = float(ly_preview_content["frameSize"][1])
+        p_h = float(ly_preview_content["frameSize"][3])
+        section_w = p_w - (theme.pad * 2)
+        section_h = 0.32
+        sx = theme.pad + (section_w / 2)
+
+        sections: list[CollapsiblePanel] = []
+
+        def _relayout_sections() -> None:
+            top = p_h - theme.pad
+            for sec in sections:
+                h = sec.current_h()
+                sec.set_pos(y=top - h)
+                top = top - h - theme.pad
+
+        sec0 = CollapsiblePanel.build(
+            parent=ly_preview_content,
+            theme=theme,
+            x=theme.pad,
+            y=0.0,  # positioned by relayout
+            w=section_w,
+            expanded_h=section_h,
+            title="Graphics",
+            expanded=True,
+            on_toggle=_relayout_sections,
+        )
+        sections.append(sec0)
+        Checkbox.build(
+            parent=sec0.content,
+            theme=theme,
+            x=section_w / 2,
+            y=0.18,
+            w=section_w - 0.18,
+            h=0.10,
+            label="VSync",
+            checked=True,
+            on_change=lambda _v: None,
+        )
+        Slider.build(
+            parent=sec0.content,
+            theme=theme,
+            x=section_w / 2,
+            y=0.06,
+            w=section_w - 0.18,
+            label="Brightness",
+            min_value=0.5,
+            max_value=1.5,
+            value=1.0,
+            on_change=lambda _v: None,
+        )
+
+        sec1 = CollapsiblePanel.build(
+            parent=ly_preview_content,
+            theme=theme,
+            x=theme.pad,
+            y=0.0,  # positioned by relayout
+            w=section_w,
+            expanded_h=section_h,
+            title="Audio",
+            expanded=False,
+            on_toggle=_relayout_sections,
+        )
+        sections.append(sec1)
+        Slider.build(
+            parent=sec1.content,
+            theme=theme,
+            x=section_w / 2,
+            y=0.16,
+            w=section_w - 0.18,
+            label="Master",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.8,
+            on_change=lambda _v: None,
+        )
+
+        sec2 = CollapsiblePanel.build(
+            parent=ly_preview_content,
+            theme=theme,
+            x=theme.pad,
+            y=0.0,  # positioned by relayout
+            w=section_w,
+            expanded_h=section_h,
+            title="Input",
+            expanded=True,
+            on_toggle=_relayout_sections,
+        )
+        sections.append(sec2)
+        TextInput.build(
+            parent=sec2.content,
+            theme=theme,
+            x=section_w / 2,
+            y=0.16,
+            w=section_w - 0.18,
+            h=0.10,
+            initial="mouse_sensitivity = 0.11",
+            on_submit=lambda _t: None,
+        )
+
+        _relayout_sections()
+
+        # Notes panel: demonstrate tabbed/hideable groups without many controls.
+        Button.build(
+            parent=ly_controls_tabs.page(0),
+            theme=theme,
+            x=float(ly_controls_content["frameSize"][1]) / 2,
+            y=float(ly_controls_content["frameSize"][3]) - 0.18,
+            w=float(ly_controls_content["frameSize"][1]) - 0.18,
+            h=0.10,
+            label="This page demonstrates collapsible panels",
+            on_click=lambda: None,
             disabled=True,
         )
 
