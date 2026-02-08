@@ -1,0 +1,73 @@
+name: PR Flow (Auto PR + Auto Merge)
+
+on:
+  push:
+    branches:
+      - "myfunc/**"
+      - "ivan/**"
+      - "codex/**"
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  pr_flow:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure PR exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # Use the latest commit subject as the PR title.
+          TITLE="$(git log -1 --pretty=%s)"
+          BODY=$'Created automatically from a branch push.\n\n- Base: main\n- Head: '"$BRANCH"$'\n\nIf this PR should not auto-merge, remove the `automerge` label.'
+
+          if gh pr view "$BRANCH" --repo "$REPO" >/dev/null 2>&1; then
+            echo "PR already exists for $BRANCH"
+          else
+            gh pr create \
+              --repo "$REPO" \
+              --base main \
+              --head "$BRANCH" \
+              --title "$TITLE" \
+              --body "$BODY"
+          fi
+
+      - name: Label PR (automerge)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Ensure the label exists; ignore if it already does.
+          gh label create automerge \
+            --repo "$REPO" \
+            --color 0E8A16 \
+            --description "Auto-merge PRs created from branch pushes" \
+            2>/dev/null || true
+
+          gh pr edit "$BRANCH" --repo "$REPO" --add-label automerge
+
+      - name: Enable Auto-Merge (Squash)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # Prefer auto-merge so required status checks (if any) are respected.
+          # If auto-merge is disabled at the repo level, this will fail and we fall back
+          # to an immediate merge attempt (which may still be blocked by branch protection).
+          gh pr merge "$BRANCH" --repo "$REPO" --squash --delete-branch --auto || \
+          gh pr merge "$BRANCH" --repo "$REPO" --squash --delete-branch
