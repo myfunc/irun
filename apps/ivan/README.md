@@ -184,6 +184,7 @@ Notes:
 - The tool extracts per-face Source lightmaps into the bundle and the runtime multiplies base texture by lightmap.
 - The tool parses common VMT keys (e.g. `$basetexture`, `$translucent`, `$additive`, `$alphatest`, `$alpha`, `$nocull`)
   to drive runtime rendering (e.g. glass/decals).
+ - You can store per-map lighting presets in `<bundle>/run.json` under `"lighting"` (see below).
 
 Run with the bundle:
 ```bash
@@ -215,3 +216,13 @@ Notes:
   (step + slide with plane clipping) for stable wall/ceiling/slope handling.
 - The Source build step converts `materials/**/*.vtf` into PNG so Panda3D can load them.
 - Map bundles include per-triangle materials, UVs, and optional vertex colors (used as a baked lighting tint/fallback).
+
+### Per-Map Run Options (run.json)
+If a bundle directory contains `run.json`, IVAN will use it to control defaults for that map (mode/spawn/lighting).
+
+Lighting example:
+```json
+{
+  "lighting": { "preset": "server_defaults" }
+}
+```

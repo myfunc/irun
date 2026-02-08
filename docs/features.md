@@ -24,6 +24,7 @@
   - Extracts baked GoldSrc lightmaps (RGB) into bundle `lightmaps/` and renders them in runtime (supports up to 4 light styles per face)
 - Ivan: main menu (retro) with map bundle selection and on-demand GoldSrc/Xash3D import from a chosen game directory
   - Fast navigation: hold Up/Down for accelerated scrolling, Left/Right page jump, and `Cmd+F`/`Ctrl+F` search
+  - Delete imported/generated map bundles from the UI (safe delete: `assets/imported/**` and `assets/generated/*`)
 - Ivan: CLI prefill for GoldSrc/Xash3D import flow (`--hl-root`, `--hl-mod`)
   - Supports common macOS Steam layout where the game content lives under `<Game>.app/Contents/Resources`
 - Ivan: optional Steam Half-Life auto-detect (manual action in main menu, not default)
