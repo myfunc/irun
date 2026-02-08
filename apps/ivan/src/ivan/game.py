@@ -44,6 +44,8 @@ from ivan.ui.input_debug_ui import InputDebugUI
 from ivan.ui.main_menu import ImportRequest, MainMenuController
 from ivan.ui.pause_menu_ui import PauseMenuUI
 from ivan.world.scene import WorldScene
+from irun_ui_kit.renderer import UIRenderer
+from irun_ui_kit.theme import Theme
 
 
 class RunnerDemo(ShowBase):
@@ -61,6 +63,10 @@ class RunnerDemo(ShowBase):
         super().__init__()
 
         self.cfg = cfg
+        # Centralized UI theme + font/background defaults for all non-HUD UI.
+        self.ui_renderer = UIRenderer(base=self, theme=Theme())
+        self.ui_renderer.set_background()
+        self.ui_theme = self.ui_renderer.theme
         self.tuning = PhysicsTuning()
         self._loaded_state = load_state()
         self._suspend_tuning_persist: bool = False
@@ -114,6 +120,7 @@ class RunnerDemo(ShowBase):
         self._setup_window()
         self.ui = DebugUI(
             aspect2d=self.aspect2d,
+            theme=self.ui_theme,
             tuning=self.tuning,
             on_tuning_change=self._on_tuning_change,
             on_profile_select=self._apply_profile,
@@ -123,6 +130,7 @@ class RunnerDemo(ShowBase):
         self.error_console = ErrorConsoleUI(aspect2d=self.aspect2d, error_log=self.error_log)
         self.pause_ui = PauseMenuUI(
             aspect2d=self.aspect2d,
+            theme=self.ui_theme,
             on_resume=self._close_all_game_menus,
             on_map_selector=self._back_to_menu,
             on_back_to_menu=self._back_to_menu,
@@ -536,6 +544,7 @@ class RunnerDemo(ShowBase):
 
         self._menu = MainMenuController(
             aspect2d=self.aspect2d,
+            theme=self.ui_theme,
             initial_game_root=self.cfg.hl_root,
             initial_mod=self.cfg.hl_mod if self.cfg.hl_root else None,
             on_start_map_json=self._start_game,

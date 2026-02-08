@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+from typing import Iterable
+
+
+REPO_ROOT = Path(__file__).resolve().parent
+APPS_DIR = REPO_ROOT / "apps"
+
+
+USAGE = """\
+Usage:
+  ./runapp <app> [-- <app args...>]
+  ./runapp list
+
+Examples:
+  ./runapp ivan --map imported/halflife/valve/bounce
+  ./runapp baker
+
+Runner flags (can appear before or after <app>):
+  --print-cmd            Print the resolved python command and exit.
+  --module <name>        Override python module to run (default: app mapping, else <app>).
+"""
+
+
+def _list_apps() -> list[str]:
+    if not APPS_DIR.is_dir():
+        return []
+    return sorted([p.name for p in APPS_DIR.iterdir() if p.is_dir() and not p.name.startswith(".")])
+
+
+def _app_dir(app: str) -> Path:
+    return (APPS_DIR / app).resolve()
+
+
+def _python_for(app: str, app_dir: Path) -> str:
+    venv_py = app_dir / ".venv" / "bin" / "python"
+    if venv_py.exists() and os.access(venv_py, os.X_OK):
+        return str(venv_py)
+    # Monorepo convenience: UI kit is a library and typically reuses Ivan's venv.
+    if app == "ui_kit":
+        # Do NOT resolve symlinks here: running the resolved interpreter path bypasses venv site-packages.
+        ivan_py = APPS_DIR / "ivan" / ".venv" / "bin" / "python"
+        if ivan_py.exists() and os.access(ivan_py, os.X_OK):
+            return str(ivan_py)
+    return "python3"
+
+
+def _default_module_for_app(app: str) -> str:
+    mapping = {
+        "ivan": "ivan",
+        "baker": "baker",
+        # UI kit is a library; running it launches the demo/playground.
+        "ui_kit": "irun_ui_kit.demo",
+    }
+    return mapping.get(app, app)
+
+
+def _with_pythonpath(env: dict[str, str], app_dir: Path) -> dict[str, str]:
+    """
+    Best-effort "works even without pip -e" behavior:
+    - If an app has `src/`, add it to PYTHONPATH.
+    - Always add `apps/ui_kit/src` so apps can import `irun_ui_kit` even if not installed.
+    """
+
+    parts: list[str] = []
+    app_src = app_dir / "src"
+    if app_src.is_dir():
+        parts.append(str(app_src))
+
+    ui_kit_src = (APPS_DIR / "ui_kit" / "src").resolve()
+    if ui_kit_src.is_dir():
+        parts.append(str(ui_kit_src))
+
+    if not parts:
+        return env
+
+    cur = env.get("PYTHONPATH", "")
+    merged = os.pathsep.join(parts + ([cur] if cur else []))
+    out = dict(env)
+    out["PYTHONPATH"] = merged
+    return out
+
+
+def _run(cmd: list[str], *, cwd: Path, extra_env: dict[str, str]) -> int:
+    p = subprocess.run(cmd, cwd=str(cwd), env=extra_env)
+    return int(p.returncode)
+
+
+def _parse(argv: list[str]) -> tuple[str | None, list[str], bool, str | None]:
+    """
+    Returns: (app, app_args, print_cmd, module_override)
+    """
+
+    if not argv or argv[0] in {"-h", "--help", "help"}:
+        return (None, [], False, None)
+
+    if argv[0] == "list":
+        return ("list", [], False, None)
+
+    # Allow `--` to force "rest is app args".
+    print_cmd = False
+    module_override: str | None = None
+
+    # Extract known runner flags no matter where they appear.
+    toks = list(argv)
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        if t == "--":
+            # Stop scanning; anything after is forwarded.
+            i += 1
+            break
+        if t == "--print-cmd":
+            print_cmd = True
+            toks.pop(i)
+            continue
+        if t.startswith("--module="):
+            module_override = t.split("=", 1)[1].strip() or None
+            toks.pop(i)
+            continue
+        if t == "--module":
+            if i + 1 >= len(toks):
+                print("runapp: --module requires a value", file=sys.stderr)
+                return (None, [], False, None)
+            module_override = str(toks[i + 1]).strip() or None
+            del toks[i : i + 2]
+            continue
+        i += 1
+
+    # Find app: first non-flag token (post-processed).
+    app: str | None = None
+    app_idx: int | None = None
+    for j, t in enumerate(toks):
+        if t == "--":
+            continue
+        if t.startswith("-"):
+            continue
+        app = t
+        app_idx = j
+        break
+
+    if not app:
+        return (None, [], print_cmd, module_override)
+
+    # Everything after app becomes forwarded args, plus any tokens after `--`.
+    forward: list[str] = []
+    if app_idx is not None:
+        forward = toks[app_idx + 1 :]
+    forward = [t for t in forward if t != "--"]
+    return (app, forward, print_cmd, module_override)
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    args = list(argv) if argv is not None else sys.argv[1:]
+    app, app_args, print_cmd, module_override = _parse(args)
+
+    if app is None:
+        sys.stdout.write(USAGE)
+        return 2
+
+    if app == "list":
+        for a in _list_apps():
+            print(a)
+        return 0
+
+    app_dir = _app_dir(app)
+    if not app_dir.is_dir():
+        print(f"runapp: unknown app '{app}' (expected folder: {app_dir})", file=sys.stderr)
+        return 2
+
+    module = module_override or _default_module_for_app(app)
+    py = _python_for(app, app_dir)
+    cmd = [py, "-m", module, *app_args]
+
+    if print_cmd:
+        print("+", " ".join(shlex.quote(x) for x in cmd))
+        return 0
+
+    env = _with_pythonpath(dict(os.environ), app_dir)
+    return _run(cmd, cwd=app_dir, extra_env=env)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

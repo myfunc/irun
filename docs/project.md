@@ -18,8 +18,12 @@ Prototype / initialization phase.
 ## Apps
 - `apps/ivan`: Primary game project (first-person flow-runner movement demo with real-time physics tuning)
 - `apps/baker`: Companion tool (map viewer MVP; import/bake tooling planned)
-- `apps/ui_kit`: Experimental procedural UI kit (Panda3D DirectGUI)
+- `apps/ui_kit`: Internal procedural UI kit (Panda3D DirectGUI) used by Ivan for most non-HUD UI
 
 ## Constraints (Initial)
 - Keep dependencies minimal and well-documented.
 - Prefer deterministic gameplay rules over emergent physics chaos.
+- UI policy (project-wide):
+  - Prefer **zero custom UI** in game code: build menus/panels/screens using `apps/ui_kit`.
+  - If a global UI feature is missing, add it to `apps/ui_kit` (not as one-off game UI code).
+  - Exclusions (do not migrate in this policy pass): gameplay log/error overlays, crosshair, and in-game hint overlays.

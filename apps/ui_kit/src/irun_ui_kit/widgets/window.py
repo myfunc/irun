@@ -29,7 +29,7 @@ class Window:
         # Content container below the header bar.
         header_h = theme.header_h + (theme.outline_w * 2)
         self.content = DirectFrame(
-            parent=self.root,
+            parent=self.panel.content,
             frameColor=(0, 0, 0, 0),
             relief=DGG.FLAT,
             frameSize=(theme.pad, w - theme.pad, theme.pad, h - header_h),
@@ -42,7 +42,7 @@ class Window:
         # Titlebar hit area: we bind mouse events to the header strip region.
         # Use an invisible frame covering the header.
         self._title_hit = DirectFrame(
-            parent=self.root,
+            parent=self.panel.content,
             frameColor=(0, 0, 0, 0),
             relief=DGG.FLAT,
             frameSize=(0.0, w, h - theme.header_h - theme.outline_w, h),

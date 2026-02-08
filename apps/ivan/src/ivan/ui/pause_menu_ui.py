@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from direct.gui import DirectGuiGlobals as DGG
-from direct.gui.DirectGui import DirectButton, DirectFrame, DirectLabel
+from direct.gui.DirectGui import DirectFrame, DirectLabel
 from direct.showbase import ShowBaseGlobal
 from panda3d.core import TextNode
+
+from irun_ui_kit.theme import Theme
+from irun_ui_kit.widgets.button import Button
+from irun_ui_kit.widgets.panel import Panel
+from irun_ui_kit.widgets.tabs import Tabs
 
 
 class PauseMenuUI:
@@ -13,6 +18,7 @@ class PauseMenuUI:
         self,
         *,
         aspect2d,
+        theme: Theme,
         on_resume,
         on_map_selector,
         on_back_to_menu,
@@ -22,144 +28,174 @@ class PauseMenuUI:
     ) -> None:
         aspect_ratio = 16.0 / 9.0
         if getattr(ShowBaseGlobal, "base", None) is not None:
-            aspect_ratio = float(ShowBaseGlobal.base.getAspectRatio())
+            try:
+                aspect_ratio = float(ShowBaseGlobal.base.getAspectRatio())
+            except Exception:
+                pass
 
         panel_top = 0.95
         panel_bottom = -0.70
-        panel_width = 0.82
+        panel_width = 0.88
         right = aspect_ratio - 0.02
         left = right - panel_width
 
-        self.root = DirectFrame(
+        w = panel_width
+        h = panel_top - panel_bottom
+        self._theme = theme
+
+        self._panel = Panel.build(
             parent=aspect2d,
-            frameColor=(0.06, 0.06, 0.06, 0.90),
-            frameSize=(left, right, panel_bottom, panel_top),
-            relief=DGG.FLAT,
-            pos=(0, 0, 0),
+            theme=theme,
+            x=left,
+            y=panel_bottom,
+            w=w,
+            h=h,
+            title="Menu",
+            header=True,
         )
+        self.root = self._panel.node
 
-        self._main_nodes = []
-        self._keys_nodes = []
+        header_total_h = theme.header_h + (theme.outline_w * 2)
+        content_h = h - header_total_h - theme.pad * 2
+        content_w = w - theme.pad * 2
 
-        title = DirectLabel(
-            parent=self.root,
-            text="Menu",
-            text_scale=0.060,
-            text_align=TextNode.ALeft,
-            text_fg=(1.0, 0.92, 0.65, 1.0),
+        self._content = DirectFrame(
+            parent=self._panel.content,
             frameColor=(0, 0, 0, 0),
-            pos=(left + 0.06, 0, panel_top - 0.12),
+            relief=DGG.FLAT,
+            frameSize=(theme.pad, w - theme.pad, theme.pad, h - header_total_h),
         )
+
         hint = DirectLabel(
-            parent=self.root,
+            parent=self._content,
             text="Esc: resume | `: debug menu",
-            text_scale=0.038,
+            text_scale=theme.small_scale,
             text_align=TextNode.ALeft,
-            text_fg=(0.85, 0.85, 0.85, 1.0),
+            text_fg=theme.text_muted,
             frameColor=(0, 0, 0, 0),
-            pos=(left + 0.06, 0, panel_top - 0.20),
+            pos=(0.0, 0, content_h - theme.small_scale * 0.90),
         )
-        self._main_nodes.extend([title, hint])
 
-        btn_w = (right - left) - 0.12
-        btn_x = left + 0.06 + (btn_w / 2.0)
-        btn_frame = (-4.0, 4.0, -0.55, 0.55)
-        btn_scale = btn_w / 8.0
-
-        def _btn(*, label: str, y: float, command):
-            b = DirectButton(
-                parent=self.root,
-                text=(label, label, label, label),
-                text_scale=0.62,
-                text_fg=(0.95, 0.95, 0.95, 1),
-                frameColor=(0.18, 0.18, 0.18, 0.95),
-                relief=DGG.FLAT,
-                command=command,
-                scale=btn_scale,
-                frameSize=btn_frame,
-                pos=(btn_x, 0, y),
-            )
-            self._main_nodes.append(b)
-
-        _btn(label="Resume", y=panel_top - 0.38, command=on_resume)
-        _btn(label="Map Selector", y=panel_top - 0.55, command=on_map_selector)
-        _btn(label="Key Bindings", y=panel_top - 0.72, command=on_open_keybindings)
-        _btn(label="Back to Main Menu", y=panel_top - 0.89, command=on_back_to_menu)
-        _btn(label="Quit", y=panel_top - 1.06, command=on_quit)
-
-        keys_title = DirectLabel(
-            parent=self.root,
-            text="Key Bindings",
-            text_scale=0.056,
-            text_align=TextNode.ALeft,
-            text_fg=(1.0, 0.92, 0.65, 1.0),
-            frameColor=(0, 0, 0, 0),
-            pos=(left + 0.06, 0, panel_top - 0.12),
+        tab_h = 0.11
+        page_h = max(0.20, content_h - tab_h - theme.gap * 1.5)
+        self._tabs = Tabs.build(
+            parent=self._content,
+            theme=theme,
+            x=0.0,
+            y=0.0,
+            w=content_w,
+            tab_h=tab_h,
+            page_h=page_h,
+            labels=["Menu", "Key Bindings"],
+            active=0,
         )
-        keys_hint = DirectLabel(
-            parent=self.root,
-            text="Set keys used while in-game.",
-            text_scale=0.036,
-            text_align=TextNode.ALeft,
-            text_fg=(0.85, 0.85, 0.85, 1.0),
-            frameColor=(0, 0, 0, 0),
-            pos=(left + 0.06, 0, panel_top - 0.20),
-        )
+
         self._keybind_status = DirectLabel(
-            parent=self.root,
+            parent=self._tabs.page(1),
             text="",
-            text_scale=0.036,
+            text_scale=theme.small_scale,
             text_align=TextNode.ALeft,
-            text_fg=(0.96, 0.90, 0.72, 1.0),
+            text_fg=theme.text,
             frameColor=(0, 0, 0, 0),
-            pos=(left + 0.06, 0, panel_top - 0.74),
-            text_wordwrap=20,
-        )
-
-        self._noclip_bind_button = DirectButton(
-            parent=self.root,
-            text=("Rebind Noclip Toggle",) * 4,
-            text_scale=0.56,
-            text_fg=(0.95, 0.95, 0.95, 1),
-            frameColor=(0.20, 0.20, 0.20, 0.95),
-            relief=DGG.FLAT,
-            command=on_rebind_noclip,
-            scale=btn_scale,
-            frameSize=btn_frame,
-            pos=(btn_x, 0, panel_top - 0.45),
+            pos=(0.0, 0, theme.pad),
+            text_wordwrap=22,
         )
         self._noclip_bind_label = DirectLabel(
-            parent=self.root,
+            parent=self._tabs.page(1),
             text="Current noclip key: V",
-            text_scale=0.042,
+            text_scale=theme.label_scale,
             text_align=TextNode.ALeft,
-            text_fg=(0.90, 0.90, 0.90, 1.0),
+            text_fg=theme.text,
             frameColor=(0, 0, 0, 0),
-            pos=(left + 0.06, 0, panel_top - 0.58),
-        )
-        self._keys_back_button = DirectButton(
-            parent=self.root,
-            text=("Back",) * 4,
-            text_scale=0.62,
-            text_fg=(0.95, 0.95, 0.95, 1),
-            frameColor=(0.18, 0.18, 0.18, 0.95),
-            relief=DGG.FLAT,
-            command=self.show_main,
-            scale=btn_scale,
-            frameSize=btn_frame,
-            pos=(btn_x, 0, panel_top - 0.92),
+            pos=(0.0, 0, page_h - theme.pad - theme.label_scale * 0.9),
         )
 
-        self._keys_nodes.extend(
-            [
-                keys_title,
-                keys_hint,
-                self._noclip_bind_button,
-                self._noclip_bind_label,
-                self._keybind_status,
-                self._keys_back_button,
-            ]
+        btn_h = 0.13
+        btn_w = content_w
+
+        # Main page buttons (stacked).
+        y0 = page_h - theme.pad - btn_h / 2.0
+        gap = theme.gap + 0.03
+        self._btn_resume = Button.build(
+            parent=self._tabs.page(0),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=y0,
+            w=btn_w,
+            h=btn_h,
+            label="Resume",
+            on_click=on_resume,
         )
+        self._btn_map_selector = Button.build(
+            parent=self._tabs.page(0),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=y0 - gap - btn_h,
+            w=btn_w,
+            h=btn_h,
+            label="Map Selector",
+            on_click=on_map_selector,
+        )
+
+        def _open_keys() -> None:
+            on_open_keybindings()
+            self.show_keybindings()
+
+        self._btn_keybindings = Button.build(
+            parent=self._tabs.page(0),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=y0 - (gap + btn_h) * 2,
+            w=btn_w,
+            h=btn_h,
+            label="Key Bindings",
+            on_click=_open_keys,
+        )
+        self._btn_back_to_menu = Button.build(
+            parent=self._tabs.page(0),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=y0 - (gap + btn_h) * 3,
+            w=btn_w,
+            h=btn_h,
+            label="Back to Main Menu",
+            on_click=on_back_to_menu,
+        )
+        self._btn_quit = Button.build(
+            parent=self._tabs.page(0),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=y0 - (gap + btn_h) * 4,
+            w=btn_w,
+            h=btn_h,
+            label="Quit",
+            on_click=on_quit,
+        )
+
+        # Key bindings page.
+        self._noclip_bind_button = Button.build(
+            parent=self._tabs.page(1),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=page_h - theme.pad - btn_h / 2.0 - theme.label_scale * 1.3,
+            w=btn_w,
+            h=btn_h,
+            label="Rebind Noclip Toggle",
+            on_click=on_rebind_noclip,
+        )
+        self._keys_back_button = Button.build(
+            parent=self._tabs.page(1),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=theme.pad + btn_h / 2.0,
+            w=btn_w,
+            h=btn_h,
+            label="Back",
+            on_click=self.show_main,
+        )
+
+        # Keep hint above tabs.
+        _ = hint
 
         self.show_main()
         self.root.hide()
@@ -173,23 +209,32 @@ class PauseMenuUI:
         self.show_main()
 
     def destroy(self) -> None:
-        self.root.destroy()
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
 
     def show_main(self) -> None:
-        for node in self._main_nodes:
-            node.show()
-        for node in self._keys_nodes:
-            node.hide()
+        self._tabs.select(
+            0,
+            active_color=self._theme.panel2,
+            inactive_color=self._theme.panel,
+            active_text_fg=self._theme.text,
+            inactive_text_fg=self._theme.text_muted,
+        )
         self.set_keybind_status("")
 
     def show_keybindings(self) -> None:
-        for node in self._main_nodes:
-            node.hide()
-        for node in self._keys_nodes:
-            node.show()
+        self._tabs.select(
+            1,
+            active_color=self._theme.panel2,
+            inactive_color=self._theme.panel,
+            active_text_fg=self._theme.text,
+            inactive_text_fg=self._theme.text_muted,
+        )
 
     def set_noclip_binding(self, key_name: str) -> None:
-        self._noclip_bind_label["text"] = f"Current noclip key: {key_name.upper()}"
+        self._noclip_bind_label["text"] = f"Current noclip key: {str(key_name).upper()}"
 
     def set_keybind_status(self, text: str) -> None:
-        self._keybind_status["text"] = text
+        self._keybind_status["text"] = str(text)
