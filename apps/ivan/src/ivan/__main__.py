@@ -13,6 +13,11 @@ def main(argv: list[str] | None = None) -> None:
         help="Run briefly and exit (for quick verification).",
     )
     parser.add_argument(
+        "--smoke-screenshot",
+        default=None,
+        help="Optional PNG output path (only used with --smoke). Saves a single screenshot before exit.",
+    )
+    parser.add_argument(
         "--map",
         dest="map_json",
         default=None,
@@ -36,7 +41,13 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     map_json = args.map_json
-    run(smoke=args.smoke, map_json=map_json, hl_root=args.hl_root, hl_mod=args.hl_mod)
+    run(
+        smoke=args.smoke,
+        smoke_screenshot=args.smoke_screenshot,
+        map_json=map_json,
+        hl_root=args.hl_root,
+        hl_mod=args.hl_mod,
+    )
 
 
 if __name__ == "__main__":

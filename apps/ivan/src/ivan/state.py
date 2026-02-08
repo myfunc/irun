@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,7 +58,8 @@ def save_state(state: IvanState) -> None:
     d = state_dir()
     d.mkdir(parents=True, exist_ok=True)
     p = state_path()
-    tmp = p.with_suffix(".tmp")
+    # Use a unique tmp name to avoid cross-process races (e.g. parallel smoke runs).
+    tmp = p.with_name(f"{p.name}.{os.getpid()}.{secrets.token_hex(6)}.tmp")
     tmp.write_text(
         json.dumps(
             {
@@ -118,4 +120,3 @@ def resolve_map_json(map_json: str) -> Path | None:
         if c.exists() and c.is_file():
             return c
     return None
-

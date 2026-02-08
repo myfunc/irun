@@ -16,3 +16,5 @@
 - Hazards + collectibles
 - Simple UI (timer/collect count)
 - Handcrafted, player-generated map workflow and validation tools
+- Map format v3: entities + triggers + lights + baked chunking (data first; streaming later)
+- Time trial: local timing + local personal best storage (replays/portal later)
