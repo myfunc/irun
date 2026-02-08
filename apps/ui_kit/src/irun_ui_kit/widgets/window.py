@@ -28,11 +28,15 @@ class Window:
 
         # Content container below the header bar.
         header_h = theme.header_h + (theme.outline_w * 2)
+        content_w = max(0.01, w - (theme.pad * 2))
+        content_h = max(0.01, (h - header_h) - (theme.pad * 2))
         self.content = DirectFrame(
             parent=self.panel.content,
             frameColor=(0, 0, 0, 0),
             relief=DGG.FLAT,
-            frameSize=(theme.pad, w - theme.pad, theme.pad, h - header_h),
+            # Keep local origin at (0, 0) bottom-left for children.
+            frameSize=(0.0, content_w, 0.0, content_h),
+            pos=(theme.pad, 0.0, theme.pad),
         )
 
         self._dragging = False
