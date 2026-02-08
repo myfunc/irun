@@ -61,14 +61,24 @@ Goal: enable fast "wipe-coding" without stepping on each other, while keeping `m
   1. Create a branch if needed (never commit directly to `main`).
   2. Push the branch to `origin` and create a PR targeting `main`.
   3. Keep pushing additional commits to the same branch; the PR updates automatically.
-  4. Merge the PR into `main` (prefer squash) and delete the branch.
+  4. Attempt to merge the PR into `main` (prefer squash) and delete the branch.
+  5. If the merge is blocked by conflicts, stop and ask the user how to proceed (see "Conflicts" below).
 
 Implementation notes for the agent:
 - Prefer GitHub CLI:
   - Create PR: `gh pr create --base main --head <branch> --fill`
   - Merge PR: `gh pr merge --squash --auto --delete-branch`
+  - If auto-merge is not available, fall back to: `gh pr merge --squash --delete-branch`
 - If `gh auth status -h github.com` fails, stop and ask the user to run `gh auth login -h github.com` before continuing.
 - "No approvals" means: do not request reviewers, and branch protection must not require PR reviews (0 required). Status checks may be required if the repo has CI.
+
+Conflicts:
+- If the PR cannot be merged due to merge conflicts, do not guess conflict resolutions.
+- Ask the user which strategy to use:
+  - Rebase the branch onto `main` (preferred for linear history).
+  - Merge `main` into the branch (preferred if rebase is undesirable).
+  - Abort and let the user resolve conflicts manually.
+- After the user chooses, perform the chosen strategy, push the updated branch, and re-attempt the PR merge.
 
 Non-goal:
 - Do not add repository-side automation that creates PRs or merges automatically (GitHub Actions, bots, etc.). This workflow is intentionally agent-driven.
