@@ -70,5 +70,5 @@ Implementation notes for the agent:
 - If `gh auth status -h github.com` fails, stop and ask the user to run `gh auth login -h github.com` before continuing.
 - "No approvals" means: do not request reviewers, and branch protection must not require PR reviews (0 required). Status checks may be required if the repo has CI.
 
-Repository automation:
-- GitHub Actions workflow `.github/workflows/pr-flow.yml` is allowed to create a PR on branch push and enable auto-merge. If you do not want auto-merge for a given PR, remove the `automerge` label.
+Non-goal:
+- Do not add repository-side automation that creates PRs or merges automatically (GitHub Actions, bots, etc.). This workflow is intentionally agent-driven.
