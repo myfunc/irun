@@ -10,6 +10,7 @@ We maintain an **experimental procedural UI kit** under `apps/ui_kit/` to standa
 - reusable primitives (windows/panels/buttons/text inputs)
 
 The UI kit is designed to be iterated on outside the main runtime UI, then wired into Ivan once stable.
+See: `docs/ui-kit.md`.
 
 ## Code Layout
 - Monorepo: apps are under `apps/`

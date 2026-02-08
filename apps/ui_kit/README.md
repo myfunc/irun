@@ -62,9 +62,9 @@ Implemented as small wrappers around DirectGUI.
 Example JSON (colors can be floats 0..1 or ints 0..255):
 ```json
 {
-  \"header\": [0, 230, 235, 255],
-  \"panel\": [0.14, 0.14, 0.16, 0.98],
-  \"pad\": 0.08
+  "header": [200, 86, 25, 255],
+  "panel": [0.14, 0.14, 0.16, 0.98],
+  "pad": 0.06
 }
 ```
 
@@ -93,13 +93,13 @@ apps/ivan/.venv/bin/python -m irun_ui_kit.demo --smoke-screenshot /tmp/irun-ui-k
 Next features to add, in order:
 1. Layout primitives
   - `Stack` (vertical/horizontal flow)
-   - `Grid` presets (at most 2 initially): compact and roomy
+  - `Grid` presets (at most 2 initially): compact and roomy
 2. Interaction + UX rules
    - consistent focus state and keyboard navigation (Up/Down/Tab/Enter/Esc)
    - hover/pressed/disabled states standardized via theme tokens
 3. Controls
-   - checkbox (single control, not two buttons)
-   - slider with value label
+   - checkbox (single control, not two buttons) (done)
+   - slider with value label (done)
    - list/select (for menus)
 4. Window management
    - z-order (bring to front on click)
@@ -107,3 +107,6 @@ Next features to add, in order:
 5. Text + content
    - proper text clipping/ellipsis utilities
    - scroll container (for long debug/settings menus)
+
+## More Docs
+- Global overview: `docs/ui-kit.md`

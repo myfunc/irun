@@ -17,6 +17,8 @@ Prototype / initialization phase.
 
 ## Apps
 - `apps/ivan`: Primary game project (first-person flow-runner movement demo with real-time physics tuning)
+- `apps/baker`: Companion tool (map viewer MVP; import/bake tooling planned)
+- `apps/ui_kit`: Experimental procedural UI kit (Panda3D DirectGUI)
 
 ## Constraints (Initial)
 - Keep dependencies minimal and well-documented.
