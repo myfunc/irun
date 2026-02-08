@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import math
+import errno
 import subprocess
 import sys
 import threading
+import time
 import traceback
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +36,7 @@ from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, resolve_bundle_handle
 from ivan.maps.run_metadata import RunMetadata, load_run_metadata
 from ivan.modes.base import ModeContext
 from ivan.modes.loader import load_mode
+from ivan.net import EmbeddedHostServer, MultiplayerClient
 from ivan.physics.collision_world import CollisionWorld
 from ivan.physics.player_controller import PlayerController
 from ivan.physics.tuning import PhysicsTuning
@@ -113,6 +117,24 @@ class _InputCommand:
         )
 
 
+@dataclass
+class _RemotePlayerVisual:
+    player_id: int
+    root_np: object
+    head_np: object
+    hp: int = 100
+    name: str = "player"
+    sample_ticks: list[int] = field(default_factory=list)
+    sample_pos: list[LVector3f] = field(default_factory=list)
+    sample_yaw: list[float] = field(default_factory=list)
+
+
+@dataclass
+class _PredictedInput:
+    seq: int
+    cmd: _InputCommand
+
+
 class RunnerDemo(ShowBase):
     def __init__(self, cfg: RunConfig) -> None:
         loadPrcFileData("", "audio-library-name null")
@@ -170,6 +192,20 @@ class RunnerDemo(ShowBase):
         self._playback_frames: list[DemoFrame] | None = None
         self._playback_index: int = 0
         self._playback_active: bool = False
+        self._net_client: MultiplayerClient | None = None
+        self._net_connected: bool = False
+        self._net_player_id: int = 0
+        self._remote_players: dict[int, _RemotePlayerVisual] = {}
+        self._net_seq_counter: int = 0
+        self._net_pending_inputs: list[_PredictedInput] = []
+        self._net_last_server_tick: int = 0
+        self._net_last_snapshot_local_time: float = 0.0
+        self._net_interp_delay_ticks: float = 6.0
+        self._embedded_server: EmbeddedHostServer | None = None
+        self._open_to_network: bool = False
+        self._runtime_connect_host: str | None = (str(self.cfg.net_host).strip() if self.cfg.net_host else None)
+        self._runtime_connect_port: int = int(self.cfg.net_port)
+        self._local_hp: int = 100
         self._sim_prev_player_pos = LVector3f(0, 0, 0)
         self._sim_curr_player_pos = LVector3f(0, 0, 0)
         self._sim_prev_cam_pos = LVector3f(0, 0, 0)
@@ -230,8 +266,16 @@ class RunnerDemo(ShowBase):
             on_open_replays=self._open_replay_browser,
             on_open_keybindings=self._open_keybindings_menu,
             on_rebind_noclip=self._start_rebind_noclip,
+            on_toggle_open_network=self._on_toggle_open_network,
+            on_connect_server=self._on_connect_server_from_menu,
+            on_disconnect_server=self._on_disconnect_server_from_menu,
         )
         self.pause_ui.set_noclip_binding(self._noclip_toggle_key)
+        self.pause_ui.set_open_to_network(self._open_to_network)
+        self.pause_ui.set_connect_target(
+            host=self._runtime_connect_host or "127.0.0.1",
+            port=int(self._runtime_connect_port),
+        )
         self.replay_browser_ui = ReplayBrowserUI(
             aspect2d=self.aspect2d,
             theme=self.ui_theme,
@@ -548,6 +592,20 @@ class RunnerDemo(ShowBase):
         self._awaiting_noclip_rebind = False
         self.pause_ui.show_main()
         self.pause_ui.set_keybind_status("")
+        self.pause_ui.set_open_to_network(self._open_to_network)
+        self.pause_ui.set_connect_target(
+            host=self._runtime_connect_host or "127.0.0.1",
+            port=int(self._runtime_connect_port),
+        )
+        if self._net_connected and self._net_client is not None:
+            try:
+                self.pause_ui.set_multiplayer_status(
+                    f"Connected to {self._net_client.host}:{self._net_client.tcp_port}"
+                )
+            except Exception:
+                self.pause_ui.set_multiplayer_status("Connected.")
+        else:
+            self.pause_ui.set_multiplayer_status("Not connected.")
         self.pause_ui.show()
         self.replay_browser_ui.hide()
         self.ui.hide()
@@ -723,6 +781,16 @@ class RunnerDemo(ShowBase):
         self._playback_active = False
         self._playback_frames = None
         self._playback_index = 0
+        if self._net_client is not None:
+            try:
+                self._net_client.close()
+            except Exception:
+                pass
+        self._net_client = None
+        self._net_connected = False
+        self._net_player_id = 0
+        self._clear_remote_players()
+        self._stop_embedded_server()
         self._set_pointer_lock(False)
 
         # Hide in-game HUD while picking.
@@ -767,6 +835,16 @@ class RunnerDemo(ShowBase):
         self.replay_browser_ui.hide()
         self._replay_browser_open = False
         self._playback_active = False
+        self._clear_remote_players()
+        if self._net_client is not None:
+            try:
+                self._net_client.close()
+            except Exception:
+                pass
+        self._net_client = None
+        self._net_connected = False
+        self._net_player_id = 0
+        self._stop_embedded_server()
 
         self._enter_main_menu()
 
@@ -938,6 +1016,7 @@ class RunnerDemo(ShowBase):
             self.scene = WorldScene()
             self.scene.build(cfg=cfg, loader=self.loader, render=self.world_root, camera=self.camera)
             self._current_map_json = cfg_map_json
+            self._clear_remote_players()
 
             # Optional spawn override stored next to the map (bundle run.json).
             self._apply_spawn_override(spawn=run_meta.spawn_override)
@@ -958,6 +1037,7 @@ class RunnerDemo(ShowBase):
                 aabbs=self.scene.aabbs,
                 collision=self.collision,
             )
+            self._local_hp = 100
             self._sim_state_ready = False
             self._push_sim_snapshot()
             self._render_interpolated_state(alpha=1.0)
@@ -972,6 +1052,14 @@ class RunnerDemo(ShowBase):
             self._prev_demo_save_down = False
             if not self._playback_active:
                 self._start_new_demo_recording()
+            if self._runtime_connect_host or self._open_to_network:
+                if self._open_to_network and not self._runtime_connect_host:
+                    # Local host mode: restart to ensure server runs on the selected map.
+                    self._stop_embedded_server()
+                self._connect_multiplayer_if_requested()
+            else:
+                self._disconnect_multiplayer()
+                self._stop_embedded_server()
 
             # Install game mode after the world/player exist.
             mode = load_mode(mode=run_meta.mode, config=run_meta.mode_config)
@@ -1173,6 +1261,274 @@ class RunnerDemo(ShowBase):
         self.camera.setPos(c)
         self.camera.setHpr(y, pi, 0)
 
+    def _connect_multiplayer_if_requested(self) -> None:
+        self._disconnect_multiplayer()
+        if not self._runtime_connect_host and not self._open_to_network:
+            return
+        target_host = self._runtime_connect_host if self._runtime_connect_host else "127.0.0.1"
+        target_port = int(self._runtime_connect_port)
+        had_embedded_server = self._embedded_server is not None
+        start_embedded = self._open_to_network and not self._runtime_connect_host
+        if start_embedded:
+            embedded_ready = self._start_embedded_server()
+            if not embedded_ready:
+                self.pause_ui.set_keybind_status(
+                    f"Host port {target_port} is busy; trying existing local server."
+                )
+        try:
+            self._net_client = MultiplayerClient(
+                host=str(target_host),
+                tcp_port=int(target_port),
+                name=str(self.cfg.net_name),
+            )
+            self._net_connected = True
+            self._net_player_id = int(self._net_client.player_id)
+            self._local_hp = 100
+            self._net_seq_counter = 0
+            self._net_pending_inputs.clear()
+            self._net_last_server_tick = 0
+            self._net_last_snapshot_local_time = time.monotonic()
+            self.ui.set_status(f"Connected to server {target_host}:{target_port} as #{self._net_player_id}")
+            self.pause_ui.set_multiplayer_status(f"Connected to {target_host}:{target_port}")
+        except Exception as e:
+            self._disconnect_multiplayer()
+            self.error_log.log_message(context="net.connect", message=str(e))
+            self.error_console.refresh(auto_reveal=True)
+            self.pause_ui.set_multiplayer_status(f"Connect failed: {e}")
+            started_embedded_server = not had_embedded_server and self._embedded_server is not None
+            if start_embedded and started_embedded_server:
+                self._stop_embedded_server()
+
+    def _disconnect_multiplayer(self) -> None:
+        if self._net_client is not None:
+            try:
+                self._net_client.close()
+            except Exception:
+                pass
+        self._net_client = None
+        self._net_connected = False
+        self._net_player_id = 0
+        self._net_seq_counter = 0
+        self._net_last_server_tick = 0
+        self._net_last_snapshot_local_time = 0.0
+        self._net_pending_inputs.clear()
+        self._clear_remote_players()
+        self.pause_ui.set_multiplayer_status("Not connected.")
+
+    def _start_embedded_server(self) -> bool:
+        if self._embedded_server is not None:
+            return True
+        host = "0.0.0.0" if self._open_to_network else "127.0.0.1"
+        try:
+            self._embedded_server = EmbeddedHostServer(
+                host=host,
+                tcp_port=int(self._runtime_connect_port),
+                udp_port=int(self._runtime_connect_port) + 1,
+                map_json=self._current_map_json,
+            )
+            self._embedded_server.start()
+        except OSError as e:
+            self._embedded_server = None
+            if e.errno in (errno.EADDRINUSE, 48):
+                return False
+            raise
+        # Give server a brief warmup window before local connect.
+        time.sleep(0.12)
+        return True
+
+    def _stop_embedded_server(self) -> None:
+        srv = self._embedded_server
+        self._embedded_server = None
+        if srv is None:
+            return
+        try:
+            srv.stop(timeout_s=2.0)
+        except Exception:
+            pass
+
+    def _restart_embedded_server(self) -> None:
+        if self._runtime_connect_host:
+            return
+        self._stop_embedded_server()
+        if self._net_client is not None:
+            try:
+                self._net_client.close()
+            except Exception:
+                pass
+            self._net_client = None
+        self._net_connected = False
+        self._net_player_id = 0
+        self._clear_remote_players()
+        self._connect_multiplayer_if_requested()
+
+    def _on_toggle_open_network(self, enabled: bool) -> None:
+        self._open_to_network = bool(enabled)
+        self.pause_ui.set_open_to_network(self._open_to_network)
+        if self._open_to_network:
+            self._runtime_connect_host = None
+            self.pause_ui.set_keybind_status("Starting local host...")
+            self.pause_ui.set_connect_target(host="127.0.0.1", port=int(self._runtime_connect_port))
+            self._connect_multiplayer_if_requested()
+            if self._net_connected:
+                self.pause_ui.set_keybind_status("Open to network enabled.")
+            else:
+                self.pause_ui.set_keybind_status("Failed to start local host.")
+        else:
+            self._disconnect_multiplayer()
+            self._stop_embedded_server()
+            self.pause_ui.set_keybind_status("Open to network disabled (local offline mode).")
+
+    def _on_connect_server_from_menu(self, host: str, port_text: str) -> None:
+        host_clean = str(host or "").strip()
+        if not host_clean:
+            self.pause_ui.set_multiplayer_status("Host/IP is required.")
+            return
+        try:
+            port = int(str(port_text).strip())
+        except Exception:
+            self.pause_ui.set_multiplayer_status("Port must be a number.")
+            return
+        if port <= 0 or port > 65535:
+            self.pause_ui.set_multiplayer_status("Port must be between 1 and 65535.")
+            return
+
+        self._runtime_connect_host = host_clean
+        self._runtime_connect_port = int(port)
+        self.pause_ui.set_connect_target(host=self._runtime_connect_host, port=self._runtime_connect_port)
+        if self._open_to_network:
+            self._open_to_network = False
+            self.pause_ui.set_open_to_network(False)
+            self._stop_embedded_server()
+        self._connect_multiplayer_if_requested()
+
+    def _on_disconnect_server_from_menu(self) -> None:
+        self._disconnect_multiplayer()
+        if self._open_to_network:
+            self._open_to_network = False
+            self.pause_ui.set_open_to_network(False)
+            self._stop_embedded_server()
+
+    def _clear_remote_players(self) -> None:
+        for rp in self._remote_players.values():
+            try:
+                rp.root_np.removeNode()
+            except Exception:
+                pass
+        self._remote_players.clear()
+        self._net_pending_inputs.clear()
+
+    def _ensure_remote_player_visual(self, *, player_id: int, name: str) -> _RemotePlayerVisual:
+        rp = self._remote_players.get(int(player_id))
+        if rp is not None:
+            return rp
+        # Simple two-box avatar: body + head.
+        body = self.loader.loadModel("models/box")
+        body.reparentTo(self.world_root)
+        body.setScale(0.28, 0.28, 0.92)
+        body.setColor(0.22, 0.72, 0.95, 1.0)
+        head = self.loader.loadModel("models/box")
+        head.reparentTo(body)
+        head.setPos(0.0, 0.0, 1.20)
+        head.setScale(0.18, 0.18, 0.18)
+        head.setColor(0.95, 0.85, 0.70, 1.0)
+        rp = _RemotePlayerVisual(player_id=int(player_id), root_np=body, head_np=head, name=str(name or "player"))
+        self._remote_players[int(player_id)] = rp
+        return rp
+
+    def _poll_network_snapshot(self) -> None:
+        if not self._net_connected or self._net_client is None:
+            return
+        snap = self._net_client.poll()
+        if not isinstance(snap, dict):
+            return
+        tick = int(snap.get("tick") or 0)
+        self._net_last_server_tick = max(self._net_last_server_tick, tick)
+        self._net_last_snapshot_local_time = time.monotonic()
+        players = snap.get("players")
+        if not isinstance(players, list):
+            return
+
+        seen: set[int] = set()
+        for row in players:
+            if not isinstance(row, dict):
+                continue
+            pid = int(row.get("id") or 0)
+            if pid <= 0:
+                continue
+            seen.add(pid)
+            x = float(row.get("x") or 0.0)
+            y = float(row.get("y") or 0.0)
+            z = float(row.get("z") or 0.0)
+            yaw = float(row.get("yaw") or 0.0)
+            pitch = float(row.get("pitch") or 0.0)
+            vx = float(row.get("vx") or 0.0)
+            vy = float(row.get("vy") or 0.0)
+            vz = float(row.get("vz") or 0.0)
+            ack = int(row.get("ack") or 0)
+            hp = int(row.get("hp") or 0)
+            if pid == self._net_player_id:
+                self._local_hp = max(0, hp)
+                if self.player is not None and not self._playback_active:
+                    # Authoritative correction + replay of unacked predicted inputs.
+                    self.player.pos = LVector3f(x, y, z)
+                    self.player.vel = LVector3f(vx, vy, vz)
+                    self._yaw = float(yaw)
+                    self._pitch = float(pitch)
+                    self._net_pending_inputs = [p for p in self._net_pending_inputs if int(p.seq) > int(ack)]
+                    for p in self._net_pending_inputs:
+                        self._simulate_input_tick(cmd=p.cmd, menu_open=False, network_send=False, record_demo=False)
+                continue
+            rp = self._ensure_remote_player_visual(player_id=pid, name=str(row.get("n") or "player"))
+            rp.sample_ticks.append(int(tick))
+            rp.sample_pos.append(LVector3f(x, y, z))
+            rp.sample_yaw.append(float(yaw))
+            if len(rp.sample_ticks) > 48:
+                rp.sample_ticks = rp.sample_ticks[-48:]
+                rp.sample_pos = rp.sample_pos[-48:]
+                rp.sample_yaw = rp.sample_yaw[-48:]
+            rp.hp = max(0, hp)
+
+        stale = [pid for pid in self._remote_players.keys() if pid not in seen]
+        for pid in stale:
+            rp = self._remote_players.pop(pid)
+            try:
+                rp.root_np.removeNode()
+            except Exception:
+                pass
+
+    def _render_remote_players(self, *, alpha: float) -> None:
+        if self._net_last_snapshot_local_time > 0.0:
+            est_server_tick = float(self._net_last_server_tick) + (
+                time.monotonic() - float(self._net_last_snapshot_local_time)
+            ) * float(self._sim_tick_rate_hz)
+        else:
+            est_server_tick = float(self._net_last_server_tick)
+        target_tick = est_server_tick - float(self._net_interp_delay_ticks)
+        for rp in self._remote_players.values():
+            if not rp.sample_ticks:
+                continue
+            i1 = 0
+            while i1 < len(rp.sample_ticks) and float(rp.sample_ticks[i1]) < float(target_tick):
+                i1 += 1
+            if i1 <= 0:
+                p = rp.sample_pos[0]
+                y = rp.sample_yaw[0]
+            elif i1 >= len(rp.sample_ticks):
+                p = rp.sample_pos[-1]
+                y = rp.sample_yaw[-1]
+            else:
+                t0 = float(rp.sample_ticks[i1 - 1])
+                t1 = float(rp.sample_ticks[i1])
+                denom = max(1e-6, t1 - t0)
+                a = max(0.0, min(1.0, (float(target_tick) - t0) / denom))
+                p = self._lerp_vec(rp.sample_pos[i1 - 1], rp.sample_pos[i1], a)
+                y = self._lerp_angle_deg(rp.sample_yaw[i1 - 1], rp.sample_yaw[i1], a)
+            try:
+                rp.root_np.setPos(p)
+                rp.root_np.setHpr(y, 0, 0)
+            except Exception:
+                pass
+
     def _wish_direction_from_axes(self, *, move_forward: int, move_right: int) -> LVector3f:
         h_rad = math.radians(self._yaw)
         forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0)
@@ -1276,7 +1632,14 @@ class RunnerDemo(ShowBase):
         self._playback_index += 1
         return _InputCommand.from_demo_frame(frame, look_scale=self._playback_look_scale)
 
-    def _simulate_input_tick(self, *, cmd: _InputCommand, menu_open: bool) -> None:
+    def _simulate_input_tick(
+        self,
+        *,
+        cmd: _InputCommand,
+        menu_open: bool,
+        network_send: bool = True,
+        record_demo: bool = True,
+    ) -> None:
         if self.player is None or self.scene is None:
             return
 
@@ -1313,8 +1676,27 @@ class RunnerDemo(ShowBase):
 
         self._push_sim_snapshot()
 
-        if self._active_recording is not None and not self._playback_active:
+        if record_demo and self._active_recording is not None and not self._playback_active:
             append_frame(self._active_recording, cmd.to_demo_frame())
+        if network_send and self._net_connected and self._net_client is not None and not self._playback_active:
+            self._net_seq_counter += 1
+            seq = int(self._net_seq_counter)
+            self._net_pending_inputs.append(_PredictedInput(seq=seq, cmd=cmd))
+            self._net_client.send_input(
+                seq=seq,
+                server_tick_hint=int(self._net_last_server_tick),
+                cmd={
+                    "dx": int(cmd.look_dx),
+                    "dy": int(cmd.look_dy),
+                    "ls": int(cmd.look_scale),
+                    "mf": int(cmd.move_forward),
+                    "mr": int(cmd.move_right),
+                    "jp": bool(cmd.jump_pressed),
+                    "jh": bool(cmd.jump_held),
+                    "ch": bool(cmd.crouch_held),
+                    "gp": bool(cmd.grapple_pressed),
+                },
+            )
 
     def _queue_jump(self) -> None:
         if self.player is not None and self._mode == "game" and not self._pause_menu_open and not self._debug_menu_open:
@@ -1465,6 +1847,7 @@ class RunnerDemo(ShowBase):
         self.player.respawn()
         self._yaw = float(self.scene.spawn_yaw)
         self._pitch = 0.0
+        self._local_hp = 100
         self._sim_state_ready = False
         self._push_sim_snapshot()
         self._render_interpolated_state(alpha=1.0)
@@ -1560,13 +1943,17 @@ class RunnerDemo(ShowBase):
                 self._sim_accumulator -= self._sim_fixed_dt
             alpha = self._sim_accumulator / self._sim_fixed_dt if self._sim_fixed_dt > 0.0 else 1.0
             self._render_interpolated_state(alpha=alpha)
+            self._poll_network_snapshot()
+            self._render_remote_players(alpha=alpha)
 
             hspeed = math.sqrt(self.player.vel.x * self.player.vel.x + self.player.vel.y * self.player.vel.y)
             self.ui.set_speed(hspeed)
+            self.ui.set_health(self._local_hp)
             self.ui.set_status(
                 f"speed: {hspeed:.2f} | z-vel: {self.player.vel.z:.2f} | grounded: {self.player.grounded} | "
                 f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()} | "
-                f"grapple: {self.player.is_grapple_attached()} | rec: {self._active_recording is not None} | replay: {self._playback_active}"
+                f"grapple: {self.player.is_grapple_attached()} | hp: {self._local_hp} | net: {self._net_connected} | "
+                f"rec: {self._active_recording is not None} | replay: {self._playback_active}"
             )
 
             if self._game_mode is not None:
@@ -1659,8 +2046,20 @@ def run(
     map_json: str | None = None,
     hl_root: str | None = None,
     hl_mod: str = "valve",
+    net_host: str | None = None,
+    net_port: int = 7777,
+    net_name: str = "player",
 ) -> None:
     app = RunnerDemo(
-        RunConfig(smoke=smoke, smoke_screenshot=smoke_screenshot, map_json=map_json, hl_root=hl_root, hl_mod=hl_mod)
+        RunConfig(
+            smoke=smoke,
+            smoke_screenshot=smoke_screenshot,
+            map_json=map_json,
+            hl_root=hl_root,
+            hl_mod=hl_mod,
+            net_host=net_host,
+            net_port=int(net_port),
+            net_name=net_name,
+        )
     )
     app.run()

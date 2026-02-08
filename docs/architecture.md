@@ -37,6 +37,9 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game ESC menu (Resume/Map Selector/Key Bindings/Back/Quit) and keybinding controls
 - `apps/ivan/src/ivan/ui/replay_browser_ui.py`: in-game replay browser overlay (UI kit list menu)
 - `apps/ivan/src/ivan/replays/demo.py`: input-demo storage (record/save/load/list) using repository-local storage under `apps/ivan/replays/`
+- `apps/ivan/src/ivan/net/server.py`: authoritative multiplayer server loop (TCP bootstrap + UDP input/snapshots)
+- `apps/ivan/src/ivan/net/client.py`: multiplayer client transport for handshake/input send/snapshot poll
+- `apps/ivan/src/ivan/net/protocol.py`: multiplayer packet/message schema and payload codecs
 - `apps/ivan/src/ivan/common/error_log.py`: small in-memory error feed used to prevent hard crashes and surface unhandled exceptions in-game
 - `apps/ivan/src/ivan/ui/error_console_ui.py`: bottom-screen error console (toggle with `F3`)
 - `apps/ivan/src/ivan/common/aabb.py`: Shared AABB type used for graybox fallback
@@ -51,6 +54,14 @@ See: `docs/ui-kit.md`.
 - Repo root helper: `./runapp ivan` (recommended for quick iteration)
 - The game loop is driven by Panda3D's task manager.
 - Movement simulation runs at a fixed `60 Hz` tick to support deterministic input replay.
+- Multiplayer networking:
+  - TCP bootstrap for join/session token assignment.
+  - UDP packets for gameplay input and world snapshots.
+  - Server simulates movement authoritatively at `60 Hz`; clients use prediction + reconciliation for local player and snapshot-buffer interpolation for remote players.
+  - Client-host mode: the game can run an embedded local server thread on demand; `Esc` menu `Open To Network` toggles host mode ON/OFF.
+  - Client join mode: `Esc` menu `Multiplayer` tab allows runtime remote connect/disconnect by host+port (no restart required).
+  - Host toggle handles busy local ports gracefully by attempting to join an already running local server.
+  - Default multiplayer port uses env var `DEFAULT_HOST_PORT` (fallback `7777`).
 - In-game UI/input split:
   - `Esc` opens gameplay menu and unlocks cursor.
   - `` ` `` opens debug/admin tuning menu and unlocks cursor.

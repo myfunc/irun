@@ -298,6 +298,34 @@ class DebugUI:
             pos=(theme.outline_w + theme.pad * 0.50, 0, chip_h * 0.32),
         )
         self.speed_hud_root.hide()
+        # Health chip: top-left corner.
+        hp_w = 0.42
+        hp_h = 0.10
+        hp_x = -aspect_ratio + 0.06
+        hp_y = 0.90
+        self.health_hud_root = DirectFrame(
+            parent=aspect2d,
+            frameColor=theme.outline,
+            relief=DGG.FLAT,
+            frameSize=(0.0, hp_w, 0.0, hp_h),
+            pos=(hp_x, 0.0, hp_y),
+        )
+        DirectFrame(
+            parent=self.health_hud_root,
+            frameColor=(theme.panel2[0], theme.panel2[1], theme.panel2[2], theme.panel2[3] * 0.90),
+            relief=DGG.FLAT,
+            frameSize=(theme.outline_w, hp_w - theme.outline_w, theme.outline_w, hp_h - theme.outline_w),
+        )
+        self.health_hud_label = DirectLabel(
+            parent=self.health_hud_root,
+            text="HP 100",
+            text_scale=0.040,
+            text_align=TextNode.ALeft,
+            text_fg=theme.text,
+            frameColor=(0, 0, 0, 0),
+            pos=(theme.outline_w + theme.pad * 0.50, 0, hp_h * 0.32),
+        )
+        self.health_hud_root.hide()
         self.time_trial_hud_label = DirectLabel(
             parent=aspect2d,
             text="",
@@ -561,11 +589,16 @@ class DebugUI:
     def set_speed_hud_visible(self, visible: bool) -> None:
         if visible:
             self.speed_hud_root.show()
+            self.health_hud_root.show()
         else:
             self.speed_hud_root.hide()
+            self.health_hud_root.hide()
 
     def set_speed(self, hspeed: float) -> None:
         self.speed_hud_label["text"] = f"SPEED {int(hspeed)}"
+
+    def set_health(self, hp: int) -> None:
+        self.health_hud_label["text"] = f"HP {max(0, int(hp))}"
 
     def set_time_trial_hud(self, text: str | None) -> None:
         if text is None or not str(text).strip():

@@ -22,3 +22,9 @@ class RunConfig:
     # Optional visibility/culling configuration for this run.
     # If None, the map falls back to bundle run.json "visibility" (if present), else defaults.
     visibility: dict | None = None
+    # Multiplayer: connect to authoritative server host (client mode).
+    net_host: str | None = None
+    # Multiplayer TCP bootstrap port (UDP gameplay uses tcp_port + 1 by default).
+    net_port: int = 7777
+    # Multiplayer display/player name.
+    net_name: str = "player"
