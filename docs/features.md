@@ -40,6 +40,16 @@
   - saved demos are stored in-repo under `apps/ivan/replays/`
   - replay browser available from `Esc -> Replays`
   - playback re-simulates recorded per-tick input (no position samples) at fixed `60 Hz`
+- Ivan: multiplayer foundation (authoritative server + connected clients)
+  - dedicated server mode with TCP bootstrap + UDP gameplay packets
+  - normal client sessions are offline by default; ESC menu `Open To Network` starts/stops embedded host mode for LAN joinability while keeping the local player in-session
+  - if the local host port is already in use, host-toggle falls back to connecting an existing local server instead of crashing
+  - ESC menu `Multiplayer` tab supports runtime server join via host/port input plus Connect/Disconnect controls
+  - clients can connect, send input, and receive replicated player snapshots
+  - client-side prediction + server reconciliation for local player movement
+  - remote players are rendered with simple avatar models and snapshot-buffer interpolation
+  - server-side lag compensation for grapple hit checks (rewind by client tick hint)
+  - health system with grapple damage (`20` per hit) and corner HP HUD
 - Ivan: autojump toggle (hold jump to continue hopping)
 - Ivan: grapple hook traversal (attach/detach on LMB, one-shot attach boost, rope swing constraint)
 - Ivan: vault is disabled by default (runtime toggle in debug menu)

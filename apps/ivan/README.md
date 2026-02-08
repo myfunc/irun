@@ -80,12 +80,28 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 - `LMB`: grapple hook primary
   - click (not attached): fire grapple to aimed surface
   - click (attached): detach
+- In multiplayer, grapple hit on another player deals `20` damage.
 - `V` (default): toggle noclip (rebindable from `Esc -> Key Bindings`)
 
 Menu/input behavior:
 - When `Esc` menu or debug menu is open, gameplay input (mouse look / movement keys) is ignored.
 - The world simulation continues running (no hard pause), so physics/time still progress.
 - Core movement simulation uses a fixed `60 Hz` tick for deterministic input replay.
+
+Multiplayer launch:
+- Dedicated server:
+```bash
+python -m ivan --server --host 0.0.0.0 --port 7777 --map <bundle-or-map-json>
+```
+- Client connect:
+```bash
+python -m ivan --connect <server-host> --port 7777 --name <player-name>
+```
+- Default multiplayer port is read from env var `DEFAULT_HOST_PORT` (fallback: `7777`).
+- In normal client play (no `--connect`), the game is local/offline by default.
+- `Esc` menu includes `Open To Network` checkbox:
+  - OFF: no local host server is running
+  - ON: starts embedded host server bound to `0.0.0.0` so other clients can join by your machine IP
 
 ## Main Menu
 Booting without `--map` starts in the main menu:
@@ -108,6 +124,7 @@ Notes:
 - The value is horizontal speed, rounded down to an integer.
 - A classic Half-Life/CS-style center crosshair is shown during active gameplay (hidden in pause/debug/menu).
 - Detailed movement status (`speed/z-vel/grounded/wall`) is shown in the bottom-left corner during gameplay and hidden while the debug/admin panel is open.
+- A health bar/chip is shown in the top-left corner (`HP`).
 - Input debug (F2) and the error console (F3) are shown as boxed overlays that avoid overlapping the HUD bars.
 
 ## Demos (Input Replay)

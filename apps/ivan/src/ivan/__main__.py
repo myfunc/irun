@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 
 from ivan.game import run
+from ivan.net import run_server
 
 
 def main(argv: list[str] | None = None) -> None:
+    default_port = int(os.environ.get("DEFAULT_HOST_PORT", "7777"))
     parser = argparse.ArgumentParser(prog="ivan", description="IVAN app runner (IRUN monorepo)")
     parser.add_argument(
         "--smoke",
@@ -39,7 +42,42 @@ def main(argv: list[str] | None = None) -> None:
         default="valve",
         help='Half-Life mod folder to browse (default: "valve"). Examples: valve, cstrike.',
     )
+    parser.add_argument(
+        "--server",
+        action="store_true",
+        help="Run as dedicated multiplayer server.",
+    )
+    parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Server bind host (server mode) or remote host (client mode with --connect).",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=default_port,
+        help="Multiplayer TCP bootstrap port (UDP uses port+1).",
+    )
+    parser.add_argument(
+        "--connect",
+        default=None,
+        help="Connect to multiplayer host (client mode). Example: --connect 127.0.0.1",
+    )
+    parser.add_argument(
+        "--name",
+        default="player",
+        help="Multiplayer player name.",
+    )
     args = parser.parse_args(argv)
+
+    if args.server:
+        run_server(
+            host=args.host,
+            tcp_port=int(args.port),
+            udp_port=int(args.port) + 1,
+            map_json=args.map_json,
+        )
+        return
 
     map_json = args.map_json
     run(
@@ -48,6 +86,9 @@ def main(argv: list[str] | None = None) -> None:
         map_json=map_json,
         hl_root=args.hl_root,
         hl_mod=args.hl_mod,
+        net_host=args.connect,
+        net_port=int(args.port),
+        net_name=args.name,
     )
 
 
