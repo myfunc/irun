@@ -63,6 +63,7 @@ Goal: enable fast "vibe-coding" without stepping on each other, while keeping `m
   3. Keep pushing additional commits to the same branch; the PR updates automatically.
   4. Attempt to merge the PR into `main` (prefer squash) and delete the branch.
   5. If the merge is blocked by conflicts, stop and ask the user how to proceed (see "Conflicts" below).
+  6. After a successful merge, sync the local `main` to the latest `origin/main` (see "Post-Merge Sync" below).
 
 Implementation notes for the agent:
 - Prefer GitHub CLI:
@@ -79,6 +80,14 @@ Conflicts:
   - Merge `main` into the branch (preferred if rebase is undesirable).
   - Abort and let the user resolve conflicts manually.
 - After the user chooses, perform the chosen strategy, push the updated branch, and re-attempt the PR merge.
+
+Post-Merge Sync (Always):
+- After a PR is merged, always attempt to update the local `main` to match `origin/main`.
+- Commands:
+  - `git fetch origin main`
+  - `git switch main`
+  - `git pull --ff-only origin main`
+- If the fast-forward pull is blocked by local uncommitted changes or divergent history, stop and ask the user whether to stash/commit/discard local changes before retrying. Do not discard changes without explicit user instruction.
 
 Non-goal:
 - Do not add repository-side automation that creates PRs or merges automatically (GitHub Actions, bots, etc.). This workflow is intentionally agent-driven.
