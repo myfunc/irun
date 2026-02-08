@@ -78,7 +78,7 @@ class NumericControl:
 
         slider_min, slider_max = ((0.0, 100.0) if normalized_slider else (minimum, maximum))
         slider_value = NumericControl._to_slider_value(
-            value, minimum=minimum, maximum=maximum, normalized=normalized_slider
+            value=float(value), minimum=minimum, maximum=maximum, normalized=normalized_slider
         )
 
         s = DirectSlider(
@@ -102,7 +102,7 @@ class NumericControl:
         def _display(v: float) -> str:
             if normalized_entry:
                 sv = NumericControl._to_slider_value(
-                    v, minimum=minimum, maximum=maximum, normalized=True
+                    value=float(v), minimum=minimum, maximum=maximum, normalized=True
                 )
                 return f"{sv:.1f}"
             return _fmt(v)
@@ -115,7 +115,10 @@ class NumericControl:
 
         def _from_slider() -> None:
             v = NumericControl._from_slider_value(
-                float(s["value"]), minimum=minimum, maximum=maximum, normalized=normalized_slider
+                slider_value=float(s["value"]),
+                minimum=minimum,
+                maximum=maximum,
+                normalized=normalized_slider,
             )
             v = _clamp(v)
             entry.entry.enterText(_display(v))
@@ -155,7 +158,7 @@ class NumericControl:
             except Exception:
                 # Restore current value from slider.
                 cur = NumericControl._from_slider_value(
-                    float(out.slider["value"]),
+                    slider_value=float(out.slider["value"]),
                     minimum=out.minimum,
                     maximum=out.maximum,
                     normalized=out.normalized_slider,
@@ -164,7 +167,7 @@ class NumericControl:
                 return
             if out.normalized_entry:
                 vv = NumericControl._from_slider_value(
-                    vv, minimum=out.minimum, maximum=out.maximum, normalized=True
+                    slider_value=vv, minimum=out.minimum, maximum=out.maximum, normalized=True
                 )
             vv = _clamp(vv)
             out.set_value(vv, emit=True)
@@ -207,4 +210,3 @@ class NumericControl:
             self.root.destroy()
         except Exception:
             pass
-
