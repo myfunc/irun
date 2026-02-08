@@ -40,6 +40,8 @@ not game-specific screens.
   - keyboard navigation (Tab/Shift+Tab, arrows)
 - Input capture rules
   - when UI is open, gameplay input is blocked (game continues running)
+ - Micro-interactions
+   - hover/pressed feedback for interactive widgets (started: Button + Checkbox)
 
 ### M3: Controls
 - Checkbox (single toggle widget) (implemented)

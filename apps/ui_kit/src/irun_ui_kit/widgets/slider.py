@@ -40,11 +40,13 @@ class Slider:
         thumb_color: Color | None = None,
         text_fg: Color | None = None,
     ) -> "Slider":
+        # Height tuning (intentionally compact).
+        half_h = 0.05
         root = DirectFrame(
             parent=parent,
             frameColor=(0, 0, 0, 0),
             relief=DGG.FLAT,
-            frameSize=(-w / 2, w / 2, -0.08, 0.08),
+            frameSize=(-w / 2, w / 2, -half_h, half_h),
             pos=(x, 0, y),
         )
 
@@ -54,12 +56,12 @@ class Slider:
 
         lbl = DirectLabel(
             parent=root,
-            text=label,
+            text=str(label).upper(),
             text_scale=theme.small_scale,
             text_align=TextNode.ALeft,
             text_fg=fg,
             frameColor=(0, 0, 0, 0),
-            pos=(-w / 2, 0, 0.04),
+            pos=(-w / 2, 0, 0.025),
         )
         val = DirectLabel(
             parent=root,
@@ -68,7 +70,7 @@ class Slider:
             text_align=TextNode.ARight,
             text_fg=fg,
             frameColor=(0, 0, 0, 0),
-            pos=(w / 2, 0, 0.04),
+            pos=(w / 2, 0, 0.025),
         )
 
         def _fmt(v: float) -> str:
@@ -90,9 +92,11 @@ class Slider:
             pageSize=(max_value - min_value) / 20.0 if max_value != min_value else 0.01,
             thumb_relief=DGG.FLAT,
             thumb_frameColor=thumb,
+            thumb_frameSize=(-0.028, 0.028, -0.040, 0.040),
             frameColor=track,
+            frameSize=(-1.0, 1.0, -0.040, 0.040),
             scale=(w / 2, 1, 1),
-            pos=(0, 0, -0.02),
+            pos=(0, 0, -0.028),
         )
         # Some Panda3D builds call DirectSlider's command with no args.
         # Read the current slider value directly for compatibility.
