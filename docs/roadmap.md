@@ -16,5 +16,6 @@
 - Hazards + collectibles
 - Simple UI (timer/collect count)
 - Handcrafted, player-generated map workflow and validation tools
+- Packed map bundles for distribution and git-friendly imports (`.irunmap`)
 - Map format v3: entities + triggers + lights + baked chunking (data first; streaming later)
 - Time trial: local timing + local personal best storage (replays/portal later)

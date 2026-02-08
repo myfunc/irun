@@ -22,6 +22,7 @@ from panda3d.core import (
 
 from ivan.app_config import RunConfig
 from ivan.common.error_log import ErrorLog
+from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, resolve_bundle_handle
 from ivan.maps.run_metadata import RunMetadata, load_run_metadata
 from ivan.modes.base import ModeContext
 from ivan.modes.loader import load_mode
@@ -29,7 +30,7 @@ from ivan.physics.collision_world import CollisionWorld
 from ivan.physics.player_controller import PlayerController
 from ivan.physics.tuning import PhysicsTuning
 from ivan.paths import app_root as ivan_app_root
-from ivan.state import IvanState, load_state, resolve_map_json, update_state
+from ivan.state import IvanState, load_state, update_state
 from ivan.ui.debug_ui import DebugUI
 from ivan.ui.error_console_ui import ErrorConsoleUI
 from ivan.ui.input_debug_ui import InputDebugUI
@@ -565,7 +566,8 @@ class RunnerDemo(ShowBase):
         update_state(last_game_root=req.game_root, last_mod=req.mod)
 
         app_root = ivan_app_root()
-        out_dir = app_root / "assets" / "imported" / "halflife" / req.mod / req.map_label
+        # Default to a packed bundle so imported maps don't create huge file trees in git.
+        out_ref = app_root / "assets" / "imported" / "halflife" / req.mod / f"{req.map_label}{PACKED_BUNDLE_EXT}"
         game_root = Path(req.game_root) / req.mod
 
         script = app_root / "tools" / "importers" / "goldsrc" / "import_goldsrc_bsp.py"
@@ -579,7 +581,7 @@ class RunnerDemo(ShowBase):
             "--game-root",
             str(game_root),
             "--out",
-            str(out_dir),
+            str(out_ref),
             "--map-id",
             req.map_label,
             "--scale",
@@ -594,7 +596,7 @@ class RunnerDemo(ShowBase):
 
         def worker() -> None:
             try:
-                out_dir.mkdir(parents=True, exist_ok=True)
+                out_ref.parent.mkdir(parents=True, exist_ok=True)
                 proc = subprocess.run(cmd, capture_output=True, text=True)
                 if proc.returncode != 0:
                     err = (proc.stderr or proc.stdout or "").strip()
@@ -606,7 +608,10 @@ class RunnerDemo(ShowBase):
                     else:
                         self._import_error = f"Importer failed with code {proc.returncode}"
                     return
-                self._pending_map_json = str(out_dir / "map.json")
+                # Importer writes either:
+                # - <out-dir>/map.json  (directory bundle)
+                # - <out>.irunmap       (packed bundle)
+                self._pending_map_json = str(out_ref)
             except Exception as e:
                 self._import_error = str(e)
             finally:
@@ -647,11 +652,13 @@ class RunnerDemo(ShowBase):
             self.world_root.removeNode()
             self.world_root = self.render.attachNewNode("world-root")
 
-            resolved = resolve_map_json(map_json) if map_json else None
-            bundle_root = resolved.parent if resolved is not None else None
-            run_meta: RunMetadata = load_run_metadata(bundle_root=bundle_root) if bundle_root is not None else RunMetadata()
+            handle = resolve_bundle_handle(map_json) if map_json else None
+            bundle_ref = handle.bundle_ref if handle is not None else None
+            run_meta: RunMetadata = (
+                load_run_metadata(bundle_ref=bundle_ref) if bundle_ref is not None else RunMetadata()
+            )
 
-            cfg_map_json = str(resolved) if resolved is not None else map_json
+            cfg_map_json = str(handle.map_json) if handle is not None else map_json
             lighting_cfg = lighting if isinstance(lighting, dict) else run_meta.lighting
             cfg = RunConfig(
                 smoke=self.cfg.smoke,
@@ -686,7 +693,7 @@ class RunnerDemo(ShowBase):
 
             # Install game mode after the world/player exist.
             mode = load_mode(mode=run_meta.mode, config=run_meta.mode_config)
-            self._setup_game_mode(mode=mode, bundle_root=bundle_root)
+            self._setup_game_mode(mode=mode, bundle_root=bundle_ref)
         except Exception as e:
             # Avoid leaving the app in a broken half-loaded state where input feels "dead".
             self._handle_unhandled_error(context="start_game", exc=e)

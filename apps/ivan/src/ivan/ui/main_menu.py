@@ -13,6 +13,7 @@ from ivan.maps.catalog import (
 )
 from ivan.maps.steam import detect_steam_halflife_game_root
 from ivan.maps.run_metadata import set_run_metadata_lighting
+from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, resolve_bundle_handle
 from ivan.paths import app_root as ivan_app_root
 from ivan.state import IvanState, load_state, resolve_map_json, update_state
 from ivan.ui.native_dialogs import pick_directory
@@ -157,7 +158,9 @@ class MainMenuController:
             items.append(RetroMenuItem(f"Continue: {label}", enabled=self._continue_enabled))
 
         # Quick start: Bounce if present.
-        bounce = (self._app_root / "assets" / "imported" / "halflife" / "valve" / "bounce" / "map.json")
+        bounce_dir = self._app_root / "assets" / "imported" / "halflife" / "valve" / "bounce" / "map.json"
+        bounce_packed = self._app_root / "assets" / "imported" / "halflife" / "valve" / f"bounce{PACKED_BUNDLE_EXT}"
+        bounce = bounce_dir if bounce_dir.exists() else bounce_packed
         items.append(RetroMenuItem("Quick Start: Bounce", enabled=bounce.exists()))
 
         items.append(RetroMenuItem("Play Imported/Generated Map Bundle"))
@@ -210,7 +213,9 @@ class MainMenuController:
             idx -= 1
 
         if idx == 0:
-            bounce = self._app_root / "assets" / "imported" / "halflife" / "valve" / "bounce" / "map.json"
+            bounce_dir = self._app_root / "assets" / "imported" / "halflife" / "valve" / "bounce" / "map.json"
+            bounce_packed = self._app_root / "assets" / "imported" / "halflife" / "valve" / f"bounce{PACKED_BUNDLE_EXT}"
+            bounce = bounce_dir if bounce_dir.exists() else bounce_packed
             if not bounce.exists():
                 self._ui.set_status("Bounce bundle not found under assets/imported/halflife/valve/bounce.")
                 return
@@ -310,8 +315,8 @@ class MainMenuController:
         if self._selected_bundle is None:
             return
         map_json = self._selected_bundle.map_json
-        resolved = resolve_map_json(map_json)
-        bundle_root = resolved.parent if resolved is not None else None
+        handle = resolve_bundle_handle(map_json)
+        bundle_ref = handle.bundle_ref if handle is not None else None
 
         if idx == 0:
             self._on_start_map_json(map_json, None)
@@ -326,12 +331,12 @@ class MainMenuController:
             self._on_start_map_json(map_json, {"preset": "static"})
             return
         if idx in (4, 5, 6):
-            if bundle_root is None:
+            if bundle_ref is None:
                 self._ui.set_status("Cannot save: bundle root not resolved for this map.")
                 return
             preset = "original" if idx == 4 else ("server_defaults" if idx == 5 else "static")
             try:
-                set_run_metadata_lighting(bundle_root=bundle_root, lighting={"preset": preset})
+                set_run_metadata_lighting(bundle_ref=bundle_ref, lighting={"preset": preset})
                 self._ui.set_status(f"Saved run.json lighting preset: {preset}")
             except Exception as e:
                 self._ui.set_status(f"Save failed: {e}")
@@ -462,9 +467,21 @@ class MainMenuController:
 
             # Allow deleting only:
             # - assets/imported/**/map.json -> delete the containing directory
+            # - assets/imported/**/*.irunmap -> delete the file (and sidecar run json)
             # - assets/generated/*_map.json -> delete the file
             # This avoids deleting hand-authored bundles under assets/maps/.
             if rel.parts and rel.parts[0] == "imported":
+                if mj.suffix.lower() == PACKED_BUNDLE_EXT:
+                    # Packed bundle: remove the archive and its metadata sidecar if present.
+                    sidecar = mj.with_name(mj.name + ".run.json")
+                    try:
+                        if sidecar.exists():
+                            sidecar.unlink()
+                    except Exception:
+                        pass
+                    mj.unlink()
+                    return (True, f"Deleted imported bundle: {bundle.label}")
+                # Directory bundle: delete the containing folder.
                 root = mj.parent
                 shutil.rmtree(root)
                 return (True, f"Deleted imported bundle: {bundle.label}")

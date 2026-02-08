@@ -8,6 +8,7 @@ from panda3d.core import LVector3f
 
 from ivan.course.time_trial import CourseSpec, TimeTrial, make_marker_aabb
 from ivan.course.volumes import aabb_from_json, aabb_to_json
+from ivan.maps.bundle_io import run_json_path_for_bundle_ref
 from ivan.modes.base import GameMode, ModeBindings, ModeContext, SpawnSpec
 from ivan.state import (
     get_time_trial_course_override,
@@ -195,7 +196,7 @@ class TimeTrialMode(GameMode):
             return
 
         root = Path(self._ctx.bundle_root)
-        p = root / "run.json"
+        p = run_json_path_for_bundle_ref(root)
         payload: dict = {}
         if p.exists():
             try:
@@ -220,7 +221,7 @@ class TimeTrialMode(GameMode):
         if self._ctx is None or self._ctx.bundle_root is None:
             return
         root = Path(self._ctx.bundle_root)
-        p = root / "run.json"
+        p = run_json_path_for_bundle_ref(root)
         payload: dict = {}
         if p.exists():
             try:

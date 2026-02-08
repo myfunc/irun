@@ -32,7 +32,10 @@ python -m ivan
 
 Default boot:
 - `python -m ivan` now boots into the **main menu**.
-- The menu includes `Quick Start: Bounce` if `assets/imported/halflife/valve/bounce/map.json` exists.
+- The menu includes `Quick Start: Bounce` if either:
+  - `assets/imported/halflife/valve/bounce/map.json` (directory bundle), or
+  - `assets/imported/halflife/valve/bounce.irunmap` (packed bundle)
+  exists.
 - You can still run a bundle directly via `--map`.
 
 Smoke run:
@@ -68,8 +71,8 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 - `F5`: set Start marker at current position (time trial mode dev helper)
 - `F6`: set Finish marker at current position (time trial mode dev helper)
 - `F7`: clear local course markers (time trial mode dev helper)
-- `F8`: export course to `<bundle>/run.json` (time trial mode dev helper)
-- `F9`: export spawn to `<bundle>/run.json` (time trial mode dev helper)
+- `F8`: export course to run.json (time trial mode dev helper)
+- `F9`: export spawn to run.json (time trial mode dev helper)
 - `F2`: toggle input debug overlay (useful when keyboard/mouse don't seem to register)
 - `F3`: toggle error console overlay (shows recent errors without crashing)
 - `LMB`: mock grapple impulse (only if grapple toggle enabled)
@@ -152,7 +155,7 @@ The map is generated in code and includes:
 - A simple reset/hard-fail condition if you fall off the course
 
 ## External Map Assets
-IVAN can load an external map bundle via `--map <path-to-map.json>`.
+IVAN can load an external map bundle via `--map <path-to-map.json>` or `--map <path-to-bundle.irunmap>`.
 
 You can also use a short alias under `apps/ivan/assets/`, for example:
 ```bash
@@ -160,8 +163,12 @@ python -m ivan --map imported/halflife/valve/bounce
 ```
 
 ### Per-Bundle Run Metadata (Game Modes)
-Bundles can optionally include `<bundle>/run.json` next to `map.json` to select a game mode and provide extra runtime data
-that does not belong in the geometry manifest.
+Bundles can optionally include run metadata to select a game mode and provide extra runtime data that does not belong in the
+geometry manifest.
+
+Storage:
+- Directory bundle: `<bundle>/run.json` next to `map.json`
+- Packed bundle (`.irunmap`): `<bundle>.run.json` sidecar next to the archive
 
 Example:
 ```json
@@ -196,15 +203,21 @@ Run with the bundle:
 python -m ivan --map <bundle-dir>/map.json
 ```
 
+Pack a directory bundle into a single file:
+```bash
+python3 tools/pack_irunmap.py --input <bundle-dir> --output <bundle>.irunmap
+python -m ivan --map <bundle>.irunmap
+```
+
 ### GoldSrc/Xash3D BSP -> Bundle (WAD + resources)
 Example (Counter-Strike 1.6 / Xash3D style mod folder):
 ```bash
 python3 tools/importers/goldsrc/import_goldsrc_bsp.py \
   --bsp <path-to-goldsrc.bsp> \
   --game-root <path-to-mod-root> \
-  --out <bundle-dir> \
+  --out <bundle>.irunmap \
   --scale 0.03
-python -m ivan --map <bundle-dir>/map.json
+python -m ivan --map <bundle>.irunmap
 ```
 
 Notes:
