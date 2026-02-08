@@ -222,7 +222,7 @@ def test_crouch_speed_multiplier_reduces_ground_acceleration() -> None:
 
 
 def test_wall_detection_probe_refreshes_without_movement() -> None:
-    tuning = PhysicsTuning(enable_coyote=False)
+    tuning = PhysicsTuning()
     ctrl = PlayerController(
         tuning=tuning,
         spawn_point=LVector3f(0, 0, 3),
@@ -265,27 +265,15 @@ def test_walljump_not_allowed_while_grounded_even_with_wall_contact() -> None:
     assert not ctrl.has_wall_for_jump()
 
 
-def test_walljump_not_available_during_coyote_window() -> None:
-    ctrl = _make_controller(PhysicsTuning(enable_coyote=True, coyote_time=0.12, walljump_enabled=True))
-    ctrl.grounded = False
-    ctrl._ground_timer = 0.05
-    ctrl._wall_contact_timer = 0.0
-    ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
-    assert not ctrl.has_wall_for_jump()
-
-
-def test_corner_jump_uses_ground_or_coyote_jump_not_walljump() -> None:
+def test_corner_jump_uses_ground_jump_not_walljump() -> None:
     ctrl = _make_controller(
         PhysicsTuning(
             walljump_enabled=True,
-            enable_coyote=True,
-            coyote_time=0.12,
             enable_jump_buffer=False,
             wall_jump_boost=7.0,
         )
     )
-    ctrl.grounded = False
-    ctrl._ground_timer = 0.05  # coyote jump still available
+    ctrl.grounded = True
     ctrl._wall_contact_timer = 0.0
     ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
     ctrl._wall_jump_lock_timer = 999.0
@@ -293,18 +281,16 @@ def test_corner_jump_uses_ground_or_coyote_jump_not_walljump() -> None:
 
     ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
 
-    # Ground/coyote jump path should win; walljump should not inject horizontal boost.
+    # Ground jump path should win; walljump should not inject horizontal boost.
     assert abs(ctrl.vel.x) < 1e-5
     assert abs(ctrl.vel.y) < 1e-5
     assert ctrl.vel.z > 0.0
 
 
-def test_ground_jump_consumes_coyote_window_immediately() -> None:
+def test_ground_jump_does_not_reapply_in_air_on_next_frame() -> None:
     ctrl = _make_controller(
         PhysicsTuning(
             autojump_enabled=True,
-            enable_coyote=True,
-            coyote_time=0.12,
             walljump_enabled=True,
             wall_jump_boost=7.0,
             enable_jump_buffer=False,
@@ -320,8 +306,7 @@ def test_ground_jump_consumes_coyote_window_immediately() -> None:
     first_jump_vz = ctrl.vel.z
     assert first_jump_vz > 0.0
 
-    # Frame 2: coyote window should already be consumed by the first jump.
-    assert not ctrl.can_ground_jump()
+    # Frame 2: no second jump should be applied while airborne.
     ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
 
     # No second jump re-application should happen.
@@ -344,15 +329,6 @@ def test_can_walljump_multiple_times_in_air_on_different_walls() -> None:
     assert ctrl.has_wall_for_jump()
 
 
-def test_coyote_time_allows_jump_briefly_after_leaving_ground() -> None:
-    ctrl = _make_controller(PhysicsTuning(enable_coyote=True, coyote_time=0.12))
-    ctrl.grounded = False
-    ctrl._ground_timer = 0.05
-    ctrl.queue_jump()
-    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
-    assert ctrl.vel.z > 0.0
-
-
 def test_surf_strafe_accelerates_on_slanted_surface() -> None:
     base = _make_controller(PhysicsTuning(surf_enabled=True, surf_accel=24.0))
     strafe = _make_controller(PhysicsTuning(surf_enabled=True, surf_accel=24.0))
@@ -365,3 +341,53 @@ def test_surf_strafe_accelerates_on_slanted_surface() -> None:
     base.step(dt=0.016, wish_dir=LVector3f(0.0, 1.0, 0.0), yaw_deg=0.0, crouching=False)
     strafe.step(dt=0.016, wish_dir=LVector3f(1.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
     assert strafe.vel.x > base.vel.x
+
+
+def test_grapple_attach_and_detach_state() -> None:
+    ctrl = _make_controller(PhysicsTuning(grapple_enabled=True))
+    ctrl.attach_grapple(anchor=LVector3f(5.0, 0.0, 2.0))
+    assert ctrl.is_grapple_attached()
+    ctrl.detach_grapple()
+    assert not ctrl.is_grapple_attached()
+
+
+def test_grapple_taut_rope_removes_outward_velocity() -> None:
+    ctrl = _make_controller(PhysicsTuning(grapple_enabled=True))
+    ctrl.pos = LVector3f(10.0, 0.0, 0.0)
+    ctrl.vel = LVector3f(5.0, 0.0, 0.0)  # moving away from anchor
+    ctrl.attach_grapple(anchor=LVector3f(0.0, 0.0, 0.0))
+    ctrl._grapple_length = 8.0
+
+    ctrl._apply_grapple_constraint(dt=0.016)
+    assert ctrl.vel.x <= 0.0
+
+
+def test_grapple_attach_boost_applies_velocity_toward_anchor() -> None:
+    ctrl = _make_controller(PhysicsTuning(grapple_enabled=True, grapple_attach_boost=9.0))
+    ctrl.pos = LVector3f(0.0, 0.0, 0.0)
+    ctrl.vel = LVector3f(0.0, 0.0, 0.0)
+    ctrl.attach_grapple(anchor=LVector3f(10.0, 0.0, 0.0))
+    assert ctrl.vel.x > 8.5
+
+
+def test_grapple_attach_auto_shortens_rope_for_configured_window() -> None:
+    ctrl = _make_controller(
+        PhysicsTuning(
+            grapple_enabled=True,
+            grapple_attach_boost=0.0,
+            grapple_attach_shorten_speed=12.0,
+            grapple_attach_shorten_time=0.20,
+            grapple_min_length=1.0,
+        )
+    )
+    ctrl.pos = LVector3f(0.0, 0.0, 0.0)
+    ctrl.attach_grapple(anchor=LVector3f(20.0, 0.0, 0.0))
+    start_len = ctrl._grapple_length
+
+    ctrl._apply_grapple_constraint(dt=0.10)
+    mid_len = ctrl._grapple_length
+    ctrl._apply_grapple_constraint(dt=0.10)
+    end_len = ctrl._grapple_length
+
+    assert mid_len < start_len
+    assert end_len < mid_len

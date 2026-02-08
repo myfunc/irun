@@ -81,3 +81,6 @@ class CollisionWorld:
             BitMask32.allOn(),
             0.0,
         )
+
+    def ray_closest(self, from_pos: LVector3f, to_pos: LVector3f):
+        return self._bworld.rayTestClosest(from_pos, to_pos, BitMask32.allOn())

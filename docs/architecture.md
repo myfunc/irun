@@ -46,7 +46,8 @@ The UI kit is designed to be iterated on outside the main runtime UI, then wired
   - `Esc` opens gameplay menu and unlocks cursor.
   - `` ` `` opens debug/admin tuning menu and unlocks cursor.
   - While either menu is open, gameplay input is blocked but simulation continues.
-  - Gameplay movement step supports optional noclip mode, optional autojump queueing, and surf behavior on configured slanted surfaces.
+  - Gameplay movement step supports optional noclip mode, optional autojump queueing, surf behavior on configured slanted surfaces, and grapple-rope constraint movement.
+  - Grapple targeting uses collision-world ray queries (`ray_closest`) from camera center.
 
 ## Rendering Notes
 - Baker shares Ivan's scene builder (`ivan.world.scene.WorldScene`) to keep map preview WYSIWYG.
