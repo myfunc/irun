@@ -49,9 +49,13 @@
   - host-opened server starts with host client tuning (no config reset on open-to-network)
   - dedicated server defaults to `surf_bhop_c2` tuning (same movement baseline as client default profile)
   - server tuning is authoritative: only config owner (host client) can change it; other clients receive live updates and apply them in-session
-  - multiplayer respawn (`R`) is server-authoritative to prevent client/server state divergence
+  - profile switches from the debug menu now follow multiplayer ownership rules:
+    - host/config owner profile switches are sent to server as full tuning snapshots and wait for authoritative `cfg_v` acknowledgement
+    - non-owner clients are blocked from profile switching and are reset to authoritative server tuning
+  - multiplayer respawn (`R`) sends authoritative respawn request and also applies an immediate local predictive respawn; server `rs` snapshots still finalize authoritative state
   - player snapshots include per-player respawn sequence so clients force immediate authoritative reposition on respawn
   - local player netcode uses sequence-history reconciliation (rollback + replay) for smoother online movement
+  - reconciliation replay now avoids per-step render-snapshot churn and records per-second net perf stats (snapshot cadence, correction magnitude, replay cost) shown in the `F2` input debug overlay
   - local first-person camera uses a short render-shell smoothing path in online mode to avoid sluggish/jerky correction pops
   - remote interpolation delay auto-adjusts to observed snapshot jitter
   - clients can connect, send input, and receive replicated player snapshots
