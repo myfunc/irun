@@ -104,8 +104,12 @@ Notes:
 Panel layout:
 - CS1.6-inspired boxed panel style with grouped collapsible sections (spoilers).
 - Scrollable settings canvas for large parameter sets.
+- Mouse wheel scroll is supported for the settings canvas and profile dropdown lists.
 - Hovering a setting name/control shows a tooltip with a short explanation.
 - Numeric sliders are normalized (`0..100`) while still mapping to each field's real min/max range.
+- Top-right profile manager includes default presets (`surf_bhop`, `bhop`, `surf`) and a `save` action.
+  - Saving a modified default profile creates a short `*_copy` custom profile.
+  - Saving a custom profile updates that profile in place.
 
 Numeric settings include normalized sliders + entry fields for precise tuning:
 - Gravity, jump height, ground/air speed caps
