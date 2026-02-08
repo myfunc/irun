@@ -267,7 +267,7 @@ class DebugUI:
         )
         self._profile_button = DirectButton(
             parent=self.debug_root,
-            text=("profile: surf_bhop",) * 4,
+            text=("profile: surf_bhop_c2",) * 4,
             text_scale=0.032,
             text_align=TextNode.ALeft,
             text_fg=(0.08, 0.08, 0.08, 1.0),
