@@ -40,6 +40,9 @@ Game apps use **Panda3D** directly to keep iteration fast for movement-focused p
 - Texture sizing: IVAN disables Panda3D's default power-of-two rescaling for textures (`textures-power-2 none`).
   - Reason: imported GoldSrc maps commonly reference non-power-of-two textures; automatic rescaling breaks BSP UV mapping.
 - Imported BSP bundles render with baked lightmaps (Source/GoldSrc) and disable dynamic scene lights for map geometry.
+- Optional visibility culling:
+  - GoldSrc bundles can use BSP PVS (VISIBILITY + leaf face lists) to avoid rendering world geometry behind walls.
+  - The runtime stores a derived cache next to the bundle as `visibility.goldsrc.json` (directory bundle) or next to the extracted cache (packed bundle).
 - Per-map run options can be stored in:
   - directory bundles: `<bundle>/run.json`
   - packed bundles (`.irunmap`): `<bundle>.run.json` (sidecar file next to the archive)
@@ -76,6 +79,10 @@ Mode selection is driven by optional per-bundle metadata:
   - `mode`: mode id (`free_run`, `time_trial`, or `some.module:ClassName`)
   - `config`: mode-specific configuration (JSON object)
   - `spawn`: optional spawn override `{ "position": [x, y, z], "yaw": deg }`
+  - `visibility`: optional visibility/culling config (JSON object)
+    - `enabled`: boolean (default true)
+    - `mode`: `"auto"` or `"goldsrc_pvs"`
+    - `build_cache`: boolean (default true; if false, runtime will not parse `source_bsp` to build the cache)
 
 Built-in modes:
 - `free_run`: default "just run around"
