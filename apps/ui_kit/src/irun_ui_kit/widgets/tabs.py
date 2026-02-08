@@ -23,6 +23,7 @@ class Tabs:
     bar: DirectFrame
     pages_root: DirectFrame
     buttons: list[DirectButton]
+    accents: list[DirectFrame]
     pages: list[NodePath]
     active: int
 
@@ -87,19 +88,29 @@ class Tabs:
             frameSize=(0.0, w, 0.0, page_h),
         )
 
-        ac = active_color or theme.header
-        ic = inactive_color or theme.panel2
-        at = theme.ink
-        it = theme.text
+        ac = active_color or theme.panel2
+        ic = inactive_color or theme.panel
+        # CLI-style: keep text readable, use accent only as a thin underline.
+        at = theme.text
+        it = theme.text_muted
 
         btns: list[DirectButton] = []
+        accents: list[DirectFrame] = []
         pages: list[NodePath] = []
         tab_w = w / float(len(labels))
 
         # Build buttons left-to-right. Position is bottom-left anchored.
         for i, label in enumerate(labels):
             bx = i * tab_w
-            disp = Tabs._fit_label(label, tab_w=tab_w, scale=theme.small_scale, pad=theme.pad * 0.40)
+            label_caps = str(label).upper()
+            disp = Tabs._fit_label(label_caps, tab_w=tab_w, scale=theme.small_scale, pad=theme.pad * 0.40)
+            base_color = ac if i == active else ic
+            frame_colors = (
+                base_color,
+                (base_color[0] * 0.82, base_color[1] * 0.82, base_color[2] * 0.82, base_color[3]),
+                (min(1.0, base_color[0] * 1.06), min(1.0, base_color[1] * 1.06), min(1.0, base_color[2] * 1.06), base_color[3]),
+                (base_color[0] * 0.60, base_color[1] * 0.60, base_color[2] * 0.60, base_color[3]),
+            )
             b = DirectButton(
                 parent=bar,
                 text=(disp, disp, disp, disp),
@@ -108,13 +119,25 @@ class Tabs:
                 # DirectGUI baseline tends to sit low; keep a bit higher to avoid clipping.
                 text_pos=(0.0, -theme.small_scale * 0.10),
                 text_fg=at if i == active else it,
-                frameColor=ac if i == active else ic,
+                frameColor=frame_colors,
                 relief=DGG.FLAT,
                 frameSize=(-tab_w / 2, tab_w / 2, -tab_h / 2, tab_h / 2),
                 pos=(bx + (tab_w / 2), 0, tab_h / 2),
                 command=lambda ii=i: None,
+                pressEffect=0,
             )
             btns.append(b)
+
+            acc = DirectFrame(
+                parent=bar,
+                frameColor=theme.header,
+                relief=DGG.FLAT,
+                frameSize=(0.0, tab_w, 0.0, theme.accent_h),
+                pos=(bx, 0, tab_h - theme.accent_h),
+            )
+            if i != active:
+                acc.hide()
+            accents.append(acc)
 
             page = DirectFrame(
                 parent=pages_root,
@@ -131,6 +154,7 @@ class Tabs:
             bar=bar,
             pages_root=pages_root,
             buttons=btns,
+            accents=accents,
             pages=pages,
             active=active,
         )
@@ -164,8 +188,20 @@ class Tabs:
             else:
                 page.hide()
         for i, b in enumerate(self.buttons):
-            b["frameColor"] = active_color if i == idx else inactive_color
+            base = active_color if i == idx else inactive_color
+            frame_colors = (
+                base,
+                (base[0] * 0.82, base[1] * 0.82, base[2] * 0.82, base[3]),
+                (min(1.0, base[0] * 1.06), min(1.0, base[1] * 1.06), min(1.0, base[2] * 1.06), base[3]),
+                (base[0] * 0.60, base[1] * 0.60, base[2] * 0.60, base[3]),
+            )
+            b["frameColor"] = frame_colors
             b["text_fg"] = active_text_fg if i == idx else inactive_text_fg
+        for i, a in enumerate(self.accents):
+            if i == idx:
+                a.show()
+            else:
+                a.hide()
         self.active = idx
 
     def page(self, idx: int) -> NodePath:

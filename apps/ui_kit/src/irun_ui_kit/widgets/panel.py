@@ -49,7 +49,8 @@ class Panel:
 
         out = DirectFrame(
             parent=parent,
-            frameColor=theme.outline,
+            # Accent as outline (avoid orange fills elsewhere).
+            frameColor=theme.header,
             frameSize=(0.0, w, 0.0, h),
             relief=DGG.FLAT,
             pos=(x, 0, y),
@@ -64,17 +65,17 @@ class Panel:
         if header:
             DirectFrame(
                 parent=inner,
-                frameColor=theme.header,
+                frameColor=theme.panel2,
                 frameSize=(theme.outline_w, w - theme.outline_w, h - theme.outline_w - theme.header_h, h - theme.outline_w),
                 relief=DGG.FLAT,
             )
             if title:
                 DirectLabel(
                     parent=inner,
-                    text=title,
+                    text=str(title).upper(),
                     text_scale=theme.title_scale,
                     text_align=TextNode.ALeft,
-                    text_fg=theme.ink,
+                    text_fg=theme.text,
                     frameColor=(0, 0, 0, 0),
                     pos=(theme.outline_w + theme.pad, 0, h - theme.outline_w - (theme.header_h * 0.70)),
                 )

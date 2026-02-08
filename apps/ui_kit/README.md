@@ -28,6 +28,8 @@ Implemented as small wrappers around DirectGUI.
   - `with_overrides(**kwargs)` for in-code customization
   - `from_json(path)` for project-side theme overrides
   - retro defaults (burnt orange accent, heavy shadows)
+  - renderer picks a low-res readable mono font by default (platform-dependent)
+  - `Theme.with_dpi(scale)` can be used to scale typography/layout for high-DPI displays
 - `Window` (`irun_ui_kit.widgets.window.Window`)
   - window frame + header
   - draggable by titlebar (implemented via task update while dragging)
@@ -38,14 +40,18 @@ Implemented as small wrappers around DirectGUI.
   - procedural drop shadow (theme-driven)
 - `Button` (`irun_ui_kit.widgets.button.Button`)
   - consistent sizing + baseline text alignment
+  - hover + pressed visual states (frame color)
 - `TextInput` (`irun_ui_kit.widgets.text_input.TextInput`)
   - textbox suited for search fields and quick inputs
+  - basic editing shortcuts (macOS-focused): copy/paste/cut, clear-all
 - `Tabs` (`irun_ui_kit.widgets.tabs.Tabs`)
   - tab bar + pages (hide/show groups of controls)
 - `Checkbox` (`irun_ui_kit.widgets.checkbox.Checkbox`)
-  - minimal procedural toggle (ASCII prefix)
+  - visual checkbox (box + mark) with hover/pressed feedback
 - `Slider` (`irun_ui_kit.widgets.slider.Slider`)
   - basic slider with value readout
+- `CollapsiblePanel` (`irun_ui_kit.widgets.collapsible.CollapsiblePanel`)
+  - panel section with a clickable header to hide/show its content
 
 ## Layout Helpers
 - `GridSpec` (`irun_ui_kit.layout.GridSpec`)
@@ -86,7 +92,7 @@ apps/ivan/.venv/bin/python -m irun_ui_kit.demo --smoke-screenshot /tmp/irun-ui-k
 ## Roadmap (Near Term)
 Next features to add, in order:
 1. Layout primitives
-   - `Stack` (vertical/horizontal flow)
+  - `Stack` (vertical/horizontal flow)
    - `Grid` presets (at most 2 initially): compact and roomy
 2. Interaction + UX rules
    - consistent focus state and keyboard navigation (Up/Down/Tab/Enter/Esc)
