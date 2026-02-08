@@ -142,6 +142,12 @@ class ListMenu:
         except Exception:
             pass
 
+    def show(self) -> None:
+        self._root.show()
+
+    def hide(self) -> None:
+        self._root.hide()
+
     def set_title(self, title: str) -> None:
         try:
             if getattr(self._panel, "title", None) is not None:
