@@ -23,6 +23,7 @@ See: `docs/ui-kit.md`.
 - `apps/baker/src/baker/render/tonemapping.py`: GLSL 120 post-process view transform (gamma-only/Reinhard/ACES approx)
 - `apps/ui_kit/src/irun_ui_kit/`: Internal procedural UI kit (Panda3D DirectGUI) used by Ivan UI screens
 - `apps/ivan/src/ivan/__main__.py`: Ivan entrypoint (`python -m ivan`)
+- `apps/ivan/src/ivan/__init__.py`: package bootstrap (includes monorepo fallback path injection for `apps/ui_kit/src` when `irun-ui-kit` is not installed in the active venv)
 - `apps/ivan/src/ivan/game.py`: App wiring (Panda3D ShowBase), input, camera, and frame update loop
 - `apps/ivan/src/ivan/maps/catalog.py`: runtime catalog helpers for shipped bundles and GoldSrc-like map discovery
 - `apps/ivan/src/ivan/state.py`: small persistent user state (last launched map, last game dir/mod, tuning profiles + active profile snapshot)
@@ -68,6 +69,7 @@ See: `docs/ui-kit.md`.
 
 ## Dependencies
 - `panda3d`: 3D engine and window/event loop
+- `irun-ui-kit`: internal reusable DirectGUI component library used by Ivan menus/debug UI
 - `panda3d.bullet`: Bullet integration used by IVAN for robust character collision queries (convex sweeps, step+slide).
 - `bsp_tool`: BSP parsing for IVAN map import pipelines (Source + GoldSrc branches)
 - `Pillow`: image IO used by map import tools (VTF/WAD -> PNG)
