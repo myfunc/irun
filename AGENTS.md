@@ -50,7 +50,7 @@ Naming convention:
   - Entrypoint: `python -m ivan` (documented in `apps/ivan/README.md`).
 
 ## Git Workflow (PR-Only, No Approvals)
-Goal: enable fast "wipe-coding" without stepping on each other, while keeping `main` always mergeable.
+Goal: enable fast "vibe-coding" without stepping on each other, while keeping `main` always mergeable.
 
 - `main` is protected: no direct pushes, no force-pushes. Changes land in `main` only via Pull Requests.
 - Work happens in short-lived branches (one change / topic).
