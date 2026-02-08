@@ -21,9 +21,10 @@ Runtime loader:
 Coordinate conventions:
 - Positions are converted as:
   - `x = x * scale`
-  - `y = -y * scale` (flip to keep a usable handedness in Panda)
+  - `y = y * scale`
   - `z = z * scale`
-- Normals flip `y` the same way (no scaling).
+- Triangles are emitted with a winding order that matches Panda3D's default backface culling.
+- Normals are not axis-flipped (no scaling).
 
 ## Build Workflow
 
@@ -109,8 +110,8 @@ python -m ivan --hl-root "<Half-Life install root>" --hl-mod valve
 
 `format_version=2` uses a compact per-triangle dict:
 - `m`: material name (e.g. `cs_dust/-0cssandwall`)
-- `p`: 9 floats (triangle positions; already scaled and Y-flipped to Panda convention)
-- `n`: 9 floats (vertex normals; Y-flipped)
+- `p`: 9 floats (triangle positions; already scaled to runtime units)
+- `n`: 9 floats (vertex normals)
 - `uv`: 6 floats (base texture UV per vertex)
 - `lm`: 6 floats (lightmap UV per vertex; currently unused by runtime)
 - `c`: 12 floats (vertex color RGBA in 0..1, used as baked lighting tint)
