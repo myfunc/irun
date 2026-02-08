@@ -46,7 +46,6 @@ class DebugUI:
         ("vault_min_ledge_height", 0.05, 0.8),
         ("vault_max_ledge_height", 0.4, 2.5),
         ("vault_cooldown", 0.0, 1.0),
-        ("coyote_time", 0.0, 0.35),
         ("jump_buffer_time", 0.0, 0.35),
         ("noclip_speed", 1.0, 35.0),
         ("max_ground_slope_deg", 20.0, 70.0),
@@ -59,7 +58,6 @@ class DebugUI:
         ("course_marker_half_extent_z", 0.25, 20.0),
     ]
     TOGGLE_CONTROLS: list[str] = [
-        "enable_coyote",
         "enable_jump_buffer",
         "autojump_enabled",
         "noclip_enabled",
@@ -103,7 +101,6 @@ class DebugUI:
             "Jump / Vault",
             [
                 "jump_height",
-                "coyote_time",
                 "jump_buffer_time",
                 "vault_jump_multiplier",
                 "vault_forward_boost",
@@ -111,7 +108,7 @@ class DebugUI:
                 "vault_max_ledge_height",
                 "vault_cooldown",
             ],
-            ["enable_coyote", "enable_jump_buffer", "autojump_enabled", "vault_enabled"],
+            ["enable_jump_buffer", "autojump_enabled", "vault_enabled"],
         ),
         (
             "Collision / Hull",
@@ -131,11 +128,20 @@ class DebugUI:
         ),
     ]
 
+    FIELD_LABELS: dict[str, str] = {
+        "max_ground_speed": "ground accel target speed",
+        "max_air_speed": "air accel target speed",
+        "jump_accel": "air accel strength",
+        "air_counter_strafe_brake": "air reverse brake",
+        "surf_accel": "surf accel strength",
+        "surf_gravity_scale": "surf gravity scale",
+    }
+
     FIELD_HELP: dict[str, str] = {
         "gravity": "Lower: floatier movement and longer airtime. Higher: faster fall and snappier landings.",
         "jump_height": "Lower: shorter hop height. Higher: higher jump apex and longer time before landing.",
-        "max_ground_speed": "Lower: slower top run speed on ground. Higher: faster top run speed on ground.",
-        "max_air_speed": "Lower: lower speed cap while airborne. Higher: allows faster airborne travel.",
+        "max_ground_speed": "Lower: lower ground acceleration target speed. Higher: higher target speed (not a strict hard cap).",
+        "max_air_speed": "Lower: lower air acceleration target speed. Higher: higher target speed (momentum can still exceed it).",
         "ground_accel": "Lower: slower speed build-up on ground. Higher: faster acceleration to top ground speed.",
         "jump_accel": "Lower: weaker bunnyhop/strafe acceleration in air. Higher: stronger airborne speed gain.",
         "friction": "Lower: keep momentum longer on ground. Higher: lose ground speed faster when input stops.",
@@ -156,7 +162,6 @@ class DebugUI:
         "vault_min_ledge_height": "Lower: vault can trigger on smaller ledges. Higher: requires a taller ledge.",
         "vault_max_ledge_height": "Lower: only low-to-mid ledges are vaultable. Higher: allows taller ledges.",
         "vault_cooldown": "Lower: vault can retrigger sooner. Higher: longer delay between vaults.",
-        "coyote_time": "Lower: less post-edge jump forgiveness. Higher: more time to jump after leaving ground.",
         "jump_buffer_time": "Lower: tighter jump timing before landing. Higher: more forgiving early jump presses.",
         "noclip_speed": "Lower: slower free-fly movement in noclip mode. Higher: faster noclip traversal speed.",
         "max_ground_slope_deg": "Lower: fewer slopes count as walkable. Higher: steeper slopes remain walkable.",
@@ -167,9 +172,8 @@ class DebugUI:
         "player_eye_height": "Lower: camera sits lower. Higher: camera sits higher.",
         "course_marker_half_extent_xy": "Lower: smaller Start/Finish trigger volumes (harder to hit). Higher: larger trigger volumes (easier to hit).",
         "course_marker_half_extent_z": "Lower: shorter Start/Finish trigger volumes (harder to hit). Higher: taller trigger volumes (easier to hit).",
-        "enable_coyote": "Lower (OFF): no coyote-time forgiveness. Higher (ON): edge grace jumps allowed.",
         "enable_jump_buffer": "Lower (OFF): no jump input buffering. Higher (ON): buffered jump before landing.",
-        "autojump_enabled": "Lower (OFF): jump on press only. Higher (ON): holding jump repeatedly queues jumps.",
+        "autojump_enabled": "Lower (OFF): jump on press only. Higher (ON): holding jump re-queues only while grounded.",
         "noclip_enabled": "Lower (OFF): normal collision movement. Higher (ON): collision-free noclip movement.",
         "surf_enabled": "Lower (OFF): slanted-surface surfing disabled. Higher (ON): surf ramps work with strafe hold.",
         "walljump_enabled": "Lower (OFF): wall-jumps disabled. Higher (ON): wall-jumps enabled.",
@@ -310,6 +314,28 @@ class DebugUI:
         )
         self.time_trial_hud_label.hide()
 
+        # Classic HL/CS-style thin crosshair with a small center gap.
+        self._crosshair_parts: list[DirectFrame] = []
+        gap = 0.010
+        arm = 0.020
+        thick = 0.0015
+        color = (0.92, 0.95, 0.88, 0.85)
+        cross_specs = [
+            (-gap - arm, -gap, -thick, thick),  # left
+            (gap, gap + arm, -thick, thick),  # right
+            (-thick, thick, gap, gap + arm),  # up
+            (-thick, thick, -gap - arm, -gap),  # down
+        ]
+        for fs in cross_specs:
+            part = DirectFrame(
+                parent=aspect2d,
+                frameColor=color,
+                frameSize=fs,
+                relief=DGG.FLAT,
+                pos=(0.0, 0.0, 0.0),
+            )
+            self._crosshair_parts.append(part)
+
         self._tooltip_label = DirectLabel(
             parent=self.debug_root,
             text="",
@@ -365,6 +391,7 @@ class DebugUI:
         )
 
         self.debug_root.hide()
+        self.set_crosshair_visible(False)
         self._refresh_profile_dropdown()
 
     def set_profiles(self, profile_names: list[str], active_profile: str) -> None:
@@ -421,7 +448,7 @@ class DebugUI:
             y = -0.05 - row * row_h
             ctrl = NumberControl(
                 parent=content,
-                name=field,
+                name=self._label_for_field(field),
                 x=0.03,
                 y=y,
                 value=float(getattr(self._tuning, field)),
@@ -521,7 +548,7 @@ class DebugUI:
         self._on_tuning_change(field)
 
     def _make_toggle_row(self, *, parent, field: str, x: float, y: float) -> None:
-        pretty_name = field.replace("_", " ")
+        pretty_name = self._label_for_field(field)
         label = DirectLabel(
             parent=parent,
             text=pretty_name,
@@ -566,6 +593,11 @@ class DebugUI:
         self._refresh_toggle_button(field)
         self._on_tuning_change(field)
 
+    def _label_for_field(self, field: str) -> str:
+        if field in self.FIELD_LABELS:
+            return self.FIELD_LABELS[field]
+        return field.replace("_", " ")
+
     def _bind_tooltip(self, widget, text: str) -> None:
         widget.bind(DGG.ENTER, lambda _evt, tip=text: self._show_tooltip(tip))
         widget.bind(DGG.EXIT, lambda _evt: self._hide_tooltip())
@@ -576,6 +608,13 @@ class DebugUI:
 
     def _hide_tooltip(self) -> None:
         self._tooltip_label.hide()
+
+    def set_crosshair_visible(self, visible: bool) -> None:
+        for part in self._crosshair_parts:
+            if visible:
+                part.show()
+            else:
+                part.hide()
 
     def _toggle_profile_dropdown(self) -> None:
         self._profile_dropdown_open = not self._profile_dropdown_open

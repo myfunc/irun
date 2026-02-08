@@ -224,7 +224,6 @@ class RunnerDemo(ShowBase):
             {
                 "surf_enabled": True,
                 "autojump_enabled": True,
-                "enable_coyote": True,
                 "enable_jump_buffer": True,
                 "jump_accel": 28.0,
                 "max_air_speed": 16.5,
@@ -243,7 +242,6 @@ class RunnerDemo(ShowBase):
             {
                 "surf_enabled": False,
                 "autojump_enabled": True,
-                "enable_coyote": True,
                 "enable_jump_buffer": True,
                 "jump_accel": 34.0,
                 "max_air_speed": 14.0,
@@ -258,7 +256,6 @@ class RunnerDemo(ShowBase):
             {
                 "surf_enabled": True,
                 "autojump_enabled": False,
-                "enable_coyote": False,
                 "enable_jump_buffer": False,
                 "jump_accel": 10.0,
                 "max_air_speed": 22.0,
@@ -291,7 +288,6 @@ class RunnerDemo(ShowBase):
                 "surf_min_normal_z": 0.05,
                 "surf_max_normal_z": 0.72,
                 "autojump_enabled": False,
-                "enable_coyote": False,
                 "enable_jump_buffer": False,
                 "walljump_enabled": False,
                 "wallrun_enabled": False,
@@ -508,6 +504,7 @@ class RunnerDemo(ShowBase):
 
         # Hide in-game HUD while picking.
         self.ui.speed_hud_label.hide()
+        self.ui.set_crosshair_visible(False)
         self.ui.hide()
         self.pause_ui.hide()
 
@@ -668,6 +665,7 @@ class RunnerDemo(ShowBase):
             if not self.cfg.smoke:
                 self._set_pointer_lock(True)
             self.ui.speed_hud_label.show()
+            self.ui.set_crosshair_visible(True)
             self.ui.hide()
             self.pause_ui.hide()
             if not self.cfg.smoke:
@@ -947,6 +945,7 @@ class RunnerDemo(ShowBase):
     def _update(self, task: Task) -> int:
         try:
             if self._mode == "menu":
+                self.ui.set_crosshair_visible(False)
                 if self._menu is not None:
                     self._menu.tick(globalClock.getFrameTime())
                 self._update_menu_hold(now=float(globalClock.getFrameTime()))
@@ -970,6 +969,7 @@ class RunnerDemo(ShowBase):
                 self.scene.tick(now=now)
 
             menu_open = self._pause_menu_open or self._debug_menu_open
+            self.ui.set_crosshair_visible(not menu_open)
 
             # Precompute wish so debug overlay can show it even if movement seems dead.
             wish = LVector3f(0, 0, 0) if menu_open else self._wish_direction()
@@ -1011,9 +1011,9 @@ class RunnerDemo(ShowBase):
                 not menu_open
                 and self.tuning.autojump_enabled
                 and self._is_key_down("space")
-                and self.player.can_ground_jump()
+                and self.player.grounded
             ):
-                # Autojump is for ground/coyote hop continuity; don't feed airborne wall-jump retries.
+                # Autojump is for chained grounded hops; don't feed airborne wall-jump retries.
                 self.player.queue_jump()
 
             if self.tuning.noclip_enabled:

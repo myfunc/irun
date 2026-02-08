@@ -32,7 +32,6 @@ class PlayerController:
 
         self.grounded = False
         self.crouched = False
-        self._ground_timer = 0.0
         self._jump_buffer_timer = 0.0
         self._jump_pressed = False
 
@@ -71,15 +70,10 @@ class PlayerController:
         self._jump_pressed = True
 
     def can_ground_jump(self) -> bool:
-        if self.grounded:
-            return True
-        return bool(self.tuning.enable_coyote) and self._ground_timer <= float(self.tuning.coyote_time)
+        return self.grounded
 
     def has_wall_for_jump(self) -> bool:
         if self.grounded:
-            return False
-        # During active coyote window, prefer ground-style jump over wall-jump in corners.
-        if bool(self.tuning.enable_coyote) and 0.0 < self._ground_timer <= float(self.tuning.coyote_time):
             return False
         if self._wall_contact_timer > 0.18 or self._wall_normal.lengthSquared() <= 0.01:
             return False
@@ -153,10 +147,7 @@ class PlayerController:
             self.vel.z -= float(self.tuning.gravity) * gravity_scale * dt
 
             if self._consume_jump_request():
-                # Coyote jump must also be available from the airborne branch.
-                if self.can_ground_jump():
-                    self._apply_jump()
-                elif self.tuning.vault_enabled and self._try_vault(yaw_deg=yaw_deg):
+                if self.tuning.vault_enabled and self._try_vault(yaw_deg=yaw_deg):
                     pass
                 elif self.tuning.walljump_enabled and self.has_wall_for_jump():
                     self._apply_wall_jump(yaw_deg=yaw_deg)
@@ -171,10 +162,7 @@ class PlayerController:
         else:
             self._move_and_collide(self.vel * dt)
 
-        if not self.grounded:
-            self._ground_timer += dt
-        else:
-            self._ground_timer = 0.0
+        if self.grounded:
             self._wall_jump_lock_timer = 999.0
 
     def _consume_jump_request(self) -> bool:
@@ -187,8 +175,6 @@ class PlayerController:
         self.vel.z = self._jump_up_speed()
         self._jump_buffer_timer = 0.0
         self.grounded = False
-        # Coyote time should only represent "just walked off a ledge", not "already jumped".
-        self._ground_timer = float(self.tuning.coyote_time) + 1.0
 
     def _apply_wall_jump(self, *, yaw_deg: float) -> None:
         away = LVector3f(self._wall_normal.x, self._wall_normal.y, 0)

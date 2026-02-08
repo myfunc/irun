@@ -11,6 +11,7 @@
 - Ivan: debug/admin panel moved to `` ` `` (tilde/backtick)
 - Ivan: rebindable noclip toggle (default `V`) via in-game Key Bindings
 - Ivan: in-game menu/debug UI block gameplay input but keep simulation running (no pause)
+- Ivan: classic center crosshair (Half-Life/CS style) visible during active gameplay
 - Ivan: input debug overlay (`F2`) for keyboard/mouse troubleshooting
 - Ivan: error console overlay (`F3`) that captures and shows unhandled exceptions without crashing the app (cycles hidden/collapsed/feed)
 - Ivan: generated test course with walls and jump obstacles
@@ -33,8 +34,7 @@
 - Ivan: optional Steam Half-Life auto-detect (manual action in main menu, not default)
 - Ivan: wall-jump cooldown tuning (default `1.0s`) replaces same-wall consecutive jump lock
 - Ivan: wall-jump is gated to airborne state (grounded wall contact cannot trigger wall-jump)
-- Ivan: wall-jump is blocked while coyote jump is available; corner jump input resolves to ground/coyote jump
-- Ivan: autojump queues only while ground/coyote jump is available (prevents airborne corner wall-jump retriggers)
+- Ivan: autojump queues only while grounded (prevents airborne corner wall-jump retriggers)
 - Ivan: autojump toggle (hold jump to continue hopping)
 - Ivan: vault is disabled by default (runtime toggle in debug menu)
 - Ivan: surf prototype on slanted surfaces (strafe-held surf with live tuning controls)
@@ -47,7 +47,7 @@
   - `time_trial`: local time trial with restart and local PB/leaderboard (per `map_id`)
 
 ## Planned (High-Level)
-- Movement: walk/run, jump, coyote time, jump buffer, air control
+- Movement: walk/run, jump, jump buffer, air control
 - Movement: iterate wallrun/grapple from toggleable prototype hooks
 - Camera: follow camera with collision avoidance and smoothing
 - Levels: modular blocks, checkpoints, hazards, collectibles

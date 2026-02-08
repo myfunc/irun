@@ -29,9 +29,7 @@ class PhysicsTuning:
     vault_min_ledge_height: float = 0.20
     vault_max_ledge_height: float = 1.40
     vault_cooldown: float = 0.30
-    coyote_time: float = 0.12
     jump_buffer_time: float = 0.14
-    enable_coyote: bool = True
     enable_jump_buffer: bool = True
     autojump_enabled: bool = False
     noclip_enabled: bool = False
