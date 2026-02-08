@@ -15,9 +15,13 @@
 - Ivan: generated test course with walls and jump obstacles
 - Ivan: BSP-to-map-bundle asset pipeline and runtime map loading (`--map`, including assets-relative aliases)
 - Ivan: Source material extraction (VTF->PNG conversion), textured rendering, and skybox hookup
+  - Basic VMT parsing for translucency/additive/alphatest and `$basetexture` indirection
+  - Source baked lightmap extraction and runtime lightmap rendering (base texture * lightmap)
 - Ivan: GoldSrc/Xash3D importer (WAD texture extraction + resource copying to bundle; incl. sound/model paths)
   - Fixes BSP texture V orientation (prevents upside-down textures)
   - Supports masked transparency for `{` textures via GoldSrc-style blue colorkey / palette index 255
+  - Converts GoldSrc skybox textures from `gfx/env/` into bundle `materials/skybox/` (when present)
+  - Extracts baked GoldSrc lightmaps (RGB) into bundle `lightmaps/` and renders them in runtime (supports up to 4 light styles per face)
 - Ivan: main menu (retro) with map bundle selection and on-demand GoldSrc/Xash3D import from a chosen game directory
   - Fast navigation: hold Up/Down for accelerated scrolling, Left/Right page jump, and `Cmd+F`/`Ctrl+F` search
 - Ivan: CLI prefill for GoldSrc/Xash3D import flow (`--hl-root`, `--hl-mod`)
@@ -27,6 +31,9 @@
 - Ivan: autojump toggle (hold jump to continue hopping)
 - Ivan: vault is disabled by default (runtime toggle in debug menu)
 - Ivan: surf prototype on slanted surfaces (strafe-held surf with live tuning controls)
+- Game modes: maps can declare how they should run via bundle metadata (`run.json`)
+  - `free_run`: default "just run around"
+  - `time_trial`: local time trial with restart and local PB/leaderboard (per `map_id`)
 
 ## Planned (High-Level)
 - Movement: walk/run, jump, coyote time, jump buffer, air control
@@ -34,7 +41,7 @@
 - Camera: follow camera with collision avoidance and smoothing
 - Levels: modular blocks, checkpoints, hazards, collectibles
 - Maps: format v3 (entities, triggers, lights, chunked baked geometry) + editor workflow
-- Time trial: local timer + local PB storage (portal/leaderboards later)
+- Time trial: portal/leaderboards (plus ghosts/replays; map_hash binding)
 - Rendering: retro texture filtering options (nearest-neighbor, mipmap strategy)
 - Game loop: pause, restart, level select
 - Debug: in-game tweakables and metrics

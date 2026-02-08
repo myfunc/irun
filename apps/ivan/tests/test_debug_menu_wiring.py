@@ -58,18 +58,23 @@ def test_all_numeric_debug_controls_exist_have_tooltips_and_are_wired() -> None:
         assert "Lower:" in tip and "Higher:" in tip, f"Tooltip must explain Lower/Higher for {field}"
 
     src_root = Path(__file__).resolve().parents[1] / "src" / "ivan"
-    runtime_src = (src_root / "physics" / "player_controller.py").read_text(encoding="utf-8") + "\n" + (
-        src_root / "game.py"
-    ).read_text(encoding="utf-8")
+    # Keep this check broad: tuning fields may be used outside game.py (e.g. in game modes).
+    runtime_src = ""
+    for p in sorted(src_root.rglob("*.py")):
+        if "egg-info" in p.parts:
+            continue
+        runtime_src += p.read_text(encoding="utf-8") + "\n"
     for field in numeric_fields:
         assert f"tuning.{field}" in runtime_src, f"Slider field is not used at runtime: {field}"
 
 
 def test_all_toggle_controls_have_tooltips_with_lower_higher_guidance() -> None:
     src_root = Path(__file__).resolve().parents[1] / "src" / "ivan"
-    runtime_src = (src_root / "physics" / "player_controller.py").read_text(encoding="utf-8") + "\n" + (
-        src_root / "game.py"
-    ).read_text(encoding="utf-8")
+    runtime_src = ""
+    for p in sorted(src_root.rglob("*.py")):
+        if "egg-info" in p.parts:
+            continue
+        runtime_src += p.read_text(encoding="utf-8") + "\n"
     for field in DebugUI.TOGGLE_CONTROLS:
         assert field in PhysicsTuning.__annotations__
         assert field in DebugUI.FIELD_HELP

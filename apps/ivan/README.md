@@ -64,6 +64,12 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 - `R`: reset to spawn
 - `Esc`: opens the in-game menu (Resume / Map Selector / Key Bindings / Back to Main Menu / Quit); in the main menu it acts as back/quit
 - `` ` `` (tilde/backtick): opens the debug/admin tuning menu
+- `F4`: restart run (time trial mode)
+- `F5`: set Start marker at current position (time trial mode dev helper)
+- `F6`: set Finish marker at current position (time trial mode dev helper)
+- `F7`: clear local course markers (time trial mode dev helper)
+- `F8`: export course to `<bundle>/run.json` (time trial mode dev helper)
+- `F9`: export spawn to `<bundle>/run.json` (time trial mode dev helper)
 - `F2`: toggle input debug overlay (useful when keyboard/mouse don't seem to register)
 - `F3`: toggle error console overlay (shows recent errors without crashing)
 - `LMB`: mock grapple impulse (only if grapple toggle enabled)
@@ -148,6 +154,22 @@ You can also use a short alias under `apps/ivan/assets/`, for example:
 python -m ivan --map imported/halflife/valve/bounce
 ```
 
+### Per-Bundle Run Metadata (Game Modes)
+Bundles can optionally include `<bundle>/run.json` next to `map.json` to select a game mode and provide extra runtime data
+that does not belong in the geometry manifest.
+
+Example:
+```json
+{
+  "mode": "time_trial",
+  "spawn": { "position": [0, 0, 3], "yaw": 90 },
+  "config": {
+    "start_aabb": { "min": [-2, -2, 0], "max": [2, 2, 4] },
+    "finish_aabb": { "min": [98, -2, 0], "max": [102, 2, 4] }
+  }
+}
+```
+
 ### Source BSP -> Bundle (VTF -> PNG)
 ```bash
 python3 tools/build_source_bsp_assets.py \
@@ -157,6 +179,11 @@ python3 tools/build_source_bsp_assets.py \
   --output <bundle-dir>/map.json \
   --scale 0.03
 ```
+
+Notes:
+- The tool extracts per-face Source lightmaps into the bundle and the runtime multiplies base texture by lightmap.
+- The tool parses common VMT keys (e.g. `$basetexture`, `$translucent`, `$additive`, `$alphatest`, `$alpha`, `$nocull`)
+  to drive runtime rendering (e.g. glass/decals).
 
 Run with the bundle:
 ```bash
@@ -178,6 +205,8 @@ Notes:
 - By default, the importer extracts only textures referenced by the BSP into `<bundle-dir>/materials/` and does not
   copy other game assets. If you need extra assets copied, pass `--copy-resources`.
 - The importer extracts embedded BSP textures when present (common for custom/community maps).
+- The importer extracts baked GoldSrc lightmaps into `<bundle-dir>/lightmaps/` and the runtime multiplies base texture
+  by the combined lightmap styles for each face.
 - If the BSP does not declare a worldspawn `wad` list, the importer falls back to scanning `--game-root` (and common
   subfolders like `wads/` and `maps/`) for `.wad` files and extracts only the textures the BSP actually uses.
 - When copying resources, the importer intentionally skips executable code/binaries (e.g. `dlls/`, `cl_dlls/`, `bin/`,
@@ -185,4 +214,4 @@ Notes:
 - Triangle-map collision response uses Bullet convex sweep tests and a Quake3-style kinematic controller
   (step + slide with plane clipping) for stable wall/ceiling/slope handling.
 - The Source build step converts `materials/**/*.vtf` into PNG so Panda3D can load them.
-- Map bundles include per-triangle materials, UVs, and optional vertex colors (used as baked lighting tint).
+- Map bundles include per-triangle materials, UVs, and optional vertex colors (used as a baked lighting tint/fallback).

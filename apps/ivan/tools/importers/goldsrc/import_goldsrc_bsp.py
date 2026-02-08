@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import shutil
 from pathlib import Path
@@ -201,6 +202,180 @@ def _save_png(dst: Path, *, width: int, height: int, rgba: bytes) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     img = Image.frombytes("RGBA", (width, height), rgba)
     img.save(dst)
+
+
+def _try_extract_skybox_textures(*, game_root: Path, materials_dir: Path, skyname: str | None) -> int:
+    """
+    GoldSrc convention: gfx/env/<skyname><face>.(tga|bmp)
+
+    We convert those into bundle materials under materials/skybox/ so the runtime skybox
+    lookup can be shared with the Source pipeline.
+    """
+    if not skyname:
+        return 0
+    skyname = skyname.strip()
+    if not skyname:
+        return 0
+    faces = ("ft", "bk", "lf", "rt", "up", "dn")
+    exts = (".tga", ".bmp")
+    extracted = 0
+    for suf in faces:
+        src = None
+        for ext in exts:
+            rel = f"gfx/env/{skyname}{suf}{ext}"
+            p = find_case_insensitive(game_root, rel)
+            if p and p.exists():
+                src = p
+                break
+        if not src:
+            continue
+        dst = materials_dir / "skybox" / f"{skyname}{suf}.png"
+        if dst.exists() and dst.stat().st_mtime >= src.stat().st_mtime:
+            continue
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            img = Image.open(src)
+            img = img.convert("RGBA")
+            img.save(dst)
+            extracted += 1
+        except Exception:
+            continue
+    return extracted
+
+
+def _parse_lightmap_scale(entities) -> float:
+    """
+    GoldSrc/Quake-family lightmap scale is world-units per luxel (typically 16).
+
+    Some toolchains embed overrides in worldspawn keyvalues. Keep this best-effort.
+    """
+
+    keys = ("_lightmap_scale", "lightmap_scale", "_world_units_per_luxel", "world_units_per_luxel")
+    for ent in entities:
+        if not isinstance(ent, dict) or ent.get("classname") != "worldspawn":
+            continue
+        for k in keys:
+            v = ent.get(k)
+            if not isinstance(v, str):
+                continue
+            try:
+                f = float(v.strip())
+                if f > 0:
+                    return float(f)
+            except Exception:
+                continue
+    return 16.0
+
+
+def _face_style_bytes(face) -> list[int]:
+    """
+    GoldSrc face light styles are stored as 4 bytes.
+
+    In bsp_tool's current GoldSrc branch, the Face struct is inherited from Quake and names
+    the bytes as (lighting_type, base_light, light[0], light[1]). For GoldSrc, interpret
+    them as `styles[4]`.
+    """
+
+    out: list[int] = []
+    for a in ("lighting_type", "base_light"):
+        try:
+            out.append(int(getattr(face, a)) & 0xFF)
+        except Exception:
+            out.append(255)
+    try:
+        l = getattr(face, "light")
+        if isinstance(l, (tuple, list)) and len(l) >= 2:
+            out.append(int(l[0]) & 0xFF)
+            out.append(int(l[1]) & 0xFF)
+        else:
+            out.extend([255, 255])
+    except Exception:
+        out.extend([255, 255])
+    return out[:4]
+
+
+def _tex_s_t(*, texinfo, pos) -> tuple[float, float]:
+    s_axis = texinfo.s.axis
+    t_axis = texinfo.t.axis
+    s = float(pos.x) * float(s_axis.x) + float(pos.y) * float(s_axis.y) + float(pos.z) * float(s_axis.z) + float(texinfo.s.offset)
+    t = float(pos.x) * float(t_axis.x) + float(pos.y) * float(t_axis.y) + float(pos.z) * float(t_axis.z) + float(texinfo.t.offset)
+    return (s, t)
+
+
+def _face_lightmap_meta(*, bsp, face_idx: int, lightmap_scale: float) -> dict | None:
+    """
+    Compute GoldSrc lightmap extents and return metadata required for extraction + UV mapping.
+    """
+
+    try:
+        face = bsp.FACES[int(face_idx)]
+    except Exception:
+        return None
+    off = getattr(face, "lighting_offset", None)
+    if not isinstance(off, int) or off < 0:
+        return None
+    try:
+        texinfo = bsp.TEXTURE_INFO[face.texture_info]
+    except Exception:
+        return None
+
+    # Derive a polygon vertex list using bsp_tool's mesh helper (keeps this importer branch-agnostic).
+    try:
+        mesh = bsp.face_mesh(int(face_idx))
+        poly = mesh.polygons[0]
+        verts = poly.vertices
+        if not verts:
+            return None
+        positions = [v.position for v in verts]
+    except Exception:
+        return None
+
+    st = [_tex_s_t(texinfo=texinfo, pos=p) for p in positions]
+    ss = [x[0] for x in st]
+    ts = [x[1] for x in st]
+    min_s = min(ss)
+    max_s = max(ss)
+    min_t = min(ts)
+    max_t = max(ts)
+
+    scale = float(lightmap_scale)
+    mins_s = int(math.floor(min_s / scale))
+    mins_t = int(math.floor(min_t / scale))
+    maxs_s = int(math.ceil(max_s / scale))
+    maxs_t = int(math.ceil(max_t / scale))
+    w = int(maxs_s - mins_s + 1)
+    h = int(maxs_t - mins_t + 1)
+    if w <= 0 or h <= 0:
+        return None
+
+    styles = _face_style_bytes(face)
+    if all(int(s) == 255 for s in styles):
+        # Technically "no styles" means "no lightmap".
+        return None
+
+    return {
+        "offset": int(off),
+        "styles": [int(s) for s in styles],
+        "mins_s": int(mins_s),
+        "mins_t": int(mins_t),
+        "w": int(w),
+        "h": int(h),
+        "scale": float(scale),
+    }
+
+
+def _decode_goldsrc_lightmap_rgb_to_rgba(raw: bytes) -> bytes:
+    if len(raw) % 3 != 0:
+        raw = raw[: len(raw) - (len(raw) % 3)]
+    out = bytearray((len(raw) // 3) * 4)
+    oi = 0
+    for i in range(0, len(raw), 3):
+        out[oi + 0] = raw[i + 0]
+        out[oi + 1] = raw[i + 1]
+        out[oi + 2] = raw[i + 2]
+        out[oi + 3] = 255
+        oi += 4
+    return bytes(out)
 
 
 def _should_render_texture(mat_name: str) -> bool:
@@ -471,6 +646,24 @@ def main() -> None:
     entities = getattr(bsp, "ENTITIES", [])
     spawn_pos, spawn_yaw = _pick_spawn(entities, args.scale)
     skyname = _skyname_from_entities(entities)
+    lightmap_scale = _parse_lightmap_scale(entities)
+    lightstyles: dict[str, str] = {"0": "m"}
+    for ent in entities:
+        if not isinstance(ent, dict):
+            continue
+        style_raw = ent.get("style")
+        pat = ent.get("pattern")
+        if not isinstance(style_raw, str) or not isinstance(pat, str):
+            continue
+        try:
+            style = int(style_raw.strip())
+        except Exception:
+            continue
+        pat = pat.strip()
+        if not pat:
+            continue
+        # Store as string keys for JSON stability.
+        lightstyles[str(style)] = pat
 
     model_entities: dict[int, dict] = {}
     for ent in entities:
@@ -480,6 +673,16 @@ def main() -> None:
         if idx is None:
             continue
         model_entities.setdefault(idx, ent)
+
+    # Precompute per-face lightmap metadata (used for extraction and UV mapping).
+    face_lm_meta: dict[int, dict] = {}
+    face_lm_bundle: dict[str, dict] = {}
+    lighting = getattr(bsp, "LIGHTING", None)
+    if lighting is not None:
+        for face_idx in range(len(getattr(bsp, "FACES", []))):
+            meta = _face_lightmap_meta(bsp=bsp, face_idx=int(face_idx), lightmap_scale=lightmap_scale)
+            if meta is not None:
+                face_lm_meta[int(face_idx)] = meta
 
     # Build triangles (best-effort; depends on bsp_tool support for the given BSP branch).
     render_triangles: list[dict] = []
@@ -540,6 +743,14 @@ def main() -> None:
             mat_name = str(mat_name).strip()
             tri_renders = render_model and _should_render_texture(mat_name)
 
+            lm_meta = face_lm_meta.get(int(face_idx))
+            texinfo = None
+            if lm_meta is not None:
+                try:
+                    texinfo = bsp.TEXTURE_INFO[bsp.FACES[int(face_idx)].texture_info]
+                except Exception:
+                    texinfo = None
+
             for poly in mesh.polygons:
                 if len(poly.vertices) < 3:
                     continue
@@ -592,8 +803,34 @@ def main() -> None:
                         c1 = [1.0, 1.0, 1.0, 1.0]
                         c2 = [1.0, 1.0, 1.0, 1.0]
 
+                        # GoldSrc baked lighting lives in LIGHTING lump (RGB) and is mapped via texture vectors.
+                        if lm_meta is not None and texinfo is not None:
+                            w = float(lm_meta["w"])
+                            h = float(lm_meta["h"])
+                            mins_s = float(lm_meta["mins_s"])
+                            mins_t = float(lm_meta["mins_t"])
+                            scale = float(lm_meta["scale"])
+
+                            def lm_uv(pos) -> list[float]:
+                                s, t = _tex_s_t(texinfo=texinfo, pos=pos)
+                                u = (s / scale - mins_s + 0.5) / w
+                                v = (t / scale - mins_t + 0.5) / h
+                                # Panda's texture V origin differs from GoldSrc lightmap row order; flip V.
+                                return [float(u), float(1.0 - v)]
+
+                            lm0 = lm_uv(v0.position)
+                            lm1 = lm_uv(v1.position)
+                            lm2 = lm_uv(v2.position)
+                            lmi = int(face_idx)
+                        else:
+                            lm0 = [0.0, 0.0]
+                            lm1 = [0.0, 0.0]
+                            lm2 = [0.0, 0.0]
+                            lmi = None
+
                         tri = {
                             "m": mat_name,
+                            "lmi": lmi,
                             "p": pos9,
                             "n": [
                                 *n0,
@@ -601,7 +838,7 @@ def main() -> None:
                                 *n2,
                             ],
                             "uv": [*uv0, *uv1, *uv2],
-                            "lm": [0.0] * 6,
+                            "lm": [*lm0, *lm1, *lm2],
                             "c": [*c0, *c1, *c2],
                         }
                         render_triangles.append(tri)
@@ -640,6 +877,7 @@ def main() -> None:
             "scale": float(args.scale),
             "wad_names": wad_names,
             "used_textures": sorted(used_textures),
+            "lightstyles": lightstyles,
             "resources_detected": sorted(resources),
             "copy_policy": {
                 "skip_dirs": sorted(SKIP_RESOURCE_DIRS),
@@ -681,6 +919,9 @@ def main() -> None:
     extracted_textures: int = 0
     used_cf = {u.casefold() for u in used_textures}
 
+    # Skybox textures live outside WADs (gfx/env), so pull them explicitly.
+    extracted_textures += _try_extract_skybox_textures(game_root=game_root, materials_dir=materials_dir, skyname=skyname)
+
     extracted_textures += _extract_embedded_textures(
         bsp=bsp,
         materials_dir=materials_dir,
@@ -719,6 +960,50 @@ def main() -> None:
             except Exception:
                 continue
 
+    # Extract baked GoldSrc lightmaps (RGB) into bundle lightmaps/ and reference them from map.json.
+    if lighting is not None and face_lm_meta:
+        lightmaps_dir = out_dir / "lightmaps"
+        lightmaps_dir.mkdir(parents=True, exist_ok=True)
+
+        for face_idx, meta in sorted(face_lm_meta.items(), key=lambda it: int(it[0])):
+            off = int(meta["offset"])
+            w = int(meta["w"])
+            h = int(meta["h"])
+            styles = [int(x) for x in meta["styles"]]
+            block_bytes = w * h * 3
+
+            # GoldSrc stores one block per non-255 style, in slot order.
+            paths: list[str | None] = [None, None, None, None]
+            style_slots: list[int | None] = [None, None, None, None]
+            block_idx = 0
+            for slot in range(4):
+                style = int(styles[slot]) if slot < len(styles) else 255
+                if style == 255:
+                    continue
+                start = off + block_idx * block_bytes
+                end = start + block_bytes
+                raw = bytes(lighting[start:end])
+                if len(raw) != block_bytes:
+                    break
+                rgba = _decode_goldsrc_lightmap_rgb_to_rgba(raw)
+                img = Image.frombytes("RGBA", (w, h), rgba)
+                dst = lightmaps_dir / f"f{face_idx}_lm{slot}.png"
+                try:
+                    img.save(dst)
+                except Exception:
+                    break
+                paths[slot] = str(Path("lightmaps") / dst.name).replace("\\", "/")
+                style_slots[slot] = style
+                block_idx += 1
+
+            if any(p is not None for p in paths):
+                face_lm_bundle[str(int(face_idx))] = {
+                    "styles": style_slots,
+                    "paths": paths,
+                    "w": int(w),
+                    "h": int(h),
+                }
+
     payload = {
         "format_version": 2,
         "map_id": map_id,
@@ -730,6 +1015,12 @@ def main() -> None:
         "spawn": {"position": spawn_pos, "yaw": spawn_yaw},
         "skyname": skyname,
         "materials": {"root": None, "converted_root": "materials", "converted": extracted_textures},
+        "lightmaps": {
+            "scale": float(lightmap_scale),
+            "encoding": "goldsrc_rgb",
+            "faces": face_lm_bundle,
+        },
+        "lightstyles": lightstyles,
         "resources": {
             "root": "resources",
             "copied": copied,
