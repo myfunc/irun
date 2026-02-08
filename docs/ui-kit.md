@@ -12,8 +12,9 @@ It lives under `apps/ui_kit/` and is the default way to build Ivan's non-HUD UI 
 
 ## Coordinate System Rule (Non-Negotiable)
 Panels/windows provide a **local coordinate space** for children:
-- The returned node is positioned globally.
-- Children should use local `pos` and local `frameSize` within `0..w` and `0..h`.
+- The widget root node is positioned globally.
+- Children should be parented under the widget's content container (e.g. `Panel.content`, `Window.content`)
+  and use local `pos` and local `frameSize` within `0..w` and `0..h`.
 
 Mixing global coordinates into child `frameSize`/`pos` tends to cause overlapping and giant-rect bugs.
 
@@ -43,7 +44,7 @@ All components are thin DirectGUI wrappers in `apps/ui_kit/src/irun_ui_kit/widge
 
 Containers:
 - `Window`: draggable titlebar; `content` container for child widgets.
-- `Panel`: local container with accent outline and drop shadow.
+- `Panel`: panel root with outline/shadow and a `content` container for children.
 - `Tabs`: tab bar + pages (hide/show groups of controls).
 - `CollapsiblePanel`: header-click collapsible section; collapses to header-only height and supports relayout.
 
@@ -62,12 +63,12 @@ Controls:
 The kit includes an interactive playground to exercise the components on one screen:
 
 ```bash
-PYTHONPATH=apps/ui_kit/src apps/ivan/.venv/bin/python -m irun_ui_kit.demo
+./runapp ui_kit
 ```
 
 Smoke screenshot:
 ```bash
-PYTHONPATH=apps/ui_kit/src apps/ivan/.venv/bin/python -m irun_ui_kit.demo --smoke-screenshot /tmp/irun-ui-kit.png
+./runapp ui_kit --smoke-screenshot /tmp/irun-ui-kit.png
 ```
 
 ## Integration Plan
