@@ -270,15 +270,34 @@ class DebugUI:
         self.debug_root = self._window.root
 
         # HUD elements (do not touch crosshair/log/error UI behavior).
-        self.speed_hud_label = DirectLabel(
+        # Speed chip: keep it out of the way of menus (top-right corner).
+        chip_w = 0.46
+        chip_h = 0.10
+        chip_x = aspect_ratio - 0.06 - chip_w
+        chip_y = 0.90
+        self.speed_hud_root = DirectFrame(
             parent=aspect2d,
-            text="Speed: 0 u/s",
-            text_scale=0.042,
-            text_align=TextNode.ACenter,
-            text_fg=(0.94, 0.94, 0.94, 0.95),
-            frameColor=(0, 0, 0, 0),
-            pos=(0.0, 0, 0.93),
+            frameColor=theme.outline,
+            relief=DGG.FLAT,
+            frameSize=(0.0, chip_w, 0.0, chip_h),
+            pos=(chip_x, 0.0, chip_y),
         )
+        DirectFrame(
+            parent=self.speed_hud_root,
+            frameColor=(theme.panel2[0], theme.panel2[1], theme.panel2[2], theme.panel2[3] * 0.90),
+            relief=DGG.FLAT,
+            frameSize=(theme.outline_w, chip_w - theme.outline_w, theme.outline_w, chip_h - theme.outline_w),
+        )
+        self.speed_hud_label = DirectLabel(
+            parent=self.speed_hud_root,
+            text="SPEED 0",
+            text_scale=0.042,
+            text_align=TextNode.ALeft,
+            text_fg=theme.text,
+            frameColor=(0, 0, 0, 0),
+            pos=(theme.outline_w + theme.pad * 0.50, 0, chip_h * 0.32),
+        )
+        self.speed_hud_root.hide()
         self.time_trial_hud_label = DirectLabel(
             parent=aspect2d,
             text="",
@@ -312,14 +331,34 @@ class DebugUI:
             )
             self._crosshair_parts.append(part)
 
-        self.status_label = DirectLabel(
+        # Bottom status bar (movement state summary). Kept visible during gameplay and hidden while debug menu is open.
+        bar_pad = 0.06
+        bar_w = max(0.60, (aspect_ratio * 2.0) - (bar_pad * 2.0))
+        bar_h = 0.11
+        bar_x = -aspect_ratio + bar_pad
+        bar_y = -0.97
+        self.status_root = DirectFrame(
             parent=aspect2d,
+            frameColor=theme.outline,
+            relief=DGG.FLAT,
+            frameSize=(0.0, bar_w, 0.0, bar_h),
+            pos=(bar_x, 0.0, bar_y),
+        )
+        DirectFrame(
+            parent=self.status_root,
+            frameColor=(theme.panel[0], theme.panel[1], theme.panel[2], 0.86),
+            relief=DGG.FLAT,
+            frameSize=(theme.outline_w, bar_w - theme.outline_w, theme.outline_w, bar_h - theme.outline_w),
+        )
+        self.status_label = DirectLabel(
+            parent=self.status_root,
             text="",
-            text_scale=0.038,
+            text_scale=0.036,
             text_align=TextNode.ALeft,
-            text_fg=(0.95, 0.95, 0.95, 1),
+            text_fg=theme.text,
             frameColor=(0, 0, 0, 0),
-            pos=(-aspect_ratio + 0.06, 0, -0.92),
+            pos=(theme.outline_w + theme.pad * 0.50, 0, bar_h * 0.34),
+            text_wordwrap=70,
         )
 
         # Layout inside the window (local coordinates 0..w/0..h).
@@ -380,13 +419,20 @@ class DebugUI:
             h=scroll_h,
             canvas_h=scroll_h,
         )
+        # Redundant wheel binding: some platforms deliver wheel events more reliably via DirectGUI regions.
+        try:
+            self._scroll.frame.bind(DGG.WHEELUP, lambda _evt: self.scroll_wheel(+1))
+            self._scroll.frame.bind(DGG.WHEELDOWN, lambda _evt: self.scroll_wheel(-1))
+        except Exception:
+            pass
+        scroll_content_w = self._scroll.content_w()
 
         self._numeric_ranges = {name: (low, high) for name, low, high in self.NUMERIC_CONTROLS}
         self._group_order: list[str] = []
         self._groups: dict[str, _GroupUI] = {}
 
         for group_name, numeric_fields, toggle_fields in self.GROUPS:
-            self._build_group(group_name, numeric_fields, toggle_fields, scroll_w=scroll_w)
+            self._build_group(group_name, numeric_fields, toggle_fields, scroll_w=scroll_content_w)
 
         self._relayout_groups()
 
@@ -502,18 +548,24 @@ class DebugUI:
 
     def show(self) -> None:
         self.debug_root.show()
-        self.status_label.hide()
+        self.status_root.hide()
         self._tooltip.hide()
         self._profile_dropdown.set_open(False)
 
     def hide(self) -> None:
         self.debug_root.hide()
-        self.status_label.show()
+        self.status_root.show()
         self._tooltip.hide()
         self._profile_dropdown.set_open(False)
 
+    def set_speed_hud_visible(self, visible: bool) -> None:
+        if visible:
+            self.speed_hud_root.show()
+        else:
+            self.speed_hud_root.hide()
+
     def set_speed(self, hspeed: float) -> None:
-        self.speed_hud_label["text"] = f"Speed: {int(hspeed)} u/s"
+        self.speed_hud_label["text"] = f"SPEED {int(hspeed)}"
 
     def set_time_trial_hud(self, text: str | None) -> None:
         if text is None or not str(text).strip():

@@ -48,15 +48,18 @@ class ListMenu:
         self._h = float(h)
 
         header_total_h = theme.header_h + (theme.outline_w * 2)
+        content_w = float(w - theme.pad * 2)
+        content_h = float((h - header_total_h) - theme.pad * 2)
         self._content = DirectFrame(
             parent=self._panel.content,
             frameColor=(0, 0, 0, 0),
             relief=DGG.FLAT,
-            frameSize=(theme.pad, w - theme.pad, theme.pad, h - header_total_h),
+            # Keep local origin at (0, 0) bottom-left for children.
+            frameSize=(0.0, content_w, 0.0, content_h),
+            pos=(theme.pad, 0.0, theme.pad),
         )
 
-        self._content_w = float(w - theme.pad * 2)
-        content_h = float((h - header_total_h) - theme.pad * 2)
+        self._content_w = content_w
         self._content_h = content_h
         self._hint = DirectLabel(
             parent=self._content,
@@ -88,7 +91,8 @@ class ListMenu:
         self._selected: int = 0
 
         # Reserve top for hint/search and bottom for status.
-        rows_top = content_h - theme.small_scale * 2.40
+        # Keep a comfortable gap under the hint line.
+        rows_top = content_h - theme.small_scale * 2.85
         rows_bottom = theme.small_scale * 1.60
         rows_h = max(0.2, rows_top - rows_bottom)
         row_h = theme.label_scale * 1.50

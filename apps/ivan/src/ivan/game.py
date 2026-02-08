@@ -127,7 +127,7 @@ class RunnerDemo(ShowBase):
             on_profile_save=self._save_active_profile,
         )
         self.ui.set_profiles(self._profile_names(), self._active_profile_name)
-        self.error_console = ErrorConsoleUI(aspect2d=self.aspect2d, error_log=self.error_log)
+        self.error_console = ErrorConsoleUI(aspect2d=self.aspect2d, theme=self.ui_theme, error_log=self.error_log)
         self.pause_ui = PauseMenuUI(
             aspect2d=self.aspect2d,
             theme=self.ui_theme,
@@ -139,7 +139,7 @@ class RunnerDemo(ShowBase):
             on_rebind_noclip=self._start_rebind_noclip,
         )
         self.pause_ui.set_noclip_binding(self._noclip_toggle_key)
-        self.input_debug = InputDebugUI(aspect2d=self.aspect2d)
+        self.input_debug = InputDebugUI(aspect2d=self.aspect2d, theme=self.ui_theme)
         self._setup_input()
 
         # Boot behavior:
@@ -536,7 +536,7 @@ class RunnerDemo(ShowBase):
         self._set_pointer_lock(False)
 
         # Hide in-game HUD while picking.
-        self.ui.speed_hud_label.hide()
+        self.ui.set_speed_hud_visible(False)
         self.ui.set_crosshair_visible(False)
         self._grapple_rope_np.hide()
         self.ui.hide()
@@ -700,7 +700,7 @@ class RunnerDemo(ShowBase):
             self._last_mouse = None
             if not self.cfg.smoke:
                 self._set_pointer_lock(True)
-            self.ui.speed_hud_label.show()
+            self.ui.set_speed_hud_visible(True)
             self.ui.set_crosshair_visible(True)
             self.ui.hide()
             self.pause_ui.hide()

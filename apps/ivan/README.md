@@ -101,10 +101,11 @@ Notes:
 - Debug-tuned values are persisted per tuning profile in state; switching profiles restores that profile's slider/toggle values.
 
 ## HUD
-- A top-center speed readout is always visible (`Speed: <int> u/s`).
+- A small top-right speed chip is visible during gameplay (`SPEED <int>`).
 - The value is horizontal speed, rounded down to an integer.
 - A classic Half-Life/CS-style center crosshair is shown during active gameplay (hidden in pause/debug/menu).
 - Detailed movement status (`speed/z-vel/grounded/wall`) is shown in the bottom-left corner during gameplay and hidden while the debug/admin panel is open.
+- Input debug (F2) and the error console (F3) are shown as boxed overlays that avoid overlapping the HUD bars.
 
 ## Debug/Admin Menu
 Panel layout:
