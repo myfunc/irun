@@ -42,14 +42,17 @@ not game-specific screens.
   - when UI is open, gameplay input is blocked (game continues running)
 
 ### M3: Controls
-- Checkbox (single toggle widget)
-- Slider (track + knob + value label)
+- Checkbox (single toggle widget) (implemented)
+- Slider (track + knob + value label) (implemented)
 - List/select
   - selection highlight
   - optional scroll
 - Tooltip
   - anchored to focused control
   - does not overlap cursor
+
+### M3.1: Utility Widgets
+- Tabs (tab bar + pages) (implemented)
 
 ### M4: Window Manager
 - Bring-to-front on click
@@ -61,4 +64,3 @@ not game-specific screens.
 - No clipped text in default sizes (unless explicitly elided with `...`).
 - All interactive widgets have visible focus and pressed states.
 - All layout constants come from `Theme` (no random per-screen padding).
-

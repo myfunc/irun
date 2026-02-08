@@ -1,6 +1,6 @@
 # IRUN Baker (Map Viewer + Import + Bake Tool)
 
-Status: planned (design + implementation checklist)
+Status: viewer MVP implemented (viewer skeleton); import/bake UI planned
 
 This app is a **companion tool** to `apps/ivan`:
 - open and preview imported maps (GoldSrc / Source / future formats)
@@ -9,6 +9,30 @@ This app is a **companion tool** to `apps/ivan`:
 - export optimized bundles for the runtime game (`apps/ivan`)
 
 This is intentionally **not** a full level editor (at least initially).
+
+## How to run
+
+Viewer MVP:
+
+```bash
+# From apps/baker:
+cd apps/baker
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -e .
+
+# Default map selection prefers Crossfire, falling back to committed bundles when missing.
+python -m baker
+
+# Smoke run (renders a few frames offscreen and exits):
+python -m baker --smoke --smoke-screenshot .tmp/baker_smoke.png
+```
+
+Notes:
+- Baker reuses Ivan's renderer/scene code for WYSIWYG preview, so it expects the monorepo layout (it adds `apps/ivan/src` to `sys.path` at runtime).
+- Controls: WASD move, Q/E down/up, Shift faster. Hold RMB to look. `Esc` unlocks the cursor.
+- Tonemap toggle: `1` gamma-only, `2` Reinhard, `3` ACES approx.
 
 ## Goals
 - WYSIWYG: what you see in Baker should match what Ivan renders for the same bundle.
@@ -238,4 +262,3 @@ Baker UI should include:
 - Runtime shader pipeline:
   - keep GLSL 120 compatibility for macOS legacy contexts
   - or require newer GL (if we decide to move the floor up later)
-

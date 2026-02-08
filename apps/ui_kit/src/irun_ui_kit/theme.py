@@ -27,16 +27,22 @@ class Theme:
     label_scale: float = 0.040
     small_scale: float = 0.032
 
-    # Palette (ps2_cyan-ish baseline)
-    bg: Color = (0.06, 0.06, 0.07, 1.0)
-    panel: Color = (0.16, 0.16, 0.18, 0.98)
-    panel2: Color = (0.22, 0.22, 0.25, 0.98)
-    outline: Color = (0.55, 0.56, 0.59, 1.0)
-    header: Color = (0.00, 0.90, 0.92, 1.0)
-    text: Color = (236 / 255, 238 / 255, 244 / 255, 1.0)
-    text_muted: Color = (170 / 255, 175 / 255, 188 / 255, 1.0)
-    ink: Color = (0.06, 0.06, 0.08, 1.0)
+    # Palette (retro industrial baseline: dark panels + warm orange accent)
+    bg: Color = (0.06, 0.055, 0.050, 1.0)
+    panel: Color = (0.15, 0.14, 0.13, 0.98)
+    panel2: Color = (0.21, 0.20, 0.19, 0.98)
+    outline: Color = (0.62, 0.60, 0.58, 1.0)
+    # Slightly desaturated "burnt orange" so it reads more PS2/industrial than neon.
+    header: Color = (0.88, 0.44, 0.12, 1.0)  # orange accent
+    text: Color = (0.93, 0.92, 0.89, 1.0)
+    text_muted: Color = (0.68, 0.66, 0.60, 1.0)
+    ink: Color = (0.07, 0.06, 0.05, 1.0)
     danger: Color = (255 / 255, 86 / 255, 120 / 255, 1.0)
+
+    # Retro depth cues (procedural, no textures required)
+    shadow: Color = (0.0, 0.0, 0.0, 0.55)
+    shadow_off_x: float = 0.02
+    shadow_off_y: float = -0.02
 
     def with_overrides(self, **kwargs) -> "Theme":
         """Return a copy with overridden fields (simple project-side customization hook)."""
@@ -56,7 +62,18 @@ class Theme:
         data = json.loads(p.read_text(encoding="utf-8"))
         kwargs = {}
         for k, v in dict(data).items():
-            if k in {"bg", "panel", "panel2", "outline", "header", "text", "text_muted", "ink", "danger"}:
+            if k in {
+                "bg",
+                "panel",
+                "panel2",
+                "outline",
+                "header",
+                "text",
+                "text_muted",
+                "ink",
+                "danger",
+                "shadow",
+            }:
                 if not (isinstance(v, (list, tuple)) and len(v) == 4):
                     raise ValueError(f"Theme color '{k}' must be a 4-item array.")
                 if all(isinstance(x, int) for x in v):
@@ -67,4 +84,3 @@ class Theme:
             else:
                 kwargs[k] = v
         return Theme().with_overrides(**kwargs)
-

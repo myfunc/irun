@@ -26,14 +26,14 @@ class TextInput:
         h: float,
         initial: str,
         on_submit,
-        frame_color: Color = (0.92, 0.92, 0.92, 1.0),
-        text_fg: Color = (0.08, 0.08, 0.10, 1.0),
+        frame_color: Color | None = None,
+        text_fg: Color | None = None,
     ) -> "TextInput":
         # Frame provides predictable box sizing and keeps the entry visually anchored.
         frame = DirectButton(
             parent=parent,
             text="",
-            frameColor=frame_color,
+            frameColor=frame_color or theme.panel2,
             relief=DGG.FLAT,
             frameSize=(-w / 2, w / 2, -h / 2, h / 2),
             pos=(x, 0, y),
@@ -47,7 +47,7 @@ class TextInput:
             width=22,  # approx; refined in runtime later
             text_scale=theme.small_scale,
             text_align=TextNode.ALeft,
-            text_fg=text_fg,
+            text_fg=text_fg or theme.text,
             frameColor=(0, 0, 0, 0),
             relief=DGG.FLAT,
             pos=(-w / 2 + 0.03, 0, -theme.small_scale * 0.40),
@@ -55,4 +55,3 @@ class TextInput:
             suppressMouse=False,
         )
         return TextInput(frame=frame, entry=entry)
-
