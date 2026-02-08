@@ -25,7 +25,7 @@ from ivan.physics.collision_world import CollisionWorld
 from ivan.physics.player_controller import PlayerController
 from ivan.physics.tuning import PhysicsTuning
 from ivan.paths import app_root as ivan_app_root
-from ivan.state import update_state
+from ivan.state import load_state, update_state
 from ivan.ui.debug_ui import DebugUI
 from ivan.ui.error_console_ui import ErrorConsoleUI
 from ivan.ui.input_debug_ui import InputDebugUI
@@ -50,6 +50,8 @@ class RunnerDemo(ShowBase):
 
         self.cfg = cfg
         self.tuning = PhysicsTuning()
+        self._loaded_state = load_state()
+        self._apply_persisted_tuning(self._loaded_state.tuning_overrides)
         self.disableMouse()
 
         self._yaw = 0.0
@@ -162,6 +164,25 @@ class RunnerDemo(ShowBase):
         if field in ("player_radius", "player_half_height", "crouch_half_height"):
             if self.player is not None:
                 self.player.apply_hull_settings()
+        self._persist_tuning_field(field)
+
+    def _apply_persisted_tuning(self, overrides: dict[str, float | bool]) -> None:
+        fields = set(PhysicsTuning.__annotations__.keys())
+        for field, value in overrides.items():
+            if field not in fields:
+                continue
+            setattr(self.tuning, field, value)
+
+    def _persist_tuning_field(self, field: str) -> None:
+        if field not in PhysicsTuning.__annotations__:
+            return
+        value = getattr(self.tuning, field)
+        persisted_value: float | bool
+        if isinstance(value, bool):
+            persisted_value = value
+        else:
+            persisted_value = float(value)
+        update_state(tuning_overrides={field: persisted_value})
 
     def _set_pointer_lock(self, locked: bool) -> None:
         self._pointer_locked = bool(locked)
@@ -627,10 +648,12 @@ class RunnerDemo(ShowBase):
 
             dt = min(globalClock.getDt(), 1.0 / 30.0)
 
+            menu_open = self._pause_menu_open or self._debug_menu_open
+
             # Precompute wish so debug overlay can show it even if movement seems dead.
-            wish = self._wish_direction()
-            noclip_toggle_down = self._is_key_down(self._noclip_toggle_key)
-            if noclip_toggle_down and not self._noclip_toggle_prev_down:
+            wish = LVector3f(0, 0, 0) if menu_open else self._wish_direction()
+            noclip_toggle_down = False if menu_open else self._is_key_down(self._noclip_toggle_key)
+            if not menu_open and noclip_toggle_down and not self._noclip_toggle_prev_down:
                 self._toggle_noclip()
             self._noclip_toggle_prev_down = noclip_toggle_down
 
@@ -659,13 +682,11 @@ class RunnerDemo(ShowBase):
                 self._input_debug_until = 0.0
                 self.input_debug.hide()
 
-            if self._pause_menu_open or self._debug_menu_open:
-                return Task.cont
+            if not menu_open:
+                self._update_look()
+            crouching = False if menu_open else self._is_crouching()
 
-            self._update_look()
-            crouching = self._is_crouching()
-
-            if self.tuning.autojump_enabled and self._is_key_down("space"):
+            if not menu_open and self.tuning.autojump_enabled and self._is_key_down("space"):
                 self.player.queue_jump()
 
             if self.tuning.noclip_enabled:
@@ -691,7 +712,7 @@ class RunnerDemo(ShowBase):
             self.ui.set_speed(hspeed)
             self.ui.set_status(
                 f"speed: {hspeed:.2f} | z-vel: {self.player.vel.z:.2f} | grounded: {self.player.grounded} | "
-                f"wall: {self.player.has_wall_for_jump()}"
+                f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()}"
             )
 
             return Task.cont

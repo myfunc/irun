@@ -8,13 +8,13 @@ Game apps use **Panda3D** directly to keep iteration fast for movement-focused p
 - `apps/ivan/src/ivan/__main__.py`: Ivan entrypoint (`python -m ivan`)
 - `apps/ivan/src/ivan/game.py`: App wiring (Panda3D ShowBase), input, camera, and frame update loop
 - `apps/ivan/src/ivan/maps/catalog.py`: runtime catalog helpers for shipped bundles and GoldSrc-like map discovery
-- `apps/ivan/src/ivan/state.py`: small persistent user state (last launched map, last game dir/mod)
+- `apps/ivan/src/ivan/state.py`: small persistent user state (last launched map, last game dir/mod, debug tuning overrides)
 - `apps/ivan/src/ivan/world/scene.py`: Scene building, external map-bundle loading (`--map`), spawn point/yaw
 - `apps/ivan/src/ivan/maps/steam.py`: Steam library scanning helpers (manual Half-Life auto-detect)
 - `apps/ivan/src/ivan/physics/tuning.py`: Tunable movement/physics parameters (exposed via debug/admin UI)
 - `apps/ivan/src/ivan/physics/player_controller.py`: Kinematic character controller (Quake3-style step + slide)
 - `apps/ivan/src/ivan/physics/collision_world.py`: Bullet collision query world (convex sweeps against static geometry)
-- `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (sliders, entries, toggles, HUD labels)
+- `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (CS-style grouped boxes, collapsible sections, scrollable content, normalized sliders)
 - `apps/ivan/src/ivan/ui/main_menu.py`: main menu controller (bundle list + import flow)
 - `apps/ivan/src/ivan/ui/retro_menu_ui.py`: retro-styled menu widgets (procedural background)
 - `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game ESC menu (Resume/Map Selector/Key Bindings/Back/Quit) and keybinding controls
@@ -32,7 +32,8 @@ Game apps use **Panda3D** directly to keep iteration fast for movement-focused p
 - In-game UI/input split:
   - `Esc` opens gameplay menu and unlocks cursor.
   - `` ` `` opens debug/admin tuning menu and unlocks cursor.
-  - Gameplay movement step supports optional noclip mode and optional autojump queueing.
+  - While either menu is open, gameplay input is blocked but simulation continues.
+  - Gameplay movement step supports optional noclip mode, optional autojump queueing, and surf behavior on configured slanted surfaces.
 
 ## Rendering Notes
 - Texture sizing: IVAN disables Panda3D's default power-of-two rescaling for textures (`textures-power-2 none`).

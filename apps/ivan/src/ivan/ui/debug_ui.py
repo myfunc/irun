@@ -1,14 +1,23 @@
 from __future__ import annotations
 
-import math
+from dataclasses import dataclass
 
 from direct.gui import DirectGuiGlobals as DGG
-from direct.gui.DirectGui import DirectButton, DirectFrame, DirectLabel
+from direct.gui.DirectGui import DirectButton, DirectFrame, DirectLabel, DirectScrolledFrame
 from direct.showbase import ShowBaseGlobal
 from panda3d.core import TextNode
 
 from ivan.physics.tuning import PhysicsTuning
 from ivan.ui.number_control import NumberControl
+
+
+@dataclass
+class _GroupUI:
+    box: DirectFrame
+    header_btn: DirectButton
+    content: DirectFrame
+    expanded: bool
+    content_height: float
 
 
 class DebugUI:
@@ -18,7 +27,7 @@ class DebugUI:
         ("max_ground_speed", 3.0, 40.0),
         ("max_air_speed", 3.0, 45.0),
         ("ground_accel", 5.0, 140.0),
-        ("jump_accel", 1.0, 90.0),
+        ("jump_accel", 1.0, 140.0),
         ("friction", 0.0, 25.0),
         ("air_control", 0.0, 1.0),
         ("air_counter_strafe_brake", 0.0, 90.0),
@@ -28,6 +37,10 @@ class DebugUI:
         ("crouch_eye_height", 0.15, 1.20),
         ("wall_jump_boost", 1.0, 20.0),
         ("wall_jump_cooldown", 0.0, 3.0),
+        ("surf_accel", 0.0, 120.0),
+        ("surf_gravity_scale", 0.0, 2.5),
+        ("surf_min_normal_z", 0.01, 0.50),
+        ("surf_max_normal_z", 0.20, 0.95),
         ("vault_jump_multiplier", 1.0, 2.5),
         ("vault_forward_boost", 0.0, 6.0),
         ("vault_min_ledge_height", 0.05, 0.8),
@@ -48,11 +61,72 @@ class DebugUI:
         "enable_jump_buffer",
         "autojump_enabled",
         "noclip_enabled",
+        "surf_enabled",
         "walljump_enabled",
         "wallrun_enabled",
         "vault_enabled",
         "crouch_enabled",
         "grapple_enabled",
+    ]
+
+    GROUPS: list[tuple[str, list[str], list[str]]] = [
+        (
+            "Movement Core",
+            [
+                "gravity",
+                "max_ground_speed",
+                "ground_accel",
+                "friction",
+                "max_air_speed",
+                "jump_accel",
+                "air_control",
+                "air_counter_strafe_brake",
+                "mouse_sensitivity",
+            ],
+            [],
+        ),
+        (
+            "Surf / Air Tech",
+            [
+                "surf_accel",
+                "surf_gravity_scale",
+                "surf_min_normal_z",
+                "surf_max_normal_z",
+                "wall_jump_boost",
+                "wall_jump_cooldown",
+            ],
+            ["surf_enabled", "walljump_enabled", "wallrun_enabled"],
+        ),
+        (
+            "Jump / Vault",
+            [
+                "jump_height",
+                "coyote_time",
+                "jump_buffer_time",
+                "vault_jump_multiplier",
+                "vault_forward_boost",
+                "vault_min_ledge_height",
+                "vault_max_ledge_height",
+                "vault_cooldown",
+            ],
+            ["enable_coyote", "enable_jump_buffer", "autojump_enabled", "vault_enabled"],
+        ),
+        (
+            "Collision / Hull",
+            [
+                "max_ground_slope_deg",
+                "step_height",
+                "ground_snap_dist",
+                "player_radius",
+                "player_half_height",
+                "player_eye_height",
+                "crouch_speed_multiplier",
+                "crouch_half_height",
+                "crouch_eye_height",
+                "noclip_speed",
+            ],
+            ["crouch_enabled", "noclip_enabled", "grapple_enabled"],
+        ),
     ]
 
     FIELD_HELP: dict[str, str] = {
@@ -64,17 +138,21 @@ class DebugUI:
         "jump_accel": "Lower: weaker bunnyhop/strafe acceleration in air. Higher: stronger airborne speed gain.",
         "friction": "Lower: keep momentum longer on ground. Higher: lose ground speed faster when input stops.",
         "air_control": "Lower: less steering authority in air. Higher: tighter mid-air steering.",
-        "air_counter_strafe_brake": "Lower: softer airborne counter-strafe braking. Higher: much more aggressive speed reduction without reversing.",
+        "air_counter_strafe_brake": "Lower: softer airborne counter-strafe braking. Higher: much more aggressive speed reduction.",
         "mouse_sensitivity": "Lower: slower camera turn response. Higher: faster camera turn response.",
-        "crouch_speed_multiplier": "Lower: much slower movement while crouched. Higher: crouched speed stays closer to normal speed.",
+        "crouch_speed_multiplier": "Lower: much slower movement while crouched. Higher: crouched speed closer to normal speed.",
         "crouch_half_height": "Lower: shorter crouch collision height. Higher: taller crouch collision height.",
         "crouch_eye_height": "Lower: camera sits lower while crouched. Higher: camera sits higher while crouched.",
         "wall_jump_boost": "Lower: weaker horizontal push from wall jumps. Higher: stronger push away from wall.",
         "wall_jump_cooldown": "Lower: wall-jumps can repeat rapidly. Higher: longer lockout between wall-jumps.",
+        "surf_accel": "Lower: weaker strafe-driven gain on surf ramps. Higher: stronger strafe acceleration.",
+        "surf_gravity_scale": "Lower: gentler gravity pull while surfing. Higher: stronger gravity pull along the ramp.",
+        "surf_min_normal_z": "Lower: allows surfing on flatter ramps. Higher: requires steeper ramps to enter surf state.",
+        "surf_max_normal_z": "Lower: only very steep ramps are surfable. Higher: allows less-steep ramps to count as surf.",
         "vault_jump_multiplier": "Lower: vault jump closer to normal jump height. Higher: vault launches higher.",
-        "vault_forward_boost": "Lower: little forward speed added by vault. Higher: stronger vault forward burst.",
+        "vault_forward_boost": "Lower: little forward speed from vault. Higher: stronger vault forward burst.",
         "vault_min_ledge_height": "Lower: vault can trigger on smaller ledges. Higher: requires a taller ledge.",
-        "vault_max_ledge_height": "Lower: only low-to-mid ledges are vaultable. Higher: allows vaulting taller ledges.",
+        "vault_max_ledge_height": "Lower: only low-to-mid ledges are vaultable. Higher: allows taller ledges.",
         "vault_cooldown": "Lower: vault can retrigger sooner. Higher: longer delay between vaults.",
         "coyote_time": "Lower: less post-edge jump forgiveness. Higher: more time to jump after leaving ground.",
         "jump_buffer_time": "Lower: tighter jump timing before landing. Higher: more forgiving early jump presses.",
@@ -89,6 +167,7 @@ class DebugUI:
         "enable_jump_buffer": "Lower (OFF): no jump input buffering. Higher (ON): buffered jump before landing.",
         "autojump_enabled": "Lower (OFF): jump on press only. Higher (ON): holding jump repeatedly queues jumps.",
         "noclip_enabled": "Lower (OFF): normal collision movement. Higher (ON): collision-free noclip movement.",
+        "surf_enabled": "Lower (OFF): slanted-surface surfing disabled. Higher (ON): surf ramps work with strafe hold.",
         "walljump_enabled": "Lower (OFF): wall-jumps disabled. Higher (ON): wall-jumps enabled.",
         "wallrun_enabled": "Lower (OFF): wallrun disabled. Higher (ON): side wallrun enabled.",
         "vault_enabled": "Lower (OFF): ledge vault disabled. Higher (ON): second-jump ledge vault enabled.",
@@ -111,41 +190,31 @@ class DebugUI:
         if getattr(ShowBaseGlobal, "base", None) is not None:
             aspect_ratio = float(ShowBaseGlobal.base.getAspectRatio())
 
+        panel_left = -aspect_ratio + 0.05
+        panel_right = min(panel_left + 2.16, aspect_ratio - 0.04)
         panel_top = 0.95
-        # aspect2d vertical span is 2.0 units (-1 to 1); keep debug panel within 2/3 of that.
-        panel_height = 2.0 * (2.0 / 3.0)
-        panel_bottom = panel_top - panel_height
-
-        panel_left = -aspect_ratio + 0.04
-        panel_inner_padding_x = 0.08
-        panel_inner_padding_y = 0.08
-        column_width = 0.98
-        base_row_step = 0.105
-
-        title_y = panel_top - panel_inner_padding_y
-        list_top = title_y - 0.18
-        status_y = panel_bottom + 0.07
-        list_bottom = status_y + 0.14
-
-        list_height = max(0.1, list_top - list_bottom)
-        max_rows = max(1, int(math.floor(list_height / base_row_step)) + 1)
+        panel_bottom = -0.86
 
         self.debug_root = DirectFrame(
             parent=aspect2d,
-            frameColor=(0.08, 0.08, 0.08, 0.80),
-            frameSize=(0.0, 1.0, panel_bottom, panel_top),
-            pos=(0, 0, 0),
+            frameColor=(0.03, 0.07, 0.11, 0.95),
+            frameSize=(panel_left, panel_right, panel_bottom, panel_top),
             relief=DGG.FLAT,
         )
-
+        DirectFrame(
+            parent=self.debug_root,
+            frameColor=(0.78, 0.65, 0.32, 0.95),
+            frameSize=(panel_left, panel_right, panel_top - 0.08, panel_top),
+            relief=DGG.FLAT,
+        )
         DirectLabel(
             parent=self.debug_root,
-            text="Debug / Physics Tuning (`)",
-            text_scale=0.055,
+            text="DEBUG / PHYSICS (`)  -  GoldSrc style",
+            text_scale=0.044,
             text_align=TextNode.ALeft,
-            text_fg=(0.95, 0.95, 0.95, 1),
+            text_fg=(0.06, 0.06, 0.06, 1.0),
             frameColor=(0, 0, 0, 0),
-            pos=(panel_left + panel_inner_padding_x, 0, title_y),
+            pos=(panel_left + 0.04, 0, panel_top - 0.053),
         )
 
         self.speed_hud_label = DirectLabel(
@@ -161,76 +230,46 @@ class DebugUI:
         self._tooltip_label = DirectLabel(
             parent=self.debug_root,
             text="",
-            text_scale=0.032,
+            text_scale=0.028,
             text_align=TextNode.ALeft,
-            text_fg=(0.98, 0.96, 0.75, 0.95),
+            text_fg=(0.96, 0.94, 0.76, 1.0),
             frameColor=(0, 0, 0, 0),
-            pos=(panel_left + panel_inner_padding_x, 0, panel_bottom + 0.035),
-            text_wordwrap=48,
+            pos=(panel_left + 0.03, 0, panel_bottom + 0.045),
+            text_wordwrap=54,
         )
         self._tooltip_label.hide()
 
-        numeric_controls = list(self.NUMERIC_CONTROLS)
-        toggle_controls = list(self.TOGGLE_CONTROLS)
+        scroll_top = panel_top - 0.11
+        scroll_bottom = panel_bottom + 0.12
+        self._scroll_width = (panel_right - panel_left) - 0.06
+        self._scroll = DirectScrolledFrame(
+            parent=self.debug_root,
+            frameColor=(0.05, 0.10, 0.15, 0.85),
+            frameSize=(panel_left + 0.02, panel_right - 0.02, scroll_bottom, scroll_top),
+            canvasSize=(0.0, self._scroll_width, -1.0, 0.0),
+            autoHideScrollBars=False,
+            manageScrollBars=True,
+            verticalScroll_frameColor=(0.10, 0.10, 0.10, 0.95),
+            verticalScroll_thumb_frameColor=(0.72, 0.72, 0.72, 1.0),
+            verticalScroll_incButton_frameColor=(0.22, 0.22, 0.22, 1.0),
+            verticalScroll_decButton_frameColor=(0.22, 0.22, 0.22, 1.0),
+        )
+        self._canvas = self._scroll.getCanvas()
 
-        total_items = len(numeric_controls) + len(toggle_controls)
-        desired_columns = max(1, int(math.ceil(total_items / max_rows)))
-
-        right_bound = aspect_ratio - 0.04
-        max_panel_width = right_bound - panel_left
-        max_columns = max(1, int((max_panel_width - (panel_inner_padding_x * 2.0)) // column_width))
-        # Keep the panel readable when shown alongside the System panel: prefer fewer, wider columns.
-        columns = min(desired_columns, max_columns, 2)
-        rows_per_col = int(math.ceil(total_items / columns))
-        row_step = list_height / max(1, rows_per_col - 1)
-        row_step = min(base_row_step, row_step)
-        row_step = max(0.060, row_step)
-
-        panel_width = (panel_inner_padding_x * 2.0) + (columns * column_width)
-        panel_width = min(panel_width, max_panel_width)
-
-        self.debug_root["frameSize"] = (panel_left, panel_left + panel_width, panel_bottom, panel_top)
-
+        self._numeric_ranges = {name: (low, high) for name, low, high in self.NUMERIC_CONTROLS}
         self._number_controls: dict[str, NumberControl] = {}
-        item_index = 0
-
-        for name, minimum, maximum in numeric_controls:
-            col = item_index // rows_per_col
-            row = item_index % rows_per_col
-            x = panel_left + panel_inner_padding_x + (col * column_width)
-            y = list_top - (row * row_step)
-            ctrl = NumberControl(
-                parent=self.debug_root,
-                name=name,
-                x=x,
-                y=y,
-                value=float(getattr(self._tuning, name)),
-                minimum=minimum,
-                maximum=maximum,
-                on_change=lambda val, field=name: self._set_tuning(field, val),
-            )
-            self._number_controls[name] = ctrl
-            tooltip = self._field_help.get(name)
-            if tooltip:
-                self._bind_tooltip(ctrl.label, tooltip)
-                self._bind_tooltip(ctrl.slider, tooltip)
-                self._bind_tooltip(ctrl.entry, tooltip)
-            item_index += 1
-
         self._toggle_buttons: dict[str, DirectButton] = {}
-        self._toggle_labels: dict[str, DirectLabel] = {}
-        for name in toggle_controls:
-            col = item_index // rows_per_col
-            row = item_index % rows_per_col
-            x = panel_left + panel_inner_padding_x + (col * column_width)
-            y = list_top - (row * row_step)
-            self._make_toggle_row(name, x, y)
-            item_index += 1
+        self._group_order: list[str] = []
+        self._groups: dict[str, _GroupUI] = {}
+
+        for group_name, numeric_fields, toggle_fields in self.GROUPS:
+            self._build_group(group_name, numeric_fields, toggle_fields)
+        self._relayout_groups()
 
         self.status_label = DirectLabel(
             parent=aspect2d,
             text="",
-            text_scale=0.040,
+            text_scale=0.038,
             text_align=TextNode.ALeft,
             text_fg=(0.95, 0.95, 0.95, 1),
             frameColor=(0, 0, 0, 0),
@@ -238,6 +277,109 @@ class DebugUI:
         )
 
         self.debug_root.hide()
+
+    def _build_group(self, group_name: str, numeric_fields: list[str], toggle_fields: list[str]) -> None:
+        box = DirectFrame(
+            parent=self._canvas,
+            frameColor=(0.09, 0.14, 0.20, 0.95),
+            frameSize=(0.0, self._scroll_width - 0.05, -0.4, 0.0),
+            relief=DGG.FLAT,
+        )
+        header_btn = DirectButton(
+            parent=box,
+            text=(f"[-] {group_name}",) * 4,
+            text_scale=0.034,
+            text_align=TextNode.ALeft,
+            text_fg=(0.96, 0.90, 0.66, 1.0),
+            frameColor=(0.14, 0.24, 0.35, 0.98),
+            relief=DGG.FLAT,
+            scale=1.0,
+            frameSize=(0.0, self._scroll_width - 0.05, -0.06, 0.0),
+            pos=(0.0, 0.0, 0.0),
+            command=lambda n=group_name: self._toggle_group(n),
+        )
+        content = DirectFrame(
+            parent=box,
+            frameColor=(0.06, 0.10, 0.16, 0.98),
+            frameSize=(0.0, self._scroll_width - 0.05, -0.3, 0.0),
+            relief=DGG.FLAT,
+            pos=(0.0, 0.0, -0.08),
+        )
+
+        row = 0
+        row_h = 0.10
+        for field in numeric_fields:
+            if field not in self._numeric_ranges:
+                continue
+            low, high = self._numeric_ranges[field]
+            y = -0.05 - row * row_h
+            ctrl = NumberControl(
+                parent=content,
+                name=field,
+                x=0.03,
+                y=y,
+                value=float(getattr(self._tuning, field)),
+                minimum=low,
+                maximum=high,
+                on_change=lambda val, f=field: self._set_tuning(f, val),
+                slider_offset=0.66,
+                entry_offset=1.00,
+                normalized_slider=True,
+                normalized_entry=True,
+                slider_scale=0.078,
+                entry_scale=0.033,
+                precision=3 if high <= 3.0 else 2,
+            )
+            self._number_controls[field] = ctrl
+            tooltip = self._field_help.get(field)
+            if tooltip:
+                self._bind_tooltip(ctrl.label, tooltip)
+                self._bind_tooltip(ctrl.slider, tooltip)
+                self._bind_tooltip(ctrl.entry, tooltip)
+            row += 1
+
+        for field in toggle_fields:
+            y = -0.05 - row * row_h
+            self._make_toggle_row(parent=content, field=field, x=0.03, y=y)
+            row += 1
+
+        content_height = max(0.12, 0.10 + row * row_h)
+        content["frameSize"] = (0.0, self._scroll_width - 0.05, -content_height, 0.0)
+
+        self._group_order.append(group_name)
+        self._groups[group_name] = _GroupUI(
+            box=box,
+            header_btn=header_btn,
+            content=content,
+            expanded=True,
+            content_height=content_height,
+        )
+
+    def _toggle_group(self, group_name: str) -> None:
+        g = self._groups[group_name]
+        g.expanded = not g.expanded
+        self._relayout_groups()
+
+    def _relayout_groups(self) -> None:
+        y_cursor = -0.02
+        for group_name in self._group_order:
+            g = self._groups[group_name]
+            g.box.setPos(0.01, 0.0, y_cursor)
+            header_h = 0.065
+            if g.expanded:
+                g.content.show()
+                total_h = header_h + g.content_height + 0.04
+                g.box["frameSize"] = (0.0, self._scroll_width - 0.05, -total_h, 0.0)
+                g.content.setPos(0.0, 0.0, -0.09)
+                g.header_btn["text"] = (f"[-] {group_name}",) * 4
+            else:
+                g.content.hide()
+                total_h = header_h + 0.02
+                g.box["frameSize"] = (0.0, self._scroll_width - 0.05, -total_h, 0.0)
+                g.header_btn["text"] = (f"[+] {group_name}",) * 4
+            y_cursor -= total_h + 0.03
+
+        self._scroll["canvasSize"] = (0.0, self._scroll_width, y_cursor - 0.02, 0.0)
 
     def show(self) -> None:
         self.debug_root.show()
@@ -259,31 +401,30 @@ class DebugUI:
         setattr(self._tuning, field, value)
         self._on_tuning_change(field)
 
-    def _make_toggle_row(self, field: str, x: float, y: float) -> None:
+    def _make_toggle_row(self, *, parent, field: str, x: float, y: float) -> None:
         pretty_name = field.replace("_", " ")
         label = DirectLabel(
-            parent=self.debug_root,
+            parent=parent,
             text=pretty_name,
-            text_scale=0.042,
+            text_scale=0.031,
             text_align=TextNode.ALeft,
             text_fg=(0.93, 0.93, 0.93, 1),
             frameColor=(0, 0, 0, 0),
             pos=(x, 0, y),
         )
-        self._toggle_labels[field] = label
 
         button = DirectButton(
-            parent=self.debug_root,
+            parent=parent,
             text=("OFF", "OFF", "OFF", "OFF"),
-            text_scale=0.052,
+            text_scale=0.042,
             text_fg=(0.95, 0.95, 0.95, 1),
             frameColor=(0.20, 0.20, 0.20, 0.95),
             relief=DGG.FLAT,
             command=self._toggle_bool_field,
             extraArgs=[field],
-            scale=0.060,
-            frameSize=(-2.1, 2.1, -0.55, 0.55),
-            pos=(x + 0.84, 0, y - 0.01),
+            scale=0.055,
+            frameSize=(-1.9, 1.9, -0.42, 0.42),
+            pos=(x + 1.02, 0, y - 0.008),
         )
         self._toggle_buttons[field] = button
         self._refresh_toggle_button(field)

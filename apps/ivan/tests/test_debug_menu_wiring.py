@@ -214,3 +214,17 @@ def test_coyote_time_allows_jump_briefly_after_leaving_ground() -> None:
     ctrl.queue_jump()
     ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
     assert ctrl.vel.z > 0.0
+
+
+def test_surf_strafe_accelerates_on_slanted_surface() -> None:
+    base = _make_controller(PhysicsTuning(surf_enabled=True, surf_accel=24.0))
+    strafe = _make_controller(PhysicsTuning(surf_enabled=True, surf_accel=24.0))
+
+    for ctrl in (base, strafe):
+        ctrl.grounded = False
+        ctrl.vel = LVector3f(2.0, 3.0, -1.5)
+        ctrl._set_surf_contact(LVector3f(0.74, 0.0, 0.66))
+
+    base.step(dt=0.016, wish_dir=LVector3f(0.0, 1.0, 0.0), yaw_deg=0.0, crouching=False)
+    strafe.step(dt=0.016, wish_dir=LVector3f(1.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+    assert strafe.vel.y > base.vel.y

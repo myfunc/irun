@@ -39,6 +39,8 @@ class PlayerController:
         self._wall_contact_timer = 999.0
         self._wall_normal = LVector3f(0, 0, 0)
         self._wall_contact_point = LVector3f(0, 0, 0)
+        self._surf_contact_timer = 999.0
+        self._surf_normal = LVector3f(0, 0, 0)
         self._wall_jump_lock_timer = 999.0
         self._vault_cooldown_timer = 999.0
         self._ground_normal = LVector3f(0, 0, 1)
@@ -89,6 +91,7 @@ class PlayerController:
         dt = float(dt)
         self._update_crouch_state(crouching)
         self._wall_contact_timer += dt
+        self._surf_contact_timer += dt
         self._wall_jump_lock_timer += dt
         self._vault_cooldown_timer += dt
         self._jump_buffer_timer = max(0.0, self._jump_buffer_timer - dt)
@@ -108,22 +111,26 @@ class PlayerController:
             if self._consume_jump_request() and self.can_ground_jump():
                 self._apply_jump()
         else:
-            counter_strafe = self._is_counter_strafe(wish_dir)
-            if counter_strafe:
-                # Opposite input in air should brake aggressively instead of accelerating backward.
-                self._apply_air_counter_strafe_brake(wish_dir, dt)
+            surf_active = self.has_surf_surface() and self._is_strafe_input(wish_dir=wish_dir, yaw_deg=yaw_deg)
+            if surf_active:
+                self._apply_surf_movement(wish_dir=wish_dir, yaw_deg=yaw_deg, dt=dt)
             else:
-                self._accelerate(wish_dir, float(self.tuning.max_air_speed), float(self.tuning.jump_accel), dt)
-                self._air_control(wish_dir, dt)
+                counter_strafe = self._is_counter_strafe(wish_dir)
+                if counter_strafe:
+                    # Opposite input in air should brake aggressively instead of accelerating backward.
+                    self._apply_air_counter_strafe_brake(wish_dir, dt)
+                else:
+                    self._accelerate(wish_dir, float(self.tuning.max_air_speed), float(self.tuning.jump_accel), dt)
+                    self._air_control(wish_dir, dt)
 
-            gravity_scale = 1.0
-            if self.tuning.wallrun_enabled and self.has_wall_for_jump():
-                # Preserve upward jump motion along walls, but reduce fall speed while descending.
-                if self.vel.z <= 0.0:
-                    gravity_scale = 0.55
-                    self.vel.z = max(self.vel.z, -2.0)
+                gravity_scale = 1.0
+                if self.tuning.wallrun_enabled and self.has_wall_for_jump():
+                    # Preserve upward jump motion along walls, but reduce fall speed while descending.
+                    if self.vel.z <= 0.0:
+                        gravity_scale = 0.55
+                        self.vel.z = max(self.vel.z, -2.0)
 
-            self.vel.z -= float(self.tuning.gravity) * gravity_scale * dt
+                self.vel.z -= float(self.tuning.gravity) * gravity_scale * dt
 
             if self._consume_jump_request():
                 # Coyote jump must also be available from the airborne branch.
@@ -386,6 +393,63 @@ class PlayerController:
         self.vel.x = horiz.x * new_speed
         self.vel.y = horiz.y * new_speed
 
+    def has_surf_surface(self) -> bool:
+        return bool(self.tuning.surf_enabled) and self._surf_contact_timer <= 0.30 and self._surf_normal.lengthSquared() > 0.01
+
+    def _is_strafe_input(self, *, wish_dir: LVector3f, yaw_deg: float) -> bool:
+        if wish_dir.lengthSquared() <= 1e-12:
+            return False
+        h_rad = math.radians(float(yaw_deg))
+        forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0.0)
+        if forward.lengthSquared() > 1e-12:
+            forward.normalize()
+        side_component = abs(wish_dir.dot(forward))
+        return side_component < 0.62
+
+    def _apply_surf_movement(self, *, wish_dir: LVector3f, yaw_deg: float, dt: float) -> None:
+        n = LVector3f(self._surf_normal)
+        if n.lengthSquared() <= 1e-12:
+            return
+        n.normalize()
+
+        pre_speed = self.vel.length()
+        # Keep velocity tangent to surf plane to avoid sticking/bouncing.
+        self.vel -= n * self.vel.dot(n)
+        post_clip_speed = self.vel.length()
+        if post_clip_speed > 1e-6 and pre_speed > post_clip_speed:
+            # Preserve momentum through ramp-angle transitions.
+            self.vel *= pre_speed / post_clip_speed
+
+        wish_plane = wish_dir - n * wish_dir.dot(n)
+        if wish_plane.lengthSquared() > 1e-12:
+            wish_plane.normalize()
+
+        # Classic surf feel: strafe keys add tangent speed along the ramp edge.
+        h_rad = math.radians(float(yaw_deg))
+        right = LVector3f(math.cos(h_rad), math.sin(h_rad), 0.0)
+        if right.lengthSquared() > 1e-12:
+            right.normalize()
+        strafe_amount = max(-1.0, min(1.0, float(wish_dir.dot(right))))
+        strafe_sign = 1.0 if strafe_amount > 0.08 else (-1.0 if strafe_amount < -0.08 else 0.0)
+
+        edge_dir = LVector3f(0.0, 0.0, 1.0).cross(n)
+        if edge_dir.lengthSquared() > 1e-12:
+            edge_dir.normalize()
+            if strafe_sign != 0.0:
+                if edge_dir.dot(right) * strafe_sign < 0.0:
+                    edge_dir *= -1.0
+                edge_accel = float(self.tuning.surf_accel) * abs(strafe_amount)
+                self.vel += edge_dir * edge_accel * dt
+            if wish_plane.lengthSquared() > 1e-12:
+                # Fallback for mixed input so surf tuning still has visible effect.
+                self.vel += wish_plane * (float(self.tuning.surf_accel) * 0.25) * dt
+
+        gravity_vec = LVector3f(0.0, 0.0, -float(self.tuning.gravity))
+        gravity_on_plane = gravity_vec - n * gravity_vec.dot(n)
+        gravity_scale = float(self.tuning.surf_gravity_scale) * (1.0 - 0.55 * abs(strafe_amount))
+        gravity_scale = max(0.15, gravity_scale)
+        self.vel += gravity_on_plane * gravity_scale * dt
+
     def _refresh_wall_contact_from_probe(self) -> None:
         n, p = self._probe_nearby_wall()
         if n.lengthSquared() <= 1e-12:
@@ -437,6 +501,12 @@ class PlayerController:
             self._wall_normal.normalize()
         self._wall_contact_point = LVector3f(point)
         self._wall_contact_timer = 0.0
+
+    def _set_surf_contact(self, normal: LVector3f) -> None:
+        self._surf_normal = LVector3f(normal)
+        if self._surf_normal.lengthSquared() > 1e-12:
+            self._surf_normal.normalize()
+        self._surf_contact_timer = 0.0
 
     def _player_aabb(self) -> AABB:
         return AABB(self.pos - self.player_half, self.pos + self.player_half)
@@ -492,6 +562,17 @@ class PlayerController:
                 return wall_n
         return n
 
+    def _is_surf_normal(self, normal: LVector3f) -> bool:
+        if not bool(self.tuning.surf_enabled):
+            return False
+        n = LVector3f(normal)
+        if n.lengthSquared() <= 1e-12:
+            return False
+        n.normalize()
+        min_z = max(0.01, min(0.95, float(self.tuning.surf_min_normal_z)))
+        max_z = max(min_z, min(0.98, float(self.tuning.surf_max_normal_z)))
+        return min_z <= n.z <= max_z
+
     def _bullet_sweep_closest(self, from_pos: LVector3f, to_pos: LVector3f):
         assert self.collision is not None
         return self.collision.sweep_closest(from_pos, to_pos)
@@ -507,6 +588,10 @@ class PlayerController:
         n = LVector3f(hit.getHitNormal())
         if n.lengthSquared() > 1e-12:
             n.normalize()
+        if self._is_surf_normal(n):
+            self._set_surf_contact(n)
+            self.grounded = False
+            return
         self._ground_normal = n
         self.grounded = n.z > walkable_z
 
@@ -544,7 +629,9 @@ class PlayerController:
             pos = pos + n * skin
 
             # Contact classification.
-            if n.z > walkable_z:
+            if self._is_surf_normal(n):
+                self._set_surf_contact(n)
+            elif n.z > walkable_z:
                 self.grounded = True
                 self._ground_normal = LVector3f(n)
                 if self.vel.z < 0.0:
@@ -639,6 +726,8 @@ class PlayerController:
         n = LVector3f(hit.getHitNormal())
         if n.lengthSquared() > 1e-12:
             n.normalize()
+        if self._is_surf_normal(n):
+            return
         if n.z <= walkable_z:
             return
 
