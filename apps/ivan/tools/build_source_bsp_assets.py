@@ -33,13 +33,13 @@ def parse_angles(value: str | None) -> tuple[float, float, float] | None:
 
 
 def convert_pos(pos, scale: float) -> list[float]:
-    # Source -> Panda convention: keep Z-up and flip Y to keep handedness usable in Panda scene.
-    return [float(pos.x) * scale, -float(pos.y) * scale, float(pos.z) * scale]
+    # Keep BSP coordinates in the same space as the runtime (scale only).
+    return [float(pos.x) * scale, float(pos.y) * scale, float(pos.z) * scale]
 
 
 def convert_normal(n) -> list[float]:
-    # Flip Y to match convert_pos; normals are unit vectors (no scaling).
-    return [float(n.x), -float(n.y), float(n.z)]
+    # Normals are unit vectors (no scaling).
+    return [float(n.x), float(n.y), float(n.z)]
 
 def convert_uv_base(uv) -> list[float]:
     # Source BSP UV convention is effectively upside-down compared to how Panda3D
@@ -61,7 +61,7 @@ def pick_spawn(entities, scale: float) -> tuple[list[float], float]:
             continue
         angles = parse_angles(ent.get("angles"))
         yaw = float(angles[1]) if angles else 0.0
-        pos = [origin[0] * scale, -origin[1] * scale, origin[2] * scale]
+        pos = [origin[0] * scale, origin[1] * scale, origin[2] * scale]
         return (pos, yaw)
     return fallback
 
@@ -352,8 +352,10 @@ def main() -> None:
             verts = poly.vertices
             for i in range(1, len(verts) - 1):
                 v0 = verts[0]
-                v1 = verts[i]
-                v2 = verts[i + 1]
+                # Keep coordinates unmirrored and instead flip triangle winding here
+                # so Panda3D backface culling matches expected front faces.
+                v1 = verts[i + 1]
+                v2 = verts[i]
 
                 p0 = convert_pos(v0.position, args.scale)
                 p1 = convert_pos(v1.position, args.scale)
