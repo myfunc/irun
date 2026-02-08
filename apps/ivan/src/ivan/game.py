@@ -11,8 +11,10 @@ from direct.showbase.ShowBase import ShowBase
 from direct.task import Task
 from panda3d.core import (
     ButtonHandle,
+    Filename,
     KeyboardButton,
     LVector3f,
+    PNMImage,
     WindowProperties,
     loadPrcFileData,
 )
@@ -35,6 +37,12 @@ from ivan.world.scene import WorldScene
 class RunnerDemo(ShowBase):
     def __init__(self, cfg: RunConfig) -> None:
         loadPrcFileData("", "audio-library-name null")
+        # GoldSrc and some Source assets include many non-power-of-two (NPOT) textures.
+        # Panda3D can rescale these to the nearest power-of-two by default, which breaks
+        # BSP UV mapping (textures look skewed/flipped). Disable that behavior.
+        loadPrcFileData("", "textures-power-2 none")
+        loadPrcFileData("", "textures-square none")
+        loadPrcFileData("", "textures-auto-power-2 0")
         if cfg.smoke:
             loadPrcFileData("", "window-type offscreen")
 
@@ -62,6 +70,9 @@ class RunnerDemo(ShowBase):
         self._importing: bool = False
         self._import_error: str | None = None
         self._pending_map_json: str | None = None
+        self._menu_hold_dir: int = 0
+        self._menu_hold_since: float = 0.0
+        self._menu_hold_next: float = 0.0
 
         self.error_log = ErrorLog(max_items=30)
 
@@ -115,11 +126,19 @@ class RunnerDemo(ShowBase):
         self.accept("f2", self.input_debug.toggle)
         self.accept("f3", self.error_console.toggle)
         self.accept("shift-f3", lambda: self._safe_call("errors.clear", self._clear_errors))
-        self.accept("arrow_up", self._menu_up)
-        self.accept("arrow_down", self._menu_down)
+        self.accept("arrow_up", lambda: self._menu_nav_press(-1))
+        self.accept("arrow_down", lambda: self._menu_nav_press(1))
+        self.accept("arrow_up-up", lambda: self._menu_nav_release(-1))
+        self.accept("arrow_down-up", lambda: self._menu_nav_release(1))
+        self.accept("arrow_left", lambda: self._menu_page(-1))
+        self.accept("arrow_right", lambda: self._menu_page(1))
         self.accept("enter", self._menu_select)
-        self.accept("w", self._menu_up)
-        self.accept("s", self._menu_down)
+        self.accept("w", lambda: self._menu_nav_press(-1))
+        self.accept("s", lambda: self._menu_nav_press(1))
+        self.accept("w-up", lambda: self._menu_nav_release(-1))
+        self.accept("s-up", lambda: self._menu_nav_release(1))
+        self.accept("control-f", lambda: self._safe_call("menu.search", self._menu_toggle_search))
+        self.accept("meta-f", lambda: self._safe_call("menu.search", self._menu_toggle_search))
 
     def _on_tuning_change(self, field: str) -> None:
         if field in ("player_radius", "player_half_height", "crouch_half_height"):
@@ -154,6 +173,7 @@ class RunnerDemo(ShowBase):
 
     def _enter_main_menu(self) -> None:
         self._mode = "menu"
+        self._menu_hold_dir = 0
         self._pointer_locked = False
         self._last_mouse = None
         props = WindowProperties()
@@ -197,13 +217,42 @@ class RunnerDemo(ShowBase):
 
         self._enter_main_menu()
 
-    def _menu_up(self) -> None:
+    def _menu_toggle_search(self) -> None:
         if self._mode == "menu" and self._menu is not None and not self._importing:
-            self._safe_call("menu.up", self._menu.on_up)
+            self._menu.toggle_search()
 
-    def _menu_down(self) -> None:
-        if self._mode == "menu" and self._menu is not None and not self._importing:
-            self._safe_call("menu.down", self._menu.on_down)
+    def _menu_nav_press(self, dir01: int) -> None:
+        if self._mode != "menu" or self._menu is None or self._importing:
+            return
+        if self._menu.is_search_active():
+            return
+        now = float(globalClock.getFrameTime())
+        d = -1 if dir01 < 0 else 1
+        if self._menu_hold_dir != d:
+            self._menu_hold_dir = d
+            self._menu_hold_since = now
+            self._menu_hold_next = now + 0.28
+        self._safe_call("menu.move", lambda: self._menu.move(d))
+
+    def _menu_nav_release(self, dir01: int) -> None:
+        d = -1 if dir01 < 0 else 1
+        if self._menu_hold_dir == d:
+            self._menu_hold_dir = 0
+
+    def _menu_page(self, dir01: int) -> None:
+        if self._mode != "menu" or self._menu is None or self._importing:
+            return
+        if self._menu.is_search_active():
+            return
+        d = -1 if dir01 < 0 else 1
+        shift = False
+        try:
+            if self.mouseWatcherNode is not None:
+                shift = bool(self.mouseWatcherNode.isButtonDown(KeyboardButton.shift()))
+        except Exception:
+            shift = False
+        jump = 20 if shift else 10
+        self._safe_call("menu.page", lambda: self._menu.move(d * jump))
 
     def _menu_select(self) -> None:
         if self._mode != "menu" or self._menu is None or self._importing:
@@ -265,56 +314,61 @@ class RunnerDemo(ShowBase):
         self._import_thread.start()
 
     def _start_game(self, map_json: str | None) -> None:
-        if map_json:
-            update_state(last_map_json=map_json)
+        try:
+            if map_json:
+                update_state(last_map_json=map_json)
 
-        # Tear down menu.
-        if self._menu is not None:
-            self._menu.destroy()
-            self._menu = None
+            # Tear down menu.
+            if self._menu is not None:
+                self._menu.destroy()
+                self._menu = None
 
-        self._mode = "game"
-        self._pointer_locked = True
-        self._last_mouse = None
-        if not self.cfg.smoke:
-            props = WindowProperties()
-            props.setCursorHidden(True)
-            props.setMouseMode(WindowProperties.M_relative)
-            self.win.requestProperties(props)
-        self.ui.speed_hud_label.show()
-        self.ui.hide()
-        self.pause_ui.hide()
-        if not self.cfg.smoke:
-            self._center_mouse()
-            # Show input debug briefly after loading a map (useful when mouse/keyboard seem dead).
-            self._input_debug_until = globalClock.getFrameTime() + 8.0
-            self.input_debug.show()
+            self._mode = "game"
+            self._pointer_locked = True
+            self._last_mouse = None
+            if not self.cfg.smoke:
+                props = WindowProperties()
+                props.setCursorHidden(True)
+                props.setMouseMode(WindowProperties.M_relative)
+                self.win.requestProperties(props)
+            self.ui.speed_hud_label.show()
+            self.ui.hide()
+            self.pause_ui.hide()
+            if not self.cfg.smoke:
+                self._center_mouse()
+                # Show input debug briefly after loading a map (useful when mouse/keyboard seem dead).
+                self._input_debug_until = globalClock.getFrameTime() + 8.0
+                self.input_debug.show()
 
-        # Reset world root to allow reloading.
-        self.world_root.removeNode()
-        self.world_root = self.render.attachNewNode("world-root")
+            # Reset world root to allow reloading.
+            self.world_root.removeNode()
+            self.world_root = self.render.attachNewNode("world-root")
 
-        cfg = RunConfig(smoke=self.cfg.smoke, map_json=map_json, hl_root=self.cfg.hl_root, hl_mod=self.cfg.hl_mod)
-        self.scene = WorldScene()
-        self.scene.build(cfg=cfg, loader=self.loader, render=self.world_root, camera=self.camera)
-        self._yaw = float(self.scene.spawn_yaw)
+            cfg = RunConfig(smoke=self.cfg.smoke, map_json=map_json, hl_root=self.cfg.hl_root, hl_mod=self.cfg.hl_mod)
+            self.scene = WorldScene()
+            self.scene.build(cfg=cfg, loader=self.loader, render=self.world_root, camera=self.camera)
+            self._yaw = float(self.scene.spawn_yaw)
 
-        self.collision = CollisionWorld(
-            aabbs=self.scene.aabbs,
-            triangles=self.scene.triangles,
-            triangle_collision_mode=self.scene.triangle_collision_mode,
-            player_radius=float(self.tuning.player_radius),
-            player_half_height=float(self.tuning.player_half_height),
-            render=self.world_root,
-        )
+            self.collision = CollisionWorld(
+                aabbs=self.scene.aabbs,
+                triangles=self.scene.triangles,
+                triangle_collision_mode=self.scene.triangle_collision_mode,
+                player_radius=float(self.tuning.player_radius),
+                player_half_height=float(self.tuning.player_half_height),
+                render=self.world_root,
+            )
 
-        self.player = PlayerController(
-            tuning=self.tuning,
-            spawn_point=self.scene.spawn_point,
-            aabbs=self.scene.aabbs,
-            collision=self.collision,
-        )
-        self.player_node.setPos(self.player.pos)
+            self.player = PlayerController(
+                tuning=self.tuning,
+                spawn_point=self.scene.spawn_point,
+                aabbs=self.scene.aabbs,
+                collision=self.collision,
+            )
+            self.player_node.setPos(self.player.pos)
+        except Exception as e:
+            # Avoid leaving the app in a broken half-loaded state where input feels "dead".
+            self._handle_unhandled_error(context="start_game", exc=e)
+            self._back_to_menu()
 
     def _clear_errors(self) -> None:
         self.error_log.clear()
@@ -441,6 +495,7 @@ class RunnerDemo(ShowBase):
             if self._mode == "menu":
                 if self._menu is not None:
                     self._menu.tick(globalClock.getFrameTime())
+                self._update_menu_hold(now=float(globalClock.getFrameTime()))
                 if self._import_error and self._menu is not None:
                     # Importer failures are not unhandled exceptions, but are still useful in the error feed.
                     self.error_log.log_message(context="import", message=self._import_error)
@@ -514,6 +569,33 @@ class RunnerDemo(ShowBase):
             self._handle_unhandled_error(context="update.loop", exc=e)
             return Task.cont
 
+    def _update_menu_hold(self, *, now: float) -> None:
+        if self._menu_hold_dir == 0 or self._menu is None or self._importing:
+            return
+        if self._menu.is_search_active():
+            return
+        if now < self._menu_hold_next:
+            return
+
+        t = max(0.0, now - self._menu_hold_since)
+        # Accelerate by shortening interval and increasing step size.
+        if t < 0.8:
+            interval = 0.11
+            step = 1
+        elif t < 1.6:
+            interval = 0.08
+            step = 2
+        elif t < 3.0:
+            interval = 0.05
+            step = 4
+        else:
+            interval = 0.03
+            step = 8
+
+        d = self._menu_hold_dir * step
+        self._safe_call("menu.hold", lambda: self._menu.move(d))
+        self._menu_hold_next = now + interval
+
     def _is_crouching(self) -> bool:
         if self.mouseWatcherNode is None:
             return False
@@ -522,11 +604,52 @@ class RunnerDemo(ShowBase):
     def _smoke_exit(self, task: Task) -> int:
         self._smoke_frames -= 1
         if self._smoke_frames <= 0:
+            self._write_smoke_screenshot()
             self.userExit()
             return Task.done
         return Task.cont
 
 
-def run(*, smoke: bool = False, map_json: str | None = None, hl_root: str | None = None, hl_mod: str = "valve") -> None:
-    app = RunnerDemo(RunConfig(smoke=smoke, map_json=map_json, hl_root=hl_root, hl_mod=hl_mod))
+    def _write_smoke_screenshot(self) -> None:
+        if not self.cfg.smoke or not self.cfg.smoke_screenshot:
+            return
+        if self.win is None:
+            return
+        out = Path(self.cfg.smoke_screenshot).expanduser()
+        try:
+            out.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # Best-effort: don't fail smoke runs if filesystem is read-only.
+            return
+
+        try:
+            # Ensure at least one fresh frame is rendered before capturing.
+            self.graphicsEngine.renderFrame()
+            img: PNMImage | None = None
+            try:
+                img = self.win.getScreenshot()
+            except Exception:
+                # Older Panda3D builds can require an output buffer.
+                tmp = PNMImage()
+                ok = self.win.getScreenshot(tmp)
+                img = tmp if ok else None
+            if img is None:
+                return
+            img.write(Filename.fromOsSpecific(str(out)))
+        except Exception:
+            # Best-effort screenshot. Smoke mode is meant to never hard-fail.
+            return
+
+
+def run(
+    *,
+    smoke: bool = False,
+    smoke_screenshot: str | None = None,
+    map_json: str | None = None,
+    hl_root: str | None = None,
+    hl_mod: str = "valve",
+) -> None:
+    app = RunnerDemo(
+        RunConfig(smoke=smoke, smoke_screenshot=smoke_screenshot, map_json=map_json, hl_root=hl_root, hl_mod=hl_mod)
+    )
     app.run()
