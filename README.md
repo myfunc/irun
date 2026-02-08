@@ -27,7 +27,6 @@ List apps:
 ```bash
 ./runapp list
 ```
-
 ## Quick Start (Baker / mapperoni)
 ```bash
 cd apps/baker
