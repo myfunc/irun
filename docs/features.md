@@ -26,6 +26,7 @@
   - Converts GoldSrc skybox textures from `gfx/env/` into bundle `materials/skybox/` (when present)
   - Extracts baked GoldSrc lightmaps (RGB) into bundle `lightmaps/` and renders them in runtime (supports up to 4 light styles per face)
 - Ivan: GoldSrc PVS visibility culling (BSP VISIBILITY + leaf surface lists) to avoid rendering geometry hidden behind walls (when cache is available)
+  - Currently disabled by default (can be toggled ON in the debug menu via `vis_culling_enabled`).
 - Ivan: main menu (UI kit) with map bundle selection and on-demand GoldSrc/Xash3D import from a chosen game directory
   - Fast navigation: hold Up/Down for accelerated scrolling, Left/Right page jump, and `Cmd+F`/`Ctrl+F` search
   - Delete imported/generated map bundles from the UI (safe delete: `assets/imported/**` and `assets/generated/*`)
