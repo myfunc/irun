@@ -13,6 +13,7 @@ class ClientWelcome:
     token: str
     tick_rate: int
     udp_port: int
+    map_json: str | None = None
 
 
 class MultiplayerClient:
@@ -25,6 +26,10 @@ class MultiplayerClient:
         self.player_id: int = 0
         self.token: str = ""
         self.tick_rate: int = 60
+        self.server_map_json: str | None = None
+        self.can_configure: bool = False
+        self.server_tuning_version: int = 0
+        self.server_tuning: dict[str, float | bool] | None = None
 
         self._tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._tcp.settimeout(5.0)
@@ -45,6 +50,22 @@ class MultiplayerClient:
         self.player_id = int(obj.get("player_id") or 0)
         self.token = str(obj.get("token") or "")
         self.tick_rate = int(obj.get("tick_rate") or 60)
+        map_json_val = obj.get("map_json")
+        if isinstance(map_json_val, str):
+            self.server_map_json = map_json_val.strip() or None
+        self.can_configure = bool(obj.get("can_configure"))
+        self.server_tuning_version = int(obj.get("cfg_v") or 0)
+        tuning_val = obj.get("tuning")
+        if isinstance(tuning_val, dict):
+            out: dict[str, float | bool] = {}
+            for k, v in tuning_val.items():
+                if not isinstance(k, str):
+                    continue
+                if isinstance(v, bool):
+                    out[k] = bool(v)
+                elif isinstance(v, (int, float)):
+                    out[k] = float(v)
+            self.server_tuning = out
         udp_port = int(obj.get("udp_port") or 0)
         if not self.token or self.player_id <= 0 or udp_port <= 0:
             raise RuntimeError("Incomplete welcome packet")
@@ -105,3 +126,23 @@ class MultiplayerClient:
                 continue
             self._latest_snapshot = obj
         return self._latest_snapshot
+
+    def send_tuning(self, tuning: dict[str, float | bool]) -> None:
+        payload: dict[str, float | bool] = {}
+        for k, v in tuning.items():
+            if not isinstance(k, str):
+                continue
+            if isinstance(v, bool):
+                payload[k] = bool(v)
+            elif isinstance(v, (int, float)):
+                payload[k] = float(v)
+        try:
+            self._tcp.sendall(encode_json({"t": "cfg", "tuning": payload}))
+        except Exception:
+            pass
+
+    def send_respawn(self) -> None:
+        try:
+            self._tcp.sendall(encode_json({"t": "respawn"}))
+        except Exception:
+            pass

@@ -124,6 +124,7 @@ class _RemotePlayerVisual:
     head_np: object
     hp: int = 100
     name: str = "player"
+    respawn_seq: int = 0
     sample_ticks: list[int] = field(default_factory=list)
     sample_pos: list[LVector3f] = field(default_factory=list)
     sample_yaw: list[float] = field(default_factory=list)
@@ -133,6 +134,15 @@ class _RemotePlayerVisual:
 class _PredictedInput:
     seq: int
     cmd: _InputCommand
+
+
+@dataclass
+class _PredictedState:
+    seq: int
+    pos: LVector3f
+    vel: LVector3f
+    yaw: float
+    pitch: float
 
 
 class RunnerDemo(ShowBase):
@@ -198,9 +208,29 @@ class RunnerDemo(ShowBase):
         self._remote_players: dict[int, _RemotePlayerVisual] = {}
         self._net_seq_counter: int = 0
         self._net_pending_inputs: list[_PredictedInput] = []
+        self._net_predicted_states: list[_PredictedState] = []
         self._net_last_server_tick: int = 0
+        self._net_last_acked_seq: int = 0
+        self._net_local_respawn_seq: int = 0
         self._net_last_snapshot_local_time: float = 0.0
         self._net_interp_delay_ticks: float = 6.0
+        self._net_can_configure: bool = False
+        self._net_authoritative_tuning: dict[str, float | bool] = {}
+        self._net_authoritative_tuning_version: int = 0
+        self._net_snapshot_intervals: list[float] = []
+        self._net_server_tick_offset_ready: bool = False
+        self._net_server_tick_offset_ticks: float = 0.0
+        self._net_server_tick_offset_smooth: float = 0.12
+        self._net_reconcile_pos_offset = LVector3f(0, 0, 0)
+        self._net_reconcile_yaw_offset: float = 0.0
+        self._net_reconcile_pitch_offset: float = 0.0
+        self._net_reconcile_decay_hz: float = 22.0
+        self._net_local_cam_shell_enabled: bool = True
+        self._net_local_cam_smooth_hz: float = 28.0
+        self._net_local_cam_ready: bool = False
+        self._net_local_cam_pos = LVector3f(0, 0, 0)
+        self._net_local_cam_yaw: float = 0.0
+        self._net_local_cam_pitch: float = 0.0
         self._embedded_server: EmbeddedHostServer | None = None
         self._open_to_network: bool = False
         self._runtime_connect_host: str | None = (str(self.cfg.net_host).strip() if self.cfg.net_host else None)
@@ -320,7 +350,7 @@ class RunnerDemo(ShowBase):
         self.accept("`", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
         self.accept("ascii`", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
         self.accept("grave", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
-        self.accept("r", lambda: self._safe_call("input.respawn", lambda: self._do_respawn(from_mode=False)))
+        self.accept("r", lambda: self._safe_call("input.respawn", self._on_respawn_pressed))
         self.accept("f2", self.input_debug.toggle)
         self.accept("f3", self.error_console.toggle)
         self.accept("shift-f3", lambda: self._safe_call("errors.clear", self._clear_errors))
@@ -349,6 +379,11 @@ class RunnerDemo(ShowBase):
         self.accept("keystroke", lambda key: self._safe_call("input.keystroke", lambda: self._on_keystroke(key)))
 
     def _on_tuning_change(self, field: str) -> None:
+        if self._net_connected and not self._net_can_configure:
+            if self._net_authoritative_tuning:
+                self._apply_profile_snapshot(dict(self._net_authoritative_tuning), persist=False)
+            self.ui.set_status("Server config is host-only. Local tuning changes are blocked.")
+            return
         if field in ("player_radius", "player_half_height", "crouch_half_height"):
             if self.player is not None:
                 self.player.apply_hull_settings()
@@ -356,11 +391,118 @@ class RunnerDemo(ShowBase):
             self._profiles[self._active_profile_name][field] = self._to_persisted_value(getattr(self.tuning, field))
         if not self._suspend_tuning_persist:
             self._persist_tuning_field(field)
+        if self._net_connected and self._net_can_configure:
+            self._send_tuning_to_server()
 
     def _persist_tuning_field(self, field: str) -> None:
         if field not in PhysicsTuning.__annotations__:
             return
         self._persist_profiles_state()
+
+    def _current_tuning_snapshot(self) -> dict[str, float | bool]:
+        return {
+            field: self._to_persisted_value(getattr(self.tuning, field))
+            for field in PhysicsTuning.__annotations__.keys()
+        }
+
+    def _apply_authoritative_tuning(self, *, tuning: dict[str, float | bool], version: int) -> None:
+        if not isinstance(tuning, dict):
+            return
+        self._net_authoritative_tuning = dict(tuning)
+        self._net_authoritative_tuning_version = max(int(self._net_authoritative_tuning_version), int(version))
+        self._apply_profile_snapshot(dict(self._net_authoritative_tuning), persist=False)
+
+    def _send_tuning_to_server(self) -> None:
+        if not self._net_connected or not self._net_can_configure or self._net_client is None:
+            return
+        snap = self._current_tuning_snapshot()
+        self._net_authoritative_tuning = dict(snap)
+        self._net_client.send_tuning(snap)
+
+    def _append_predicted_state(self, *, seq: int) -> None:
+        if self.player is None:
+            return
+        self._net_predicted_states.append(
+            _PredictedState(
+                seq=int(seq),
+                pos=LVector3f(self.player.pos),
+                vel=LVector3f(self.player.vel),
+                yaw=float(self._yaw),
+                pitch=float(self._pitch),
+            )
+        )
+        if len(self._net_predicted_states) > 256:
+            self._net_predicted_states = self._net_predicted_states[-256:]
+
+    def _state_for_ack(self, ack: int) -> _PredictedState | None:
+        ack_i = int(ack)
+        for st in reversed(self._net_predicted_states):
+            if int(st.seq) == ack_i:
+                return st
+        return None
+
+    def _reconcile_local_from_server(
+        self,
+        *,
+        x: float,
+        y: float,
+        z: float,
+        vx: float,
+        vy: float,
+        vz: float,
+        yaw: float,
+        pitch: float,
+        ack: int,
+    ) -> None:
+        if self.player is None or self._playback_active:
+            return
+        ack_i = int(ack)
+        ack_advanced = ack_i > int(self._net_last_acked_seq)
+        ack_state = self._state_for_ack(ack_i) if ack_advanced else None
+        if ack_advanced:
+            self._net_last_acked_seq = ack_i
+            self._net_pending_inputs = [p for p in self._net_pending_inputs if int(p.seq) > ack_i]
+            self._net_predicted_states = [s for s in self._net_predicted_states if int(s.seq) > ack_i]
+
+        server_pos = LVector3f(x, y, z)
+        server_vel = LVector3f(vx, vy, vz)
+        if ack_state is not None:
+            ref_pos = LVector3f(ack_state.pos)
+            ref_vel = LVector3f(ack_state.vel)
+            ref_yaw = float(ack_state.yaw)
+            ref_pitch = float(ack_state.pitch)
+        else:
+            ref_pos = LVector3f(self.player.pos)
+            ref_vel = LVector3f(self.player.vel)
+            ref_yaw = float(self._yaw)
+            ref_pitch = float(self._pitch)
+
+        pos_err = float((server_pos - ref_pos).length())
+        vel_err = float((server_vel - ref_vel).length())
+        yaw_err = abs(float(self._angle_delta_deg(ref_yaw, float(yaw))))
+        pitch_err = abs(float(self._angle_delta_deg(ref_pitch, float(pitch))))
+        needs_correction = pos_err > 0.02 or vel_err > 0.20 or yaw_err > 0.35 or pitch_err > 0.35
+        if not needs_correction:
+            return
+
+        if ack_advanced:
+            pre_reconcile_pos = LVector3f(self.player.pos)
+            self.player.pos = LVector3f(server_pos)
+            self.player.vel = LVector3f(server_vel)
+            self._yaw = float(yaw)
+            self._pitch = float(pitch)
+            for p in self._net_pending_inputs:
+                self._simulate_input_tick(cmd=p.cmd, menu_open=False, network_send=False, record_demo=False)
+                self._append_predicted_state(seq=int(p.seq))
+            post_reconcile_pos = LVector3f(self.player.pos)
+            self._net_reconcile_pos_offset += pre_reconcile_pos - post_reconcile_pos
+            return
+
+        if not self._net_pending_inputs:
+            self.player.pos = LVector3f(server_pos)
+            self.player.vel = LVector3f(server_vel)
+            self._yaw = float(yaw)
+            self._pitch = float(pitch)
 
     @staticmethod
     def _to_persisted_value(value: object) -> float | bool:
@@ -1216,6 +1358,10 @@ class RunnerDemo(ShowBase):
         d = ((float(b) - float(a) + 180.0) % 360.0) - 180.0
         return float(a) + d * tt
 
+    @staticmethod
+    def _angle_delta_deg(from_deg: float, to_deg: float) -> float:
+        return ((float(to_deg) - float(from_deg) + 180.0) % 360.0) - 180.0
+
     def _capture_sim_state(self) -> tuple[LVector3f, LVector3f, float, float]:
         player_pos = LVector3f(0, 0, 0)
         cam_pos = LVector3f(0, 0, 0)
@@ -1249,7 +1395,7 @@ class RunnerDemo(ShowBase):
         self._sim_curr_yaw = float(y)
         self._sim_curr_pitch = float(pi)
 
-    def _render_interpolated_state(self, *, alpha: float) -> None:
+    def _render_interpolated_state(self, *, alpha: float, frame_dt: float = 0.0) -> None:
         if not self._sim_state_ready:
             return
         a = max(0.0, min(1.0, float(alpha)))
@@ -1257,7 +1403,24 @@ class RunnerDemo(ShowBase):
         c = self._lerp_vec(self._sim_prev_cam_pos, self._sim_curr_cam_pos, a)
         y = self._lerp_angle_deg(self._sim_prev_yaw, self._sim_curr_yaw, a)
         pi = self._lerp_angle_deg(self._sim_prev_pitch, self._sim_curr_pitch, a)
+        if self._net_connected:
+            p += self._net_reconcile_pos_offset
         self.player_node.setPos(p)
+        if self._net_connected and self._net_local_cam_shell_enabled:
+            if not self._net_local_cam_ready:
+                self._net_local_cam_pos = LVector3f(c)
+                self._net_local_cam_yaw = float(y)
+                self._net_local_cam_pitch = float(pi)
+                self._net_local_cam_ready = True
+            else:
+                dt = max(0.0, float(frame_dt))
+                blend = 1.0 - math.exp(-max(0.0, float(self._net_local_cam_smooth_hz)) * dt) if dt > 0.0 else 1.0
+                self._net_local_cam_pos = self._lerp_vec(self._net_local_cam_pos, c, blend)
+                self._net_local_cam_yaw = self._lerp_angle_deg(self._net_local_cam_yaw, y, blend)
+                self._net_local_cam_pitch = self._lerp_angle_deg(self._net_local_cam_pitch, pi, blend)
+            self.camera.setPos(self._net_local_cam_pos)
+            self.camera.setHpr(self._net_local_cam_yaw, self._net_local_cam_pitch, 0)
+            return
         self.camera.setPos(c)
         self.camera.setHpr(y, pi, 0)
 
@@ -1281,15 +1444,46 @@ class RunnerDemo(ShowBase):
                 tcp_port=int(target_port),
                 name=str(self.cfg.net_name),
             )
+            server_map_json = str(self._net_client.server_map_json or "").strip() or None
+            if server_map_json and server_map_json != self._current_map_json:
+                try:
+                    self._net_client.close()
+                except Exception:
+                    pass
+                self._net_client = None
+                self._net_connected = False
+                self._net_player_id = 0
+                self.pause_ui.set_multiplayer_status("Loading server map...")
+                self.ui.set_status("Loading server map from host...")
+                self._start_game(map_json=server_map_json)
+                return
             self._net_connected = True
+            self._net_can_configure = bool(self._net_client.can_configure)
             self._net_player_id = int(self._net_client.player_id)
             self._local_hp = 100
             self._net_seq_counter = 0
             self._net_pending_inputs.clear()
+            self._net_predicted_states.clear()
             self._net_last_server_tick = 0
+            self._net_last_acked_seq = 0
+            self._net_local_respawn_seq = 0
             self._net_last_snapshot_local_time = time.monotonic()
+            self._net_authoritative_tuning_version = int(self._net_client.server_tuning_version)
+            if isinstance(self._net_client.server_tuning, dict):
+                self._apply_authoritative_tuning(
+                    tuning=dict(self._net_client.server_tuning),
+                    version=int(self._net_client.server_tuning_version),
+                )
+            self._net_snapshot_intervals.clear()
+            self._net_server_tick_offset_ready = False
+            self._net_server_tick_offset_ticks = 0.0
+            self._net_reconcile_pos_offset = LVector3f(0, 0, 0)
+            self._net_reconcile_yaw_offset = 0.0
+            self._net_reconcile_pitch_offset = 0.0
+            self._net_local_cam_ready = False
             self.ui.set_status(f"Connected to server {target_host}:{target_port} as #{self._net_player_id}")
-            self.pause_ui.set_multiplayer_status(f"Connected to {target_host}:{target_port}")
+            role = "host config owner" if self._net_can_configure else "client (read-only config)"
+            self.pause_ui.set_multiplayer_status(f"Connected to {target_host}:{target_port} | {role}")
         except Exception as e:
             self._disconnect_multiplayer()
             self.error_log.log_message(context="net.connect", message=str(e))
@@ -1307,11 +1501,24 @@ class RunnerDemo(ShowBase):
                 pass
         self._net_client = None
         self._net_connected = False
+        self._net_can_configure = False
         self._net_player_id = 0
         self._net_seq_counter = 0
         self._net_last_server_tick = 0
+        self._net_last_acked_seq = 0
+        self._net_local_respawn_seq = 0
         self._net_last_snapshot_local_time = 0.0
         self._net_pending_inputs.clear()
+        self._net_predicted_states.clear()
+        self._net_authoritative_tuning = {}
+        self._net_authoritative_tuning_version = 0
+        self._net_snapshot_intervals.clear()
+        self._net_server_tick_offset_ready = False
+        self._net_server_tick_offset_ticks = 0.0
+        self._net_reconcile_pos_offset = LVector3f(0, 0, 0)
+        self._net_reconcile_yaw_offset = 0.0
+        self._net_reconcile_pitch_offset = 0.0
+        self._net_local_cam_ready = False
         self._clear_remote_players()
         self.pause_ui.set_multiplayer_status("Not connected.")
 
@@ -1325,6 +1532,7 @@ class RunnerDemo(ShowBase):
                 tcp_port=int(self._runtime_connect_port),
                 udp_port=int(self._runtime_connect_port) + 1,
                 map_json=self._current_map_json,
+                initial_tuning=self._current_tuning_snapshot(),
             )
             self._embedded_server.start()
         except OSError as e:
@@ -1416,6 +1624,7 @@ class RunnerDemo(ShowBase):
                 pass
         self._remote_players.clear()
         self._net_pending_inputs.clear()
+        self._net_predicted_states.clear()
 
     def _ensure_remote_player_visual(self, *, player_id: int, name: str) -> _RemotePlayerVisual:
         rp = self._remote_players.get(int(player_id))
@@ -1442,8 +1651,41 @@ class RunnerDemo(ShowBase):
         if not isinstance(snap, dict):
             return
         tick = int(snap.get("tick") or 0)
+        now_mono = time.monotonic()
         self._net_last_server_tick = max(self._net_last_server_tick, tick)
-        self._net_last_snapshot_local_time = time.monotonic()
+        if self._net_last_snapshot_local_time > 0.0:
+            dt_snap = max(0.0, float(now_mono - float(self._net_last_snapshot_local_time)))
+            if dt_snap > 0.0:
+                self._net_snapshot_intervals.append(dt_snap)
+                if len(self._net_snapshot_intervals) > 64:
+                    self._net_snapshot_intervals = self._net_snapshot_intervals[-64:]
+                mean = sum(self._net_snapshot_intervals) / float(len(self._net_snapshot_intervals))
+                var = sum((d - mean) * (d - mean) for d in self._net_snapshot_intervals) / float(
+                    len(self._net_snapshot_intervals)
+                )
+                std = math.sqrt(max(0.0, var))
+                delay_sec = mean + std * 2.0 + 0.005
+                self._net_interp_delay_ticks = max(2.0, min(12.0, delay_sec * float(self._sim_tick_rate_hz)))
+        self._net_last_snapshot_local_time = float(now_mono)
+        tick_offset_sample = float(tick) - float(now_mono) * float(self._sim_tick_rate_hz)
+        if not self._net_server_tick_offset_ready:
+            self._net_server_tick_offset_ready = True
+            self._net_server_tick_offset_ticks = float(tick_offset_sample)
+        else:
+            k = max(0.01, min(1.0, float(self._net_server_tick_offset_smooth)))
+            self._net_server_tick_offset_ticks += (float(tick_offset_sample) - float(self._net_server_tick_offset_ticks)) * k
+        cfg_v = int(snap.get("cfg_v") or 0)
+        cfg_tuning = snap.get("tuning")
+        if isinstance(cfg_tuning, dict) and int(cfg_v) > int(self._net_authoritative_tuning_version):
+            normalized: dict[str, float | bool] = {}
+            for field in PhysicsTuning.__annotations__.keys():
+                value = cfg_tuning.get(field)
+                if isinstance(value, bool):
+                    normalized[field] = bool(value)
+                elif isinstance(value, (int, float)):
+                    normalized[field] = float(value)
+            if normalized:
+                self._apply_authoritative_tuning(tuning=normalized, version=int(cfg_v))
         players = snap.get("players")
         if not isinstance(players, list):
             return
@@ -1466,19 +1708,44 @@ class RunnerDemo(ShowBase):
             vz = float(row.get("vz") or 0.0)
             ack = int(row.get("ack") or 0)
             hp = int(row.get("hp") or 0)
+            rs = int(row.get("rs") or 0)
             if pid == self._net_player_id:
                 self._local_hp = max(0, hp)
                 if self.player is not None and not self._playback_active:
-                    # Authoritative correction + replay of unacked predicted inputs.
-                    self.player.pos = LVector3f(x, y, z)
-                    self.player.vel = LVector3f(vx, vy, vz)
-                    self._yaw = float(yaw)
-                    self._pitch = float(pitch)
-                    self._net_pending_inputs = [p for p in self._net_pending_inputs if int(p.seq) > int(ack)]
-                    for p in self._net_pending_inputs:
-                        self._simulate_input_tick(cmd=p.cmd, menu_open=False, network_send=False, record_demo=False)
+                    if int(rs) > int(self._net_local_respawn_seq):
+                        self._net_local_respawn_seq = int(rs)
+                        self._net_pending_inputs.clear()
+                        self._net_predicted_states.clear()
+                        self._net_last_acked_seq = max(int(self._net_last_acked_seq), int(ack))
+                        self.player.pos = LVector3f(x, y, z)
+                        self.player.vel = LVector3f(vx, vy, vz)
+                        self._yaw = float(yaw)
+                        self._pitch = float(pitch)
+                        self._net_reconcile_pos_offset = LVector3f(0, 0, 0)
+                        self._net_reconcile_yaw_offset = 0.0
+                        self._net_reconcile_pitch_offset = 0.0
+                        self._net_local_cam_ready = False
+                        if not self._playback_active:
+                            self._start_new_demo_recording()
+                        continue
+                    self._reconcile_local_from_server(
+                        x=x,
+                        y=y,
+                        z=z,
+                        vx=vx,
+                        vy=vy,
+                        vz=vz,
+                        yaw=yaw,
+                        pitch=pitch,
+                        ack=ack,
+                    )
                 continue
             rp = self._ensure_remote_player_visual(player_id=pid, name=str(row.get("n") or "player"))
+            if int(rs) > int(rp.respawn_seq):
+                rp.respawn_seq = int(rs)
+                rp.sample_ticks.clear()
+                rp.sample_pos.clear()
+                rp.sample_yaw.clear()
             rp.sample_ticks.append(int(tick))
             rp.sample_pos.append(LVector3f(x, y, z))
             rp.sample_yaw.append(float(yaw))
@@ -1497,9 +1764,13 @@ class RunnerDemo(ShowBase):
                 pass
 
     def _render_remote_players(self, *, alpha: float) -> None:
-        if self._net_last_snapshot_local_time > 0.0:
+        if self._net_server_tick_offset_ready:
+            now_mono = float(time.monotonic())
+            est_server_tick = float(now_mono) * float(self._sim_tick_rate_hz) + float(self._net_server_tick_offset_ticks)
+            est_server_tick = max(float(self._net_last_server_tick), est_server_tick)
+        elif self._net_last_snapshot_local_time > 0.0:
             est_server_tick = float(self._net_last_server_tick) + (
-                time.monotonic() - float(self._net_last_snapshot_local_time)
+                float(time.monotonic()) - float(self._net_last_snapshot_local_time)
             ) * float(self._sim_tick_rate_hz)
         else:
             est_server_tick = float(self._net_last_server_tick)
@@ -1682,6 +1953,7 @@ class RunnerDemo(ShowBase):
             self._net_seq_counter += 1
             seq = int(self._net_seq_counter)
             self._net_pending_inputs.append(_PredictedInput(seq=seq, cmd=cmd))
+            self._append_predicted_state(seq=seq)
             self._net_client.send_input(
                 seq=seq,
                 server_tick_hint=int(self._net_last_server_tick),
@@ -1848,12 +2120,23 @@ class RunnerDemo(ShowBase):
         self._yaw = float(self.scene.spawn_yaw)
         self._pitch = 0.0
         self._local_hp = 100
+        self._net_reconcile_pos_offset = LVector3f(0, 0, 0)
+        self._net_reconcile_yaw_offset = 0.0
+        self._net_reconcile_pitch_offset = 0.0
+        self._net_local_cam_ready = False
         self._sim_state_ready = False
         self._push_sim_snapshot()
         self._render_interpolated_state(alpha=1.0)
         # Recording starts from each spawn/respawn window.
         if not self._playback_active:
             self._start_new_demo_recording()
+
+    def _on_respawn_pressed(self) -> None:
+        if self._net_connected and self._net_client is not None:
+            self._net_client.send_respawn()
+            self.ui.set_status("Respawn requested.")
+            return
+        self._do_respawn(from_mode=False)
 
     def _toggle_noclip(self) -> None:
         self.tuning.noclip_enabled = not bool(self.tuning.noclip_enabled)
@@ -1941,8 +2224,13 @@ class RunnerDemo(ShowBase):
                 )
                 self._simulate_input_tick(cmd=cmd, menu_open=menu_open)
                 self._sim_accumulator -= self._sim_fixed_dt
+            if self._net_connected:
+                decay = math.exp(-max(0.0, float(self._net_reconcile_decay_hz)) * max(0.0, float(frame_dt)))
+                self._net_reconcile_pos_offset *= float(decay)
+                self._net_reconcile_yaw_offset *= float(decay)
+                self._net_reconcile_pitch_offset *= float(decay)
             alpha = self._sim_accumulator / self._sim_fixed_dt if self._sim_fixed_dt > 0.0 else 1.0
-            self._render_interpolated_state(alpha=alpha)
+            self._render_interpolated_state(alpha=alpha, frame_dt=frame_dt)
             self._poll_network_snapshot()
             self._render_remote_players(alpha=alpha)
 
