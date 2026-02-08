@@ -98,7 +98,7 @@ Navigation:
 Notes:
 - Directory picking uses a native dialog via `tkinter` (stdlib). If Tk is unavailable, the menu will show an error.
 - State file location defaults to `~/.irun/ivan/state.json` (override via `IRUN_IVAN_STATE_DIR`).
-- Debug-tuned values are persisted in state and reused as startup defaults on the next launch.
+- Debug-tuned values are persisted per tuning profile in state; switching profiles restores that profile's slider/toggle values.
 
 ## HUD
 - A top-center speed readout is always visible (`Speed: <int> u/s`).
@@ -115,8 +115,9 @@ Panel layout:
 - Numeric sliders are normalized (`0..100`) while still mapping to each field's real min/max range.
 - Slider tracks are intentionally large for quick tuning while moving.
 - Top-right profile manager includes default presets (`surf_bhop_c2`, `surf_bhop`, `bhop`, `surf`, `surf_sky2_server`) and a `save` action.
+  - Selecting a profile immediately applies that profile snapshot to all movement settings and updates menu controls.
   - Saving a modified default profile creates a short `*_copy` custom profile.
-  - Saving a custom profile updates that profile in place.
+  - Saving a custom profile updates only that active profile in place.
 
 Numeric settings include normalized sliders + entry fields for precise tuning:
 - Gravity, jump height, ground/air acceleration target speeds

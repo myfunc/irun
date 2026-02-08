@@ -6,7 +6,7 @@
 - Ivan: in-game debug/admin panel with live movement parameter tuning
 - Ivan: debug-tuned parameters persist to local state and load as next-run defaults
 - Ivan: debug panel upgraded to grouped, collapsible, scrollable CS-style boxed layout with normalized sliders
-- Ivan: debug profile manager with default presets (`surf_bhop_c2`, `surf_bhop`, `bhop`, `surf`, `surf_sky2_server`) and persistent custom profile saves
+- Ivan: debug profile manager with default presets (`surf_bhop_c2`, `surf_bhop`, `bhop`, `surf`, `surf_sky2_server`), immediate per-profile setting restore on switch, and persistent custom profile saves
 - Ivan: in-game menu on `Esc` (Resume, Map Selector, Key Bindings, Back to Main Menu, Quit)
 - Ivan: debug/admin panel moved to `` ` `` (tilde/backtick)
 - Ivan: rebindable noclip toggle (default `V`) via in-game Key Bindings
