@@ -114,7 +114,7 @@ Panel layout:
 - Hovering a setting name/control shows a tooltip with a short explanation.
 - Numeric sliders are normalized (`0..100`) while still mapping to each field's real min/max range.
 - Slider tracks are intentionally large for quick tuning while moving.
-- Top-right profile manager includes default presets (`surf_bhop`, `bhop`, `surf`, `surf_sky2_server`) and a `save` action.
+- Top-right profile manager includes default presets (`surf_bhop_c2`, `surf_bhop`, `bhop`, `surf`, `surf_sky2_server`) and a `save` action.
   - Saving a modified default profile creates a short `*_copy` custom profile.
   - Saving a custom profile updates that profile in place.
 

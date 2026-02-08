@@ -67,7 +67,7 @@ class RunnerDemo(ShowBase):
         self._default_profiles = self._build_default_profiles()
         self._profiles: dict[str, dict[str, float | bool]] = {}
         self._default_profile_names = set(self._default_profiles.keys())
-        self._active_profile_name: str = "surf_bhop"
+        self._active_profile_name: str = "surf_bhop_c2"
         self._load_profiles_from_state(self._loaded_state)
         self.disableMouse()
 
@@ -234,23 +234,37 @@ class RunnerDemo(ShowBase):
         field_names = list(PhysicsTuning.__annotations__.keys())
         snap = {f: (bool(getattr(base, f)) if isinstance(getattr(base, f), bool) else float(getattr(base, f))) for f in field_names}
 
-        surf_bhop = dict(snap)
-        surf_bhop.update(
+        surf_bhop_c2 = dict(snap)
+        surf_bhop_c2.update(
             {
                 "surf_enabled": True,
                 "autojump_enabled": True,
                 "enable_jump_buffer": True,
-                "jump_accel": 28.0,
-                "max_air_speed": 16.5,
-                "air_control": 0.35,
-                "air_counter_strafe_brake": 23.0,
-                "surf_accel": 55.0,
-                "surf_gravity_scale": 0.95,
+                "gravity": 39.6196435546875,
+                "jump_height": 1.0108081703186036,
+                "max_ground_speed": 6.622355737686157,
+                "max_air_speed": 6.845157165527343,
+                "ground_accel": 49.44859447479248,
+                "jump_accel": 31.738659286499026,
+                "friction": 13.672204017639162,
+                "air_control": 0.24100000381469727,
+                "air_counter_strafe_brake": 23.000001525878908,
+                "mouse_sensitivity": 0.09978364143371583,
+                "jump_buffer_time": 0.2329816741943359,
+                "wall_jump_cooldown": 0.9972748947143555,
+                "surf_accel": 23.521632385253906,
+                "surf_gravity_scale": 0.33837084770202636,
                 "surf_min_normal_z": 0.05,
                 "surf_max_normal_z": 0.72,
-                "friction": 5.3,
+                "grapple_enabled": True,
+                "grapple_attach_shorten_speed": 7.307412719726562,
+                "grapple_attach_shorten_time": 0.35835513305664063,
+                "grapple_pull_strength": 30.263092041015625,
+                "grapple_min_length": 0.7406494271755218,
+                "grapple_rope_half_width": 0.015153287963867187,
             }
         )
+        surf_bhop = dict(surf_bhop_c2)
 
         bhop = dict(snap)
         bhop.update(
@@ -310,6 +324,7 @@ class RunnerDemo(ShowBase):
             }
         )
         return {
+            "surf_bhop_c2": surf_bhop_c2,
             "surf_bhop": surf_bhop,
             "bhop": bhop,
             "surf": surf,
@@ -317,7 +332,7 @@ class RunnerDemo(ShowBase):
         }
 
     def _profile_names(self) -> list[str]:
-        ordered = ["surf_bhop", "bhop", "surf", "surf_sky2_server"]
+        ordered = ["surf_bhop_c2", "surf_bhop", "bhop", "surf", "surf_sky2_server"]
         extras = sorted([n for n in self._profiles.keys() if n not in ordered])
         return [n for n in ordered if n in self._profiles] + extras
 
@@ -326,9 +341,9 @@ class RunnerDemo(ShowBase):
         for name, values in state.tuning_profiles.items():
             self._profiles[name] = dict(values)
 
-        active = state.active_tuning_profile or "surf_bhop"
+        active = state.active_tuning_profile or "surf_bhop_c2"
         if active not in self._profiles:
-            active = "surf_bhop"
+            active = "surf_bhop_c2"
         self._active_profile_name = active
         self._apply_profile_snapshot(self._profiles[self._active_profile_name], persist=False)
 
