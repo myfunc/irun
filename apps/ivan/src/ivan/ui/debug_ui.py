@@ -185,10 +185,19 @@ class DebugUI:
         aspect2d,
         tuning: PhysicsTuning,
         on_tuning_change,
+        on_profile_select,
+        on_profile_save,
     ) -> None:
         self._tuning = tuning
         self._on_tuning_change = on_tuning_change
+        self._on_profile_select = on_profile_select
+        self._on_profile_save = on_profile_save
         self._field_help = dict(self.FIELD_HELP)
+        self._profiles: list[str] = []
+        self._active_profile: str = ""
+        self._profile_dropdown_open = False
+        self._profile_dropdown_offset = 0
+        self._profile_visible = 6
 
         aspect_ratio = 16.0 / 9.0
         if getattr(ShowBaseGlobal, "base", None) is not None:
@@ -220,6 +229,65 @@ class DebugUI:
             frameColor=(0, 0, 0, 0),
             pos=(panel_left + 0.04, 0, panel_top - 0.053),
         )
+        self._profile_button = DirectButton(
+            parent=self.debug_root,
+            text=("profile: surf_bhop",) * 4,
+            text_scale=0.032,
+            text_align=TextNode.ALeft,
+            text_fg=(0.08, 0.08, 0.08, 1.0),
+            frameColor=(0.80, 0.74, 0.56, 0.98),
+            relief=DGG.FLAT,
+            frameSize=(-0.01, 0.72, -0.04, 0.005),
+            pos=(panel_right - 0.90, 0, panel_top - 0.017),
+            command=self._toggle_profile_dropdown,
+        )
+        self._profile_button.setBin("gui-popup", 20)
+        self._profile_button.setDepthTest(False)
+        self._profile_button.setDepthWrite(False)
+        self._profile_save_button = DirectButton(
+            parent=self.debug_root,
+            text=("save",) * 4,
+            text_scale=0.032,
+            text_fg=(0.08, 0.08, 0.08, 1.0),
+            frameColor=(0.72, 0.82, 0.68, 0.98),
+            relief=DGG.FLAT,
+            frameSize=(-0.01, 0.21, -0.04, 0.005),
+            pos=(panel_right - 0.17, 0, panel_top - 0.017),
+            command=self._on_profile_save_click,
+        )
+        self._profile_save_button.setBin("gui-popup", 20)
+        self._profile_save_button.setDepthTest(False)
+        self._profile_save_button.setDepthWrite(False)
+        self._profile_dropdown_frame = DirectFrame(
+            parent=self.debug_root,
+            frameColor=(0.08, 0.14, 0.20, 0.98),
+            frameSize=(0.0, 0.86, -0.45, 0.0),
+            relief=DGG.FLAT,
+            pos=(panel_right - 0.90, 0, panel_top - 0.09),
+        )
+        self._profile_dropdown_frame.setBin("gui-popup", 20)
+        self._profile_dropdown_frame.setDepthTest(False)
+        self._profile_dropdown_frame.setDepthWrite(False)
+        self._profile_dropdown_buttons: list[DirectButton] = []
+        for i in range(self._profile_visible):
+            y = -0.03 - i * 0.07
+            btn = DirectButton(
+                parent=self._profile_dropdown_frame,
+                text=("-", "-", "-", "-"),
+                text_scale=0.030,
+                text_align=TextNode.ALeft,
+                text_fg=(0.92, 0.92, 0.92, 1.0),
+                frameColor=(0.18, 0.22, 0.28, 0.98),
+                relief=DGG.FLAT,
+                frameSize=(0.02, 0.82, -0.055, -0.005),
+                pos=(0.0, 0.0, y),
+                command=lambda idx=i: self._select_profile_row(idx),
+            )
+            btn.setBin("gui-popup", 21)
+            btn.setDepthTest(False)
+            btn.setDepthWrite(False)
+            self._profile_dropdown_buttons.append(btn)
+        self._profile_dropdown_frame.hide()
 
         self.speed_hud_label = DirectLabel(
             parent=aspect2d,
@@ -270,6 +338,11 @@ class DebugUI:
             verticalScroll_decButton_frameColor=(0.22, 0.22, 0.22, 1.0),
         )
         self._canvas = self._scroll.getCanvas()
+        try:
+            # Keep this panel vertical-only.
+            self._scroll.horizontalScroll.hide()
+        except Exception:
+            pass
 
         self._numeric_ranges = {name: (low, high) for name, low, high in self.NUMERIC_CONTROLS}
         self._number_controls: dict[str, NumberControl] = {}
@@ -292,6 +365,18 @@ class DebugUI:
         )
 
         self.debug_root.hide()
+        self._refresh_profile_dropdown()
+
+    def set_profiles(self, profile_names: list[str], active_profile: str) -> None:
+        self._profiles = list(profile_names)
+        self._active_profile = active_profile
+        if self._active_profile and self._active_profile in self._profiles:
+            idx = self._profiles.index(self._active_profile)
+            if idx < self._profile_dropdown_offset:
+                self._profile_dropdown_offset = idx
+            if idx >= self._profile_dropdown_offset + self._profile_visible:
+                self._profile_dropdown_offset = idx - self._profile_visible + 1
+        self._refresh_profile_dropdown()
 
     def _build_group(self, group_name: str, numeric_fields: list[str], toggle_fields: list[str]) -> None:
         box = DirectFrame(
@@ -313,6 +398,8 @@ class DebugUI:
             pos=(0.0, 0.0, 0.0),
             command=lambda n=group_name: self._toggle_group(n),
         )
+        header_btn.bind("wheel_up", lambda _evt: self.scroll_wheel(+1))
+        header_btn.bind("wheel_down", lambda _evt: self.scroll_wheel(-1))
         content = DirectFrame(
             parent=box,
             frameColor=(0.06, 0.10, 0.16, 0.98),
@@ -320,6 +407,10 @@ class DebugUI:
             relief=DGG.FLAT,
             pos=(0.0, 0.0, -0.08),
         )
+        box.bind("wheel_up", lambda _evt: self.scroll_wheel(+1))
+        box.bind("wheel_down", lambda _evt: self.scroll_wheel(-1))
+        content.bind("wheel_up", lambda _evt: self.scroll_wheel(+1))
+        content.bind("wheel_down", lambda _evt: self.scroll_wheel(-1))
 
         row = 0
         row_h = 0.10
@@ -337,11 +428,13 @@ class DebugUI:
                 minimum=low,
                 maximum=high,
                 on_change=lambda val, f=field: self._set_tuning(f, val),
-                slider_offset=0.66,
-                entry_offset=1.00,
+                slider_offset=0.80,
+                entry_offset=1.72,
                 normalized_slider=True,
                 normalized_entry=True,
-                slider_scale=0.078,
+                slider_scale=0.10,
+                slider_frame_size=(-4.6, 4.6, -0.26, 0.26),
+                slider_thumb_size=(-0.275, 0.275, -0.4, 0.4),
                 entry_scale=0.033,
                 precision=3 if high <= 3.0 else 2,
             )
@@ -400,11 +493,14 @@ class DebugUI:
         self.debug_root.show()
         self.status_label.hide()
         self._tooltip_label.hide()
+        self._profile_dropdown_frame.hide()
 
     def hide(self) -> None:
         self.debug_root.hide()
         self.status_label.show()
         self._tooltip_label.hide()
+        self._profile_dropdown_open = False
+        self._profile_dropdown_frame.hide()
 
     def set_speed(self, hspeed: float) -> None:
         self.speed_hud_label["text"] = f"Speed: {int(hspeed)} u/s"
@@ -480,3 +576,55 @@ class DebugUI:
 
     def _hide_tooltip(self) -> None:
         self._tooltip_label.hide()
+
+    def _toggle_profile_dropdown(self) -> None:
+        self._profile_dropdown_open = not self._profile_dropdown_open
+        if self._profile_dropdown_open:
+            self._profile_dropdown_frame.show()
+        else:
+            self._profile_dropdown_frame.hide()
+
+    def _on_profile_save_click(self) -> None:
+        self._on_profile_save()
+
+    def _refresh_profile_dropdown(self) -> None:
+        shown_name = self._active_profile if self._active_profile else "(none)"
+        self._profile_button["text"] = (f"profile: {shown_name}",) * 4
+        total = len(self._profiles)
+        if total <= 0:
+            for btn in self._profile_dropdown_buttons:
+                btn.hide()
+            return
+        self._profile_dropdown_offset = max(0, min(self._profile_dropdown_offset, max(0, total - self._profile_visible)))
+        for i, btn in enumerate(self._profile_dropdown_buttons):
+            idx = self._profile_dropdown_offset + i
+            if idx >= total:
+                btn.hide()
+                continue
+            name = self._profiles[idx]
+            prefix = "> " if name == self._active_profile else "  "
+            btn["text"] = (prefix + name,) * 4
+            btn.show()
+
+    def _select_profile_row(self, row_idx: int) -> None:
+        idx = self._profile_dropdown_offset + row_idx
+        if idx < 0 or idx >= len(self._profiles):
+            return
+        self._on_profile_select(self._profiles[idx])
+        self._profile_dropdown_open = False
+        self._profile_dropdown_frame.hide()
+
+    def scroll_wheel(self, direction: int) -> None:
+        d = 1 if direction > 0 else -1
+        if self._profile_dropdown_open and len(self._profiles) > self._profile_visible:
+            self._profile_dropdown_offset -= d
+            max_off = max(0, len(self._profiles) - self._profile_visible)
+            self._profile_dropdown_offset = max(0, min(max_off, self._profile_dropdown_offset))
+            self._refresh_profile_dropdown()
+            return
+        try:
+            bar = self._scroll.verticalScroll
+            cur = float(bar["value"])
+            bar["value"] = max(0.0, min(1.0, cur - d * 0.016))
+        except Exception:
+            pass

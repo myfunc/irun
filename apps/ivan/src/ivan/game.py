@@ -29,7 +29,7 @@ from ivan.physics.collision_world import CollisionWorld
 from ivan.physics.player_controller import PlayerController
 from ivan.physics.tuning import PhysicsTuning
 from ivan.paths import app_root as ivan_app_root
-from ivan.state import load_state, resolve_map_json, update_state
+from ivan.state import IvanState, load_state, resolve_map_json, update_state
 from ivan.ui.debug_ui import DebugUI
 from ivan.ui.error_console_ui import ErrorConsoleUI
 from ivan.ui.input_debug_ui import InputDebugUI
@@ -55,7 +55,12 @@ class RunnerDemo(ShowBase):
         self.cfg = cfg
         self.tuning = PhysicsTuning()
         self._loaded_state = load_state()
-        self._apply_persisted_tuning(self._loaded_state.tuning_overrides)
+        self._suspend_tuning_persist: bool = False
+        self._default_profiles = self._build_default_profiles()
+        self._profiles: dict[str, dict[str, float | bool]] = {}
+        self._default_profile_names = set(self._default_profiles.keys())
+        self._active_profile_name: str = "surf_bhop"
+        self._load_profiles_from_state(self._loaded_state)
         self.disableMouse()
 
         self._yaw = 0.0
@@ -91,7 +96,14 @@ class RunnerDemo(ShowBase):
         self.error_log = ErrorLog(max_items=30)
 
         self._setup_window()
-        self.ui = DebugUI(aspect2d=self.aspect2d, tuning=self.tuning, on_tuning_change=self._on_tuning_change)
+        self.ui = DebugUI(
+            aspect2d=self.aspect2d,
+            tuning=self.tuning,
+            on_tuning_change=self._on_tuning_change,
+            on_profile_select=self._apply_profile,
+            on_profile_save=self._save_active_profile,
+        )
+        self.ui.set_profiles(self._profile_names(), self._active_profile_name)
         self.error_console = ErrorConsoleUI(aspect2d=self.aspect2d, error_log=self.error_log)
         self.pause_ui = PauseMenuUI(
             aspect2d=self.aspect2d,
@@ -162,6 +174,8 @@ class RunnerDemo(ShowBase):
         self.accept("s-up", lambda: self._menu_nav_release(1))
         self.accept("control-f", lambda: self._safe_call("menu.search", self._menu_toggle_search))
         self.accept("meta-f", lambda: self._safe_call("menu.search", self._menu_toggle_search))
+        self.accept("wheel_up", lambda: self._safe_call("input.wheel_up", lambda: self._on_debug_wheel(+1)))
+        self.accept("wheel_down", lambda: self._safe_call("input.wheel_down", lambda: self._on_debug_wheel(-1)))
         if hasattr(self, "buttonThrowers") and self.buttonThrowers:
             try:
                 self.buttonThrowers[0].node().setKeystrokeEvent("keystroke")
@@ -173,7 +187,10 @@ class RunnerDemo(ShowBase):
         if field in ("player_radius", "player_half_height", "crouch_half_height"):
             if self.player is not None:
                 self.player.apply_hull_settings()
-        self._persist_tuning_field(field)
+        if self._active_profile_name in self._profiles:
+            self._profiles[self._active_profile_name][field] = self._to_persisted_value(getattr(self.tuning, field))
+        if not self._suspend_tuning_persist:
+            self._persist_tuning_field(field)
 
     def _apply_persisted_tuning(self, overrides: dict[str, float | bool]) -> None:
         fields = set(PhysicsTuning.__annotations__.keys())
@@ -185,13 +202,165 @@ class RunnerDemo(ShowBase):
     def _persist_tuning_field(self, field: str) -> None:
         if field not in PhysicsTuning.__annotations__:
             return
-        value = getattr(self.tuning, field)
-        persisted_value: float | bool
-        if isinstance(value, bool):
-            persisted_value = value
-        else:
-            persisted_value = float(value)
+        persisted_value = self._to_persisted_value(getattr(self.tuning, field))
         update_state(tuning_overrides={field: persisted_value})
+        self._persist_profiles_state()
+
+    @staticmethod
+    def _to_persisted_value(value: object) -> float | bool:
+        if isinstance(value, bool):
+            return value
+        return float(value)
+
+    @staticmethod
+    def _build_default_profiles() -> dict[str, dict[str, float | bool]]:
+        base = PhysicsTuning()
+        field_names = list(PhysicsTuning.__annotations__.keys())
+        snap = {f: (bool(getattr(base, f)) if isinstance(getattr(base, f), bool) else float(getattr(base, f))) for f in field_names}
+
+        surf_bhop = dict(snap)
+        surf_bhop.update(
+            {
+                "surf_enabled": True,
+                "autojump_enabled": True,
+                "enable_coyote": True,
+                "enable_jump_buffer": True,
+                "jump_accel": 28.0,
+                "max_air_speed": 16.5,
+                "air_control": 0.35,
+                "air_counter_strafe_brake": 23.0,
+                "surf_accel": 55.0,
+                "surf_gravity_scale": 0.95,
+                "surf_min_normal_z": 0.05,
+                "surf_max_normal_z": 0.72,
+                "friction": 5.3,
+            }
+        )
+
+        bhop = dict(snap)
+        bhop.update(
+            {
+                "surf_enabled": False,
+                "autojump_enabled": True,
+                "enable_coyote": True,
+                "enable_jump_buffer": True,
+                "jump_accel": 34.0,
+                "max_air_speed": 14.0,
+                "air_control": 0.30,
+                "air_counter_strafe_brake": 18.0,
+                "friction": 4.8,
+            }
+        )
+
+        surf = dict(snap)
+        surf.update(
+            {
+                "surf_enabled": True,
+                "autojump_enabled": False,
+                "enable_coyote": False,
+                "enable_jump_buffer": False,
+                "jump_accel": 10.0,
+                "max_air_speed": 22.0,
+                "air_control": 0.10,
+                "air_counter_strafe_brake": 9.0,
+                "surf_accel": 70.0,
+                "surf_gravity_scale": 0.82,
+                "surf_min_normal_z": 0.05,
+                "surf_max_normal_z": 0.76,
+                "friction": 3.8,
+            }
+        )
+        return {
+            "surf_bhop": surf_bhop,
+            "bhop": bhop,
+            "surf": surf,
+        }
+
+    def _profile_names(self) -> list[str]:
+        ordered = ["surf_bhop", "bhop", "surf"]
+        extras = sorted([n for n in self._profiles.keys() if n not in ordered])
+        return [n for n in ordered if n in self._profiles] + extras
+
+    def _load_profiles_from_state(self, state: IvanState) -> None:
+        self._profiles = {name: dict(values) for name, values in self._default_profiles.items()}
+        for name, values in state.tuning_profiles.items():
+            self._profiles[name] = dict(values)
+
+        active = state.active_tuning_profile or "surf_bhop"
+        if active not in self._profiles:
+            active = "surf_bhop"
+        self._active_profile_name = active
+        self._apply_profile_snapshot(self._profiles[self._active_profile_name], persist=False)
+
+        # Legacy compatibility: explicit tuning overrides still apply on top at boot.
+        if state.tuning_overrides:
+            self._apply_persisted_tuning(state.tuning_overrides)
+            if self._active_profile_name in self._profiles:
+                for k, v in state.tuning_overrides.items():
+                    self._profiles[self._active_profile_name][k] = v
+
+    def _apply_profile_snapshot(self, values: dict[str, float | bool], *, persist: bool) -> None:
+        fields = set(PhysicsTuning.__annotations__.keys())
+        self._suspend_tuning_persist = True
+        try:
+            for field, value in values.items():
+                if field not in fields:
+                    continue
+                setattr(self.tuning, field, value)
+        finally:
+            self._suspend_tuning_persist = False
+        if getattr(self, "player", None) is not None:
+            self.player.apply_hull_settings()
+        if persist:
+            self._persist_profiles_state()
+
+    def _apply_profile(self, profile_name: str) -> None:
+        if profile_name not in self._profiles:
+            return
+        self._active_profile_name = profile_name
+        self._apply_profile_snapshot(self._profiles[profile_name], persist=True)
+        self.ui.set_profiles(self._profile_names(), self._active_profile_name)
+
+    def _save_active_profile(self) -> None:
+        snapshot = {
+            field: self._to_persisted_value(getattr(self.tuning, field))
+            for field in PhysicsTuning.__annotations__.keys()
+        }
+
+        if self._active_profile_name in self._default_profile_names:
+            new_name = self._make_profile_copy_name(self._active_profile_name)
+            self._profiles[new_name] = snapshot
+            self._active_profile_name = new_name
+        else:
+            self._profiles[self._active_profile_name] = snapshot
+        self._persist_profiles_state()
+        self.ui.set_profiles(self._profile_names(), self._active_profile_name)
+
+    def _make_profile_copy_name(self, base_name: str) -> str:
+        root = (base_name[:12] if base_name else "profile").strip("_-")
+        if not root:
+            root = "profile"
+        candidate = f"{root}_copy"
+        if candidate not in self._profiles:
+            return candidate
+        for i in range(2, 100):
+            name = f"{root}_c{i}"
+            if name not in self._profiles:
+                return name
+        return f"{root}_{len(self._profiles)}"
+
+    def _persist_profiles_state(self) -> None:
+        active_snapshot = self._profiles.get(self._active_profile_name, {})
+        update_state(
+            tuning_profiles=self._profiles,
+            active_tuning_profile=self._active_profile_name,
+            tuning_overrides=active_snapshot,
+        )
+
+    def _on_debug_wheel(self, direction: int) -> None:
+        if self._mode != "game" or not self._debug_menu_open:
+            return
+        self.ui.scroll_wheel(direction)
 
     def _set_pointer_lock(self, locked: bool) -> None:
         self._pointer_locked = bool(locked)
