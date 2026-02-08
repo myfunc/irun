@@ -6,7 +6,7 @@
 - Ivan: in-game debug/admin panel with live movement parameter tuning
 - Ivan: debug-tuned parameters persist to local state and load as next-run defaults
 - Ivan: debug panel upgraded to grouped, collapsible, scrollable CS-style boxed layout with normalized sliders
-- Ivan: debug profile manager with default presets (`surf_bhop`, `bhop`, `surf`) and persistent custom profile saves
+- Ivan: debug profile manager with default presets (`surf_bhop`, `bhop`, `surf`, `surf_sky2_server`) and persistent custom profile saves
 - Ivan: in-game menu on `Esc` (Resume, Map Selector, Key Bindings, Back to Main Menu, Quit)
 - Ivan: debug/admin panel moved to `` ` `` (tilde/backtick)
 - Ivan: rebindable noclip toggle (default `V`) via in-game Key Bindings
@@ -34,6 +34,10 @@
 - Ivan: autojump toggle (hold jump to continue hopping)
 - Ivan: vault is disabled by default (runtime toggle in debug menu)
 - Ivan: surf prototype on slanted surfaces (strafe-held surf with live tuning controls)
+- Ivan: legacy-style surf preset (`surf_sky2_server`) approximating public surf_ski_2/surf_sky_2 server cvars
+- Ivan: surf steering preserves inertia (momentum can redirect on ramps without single-frame horizontal direction flips)
+- Ivan: surf vertical input redirection applies uphill only; downhill acceleration remains gravity-driven
+- Ivan: surf-specific acceleration/gravity modifiers stop immediately after contact is lost (no post-leave surf boost)
 - Game modes: maps can declare how they should run via bundle metadata (`run.json`)
   - `free_run`: default "just run around"
   - `time_trial`: local time trial with restart and local PB/leaderboard (per `map_id`)
