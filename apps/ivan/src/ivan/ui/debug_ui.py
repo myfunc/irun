@@ -436,6 +436,16 @@ class DebugUI:
             if idx >= self._profile_dropdown_offset + self._profile_visible:
                 self._profile_dropdown_offset = idx - self._profile_visible + 1
         self._refresh_profile_dropdown()
+        self.sync_from_tuning()
+
+    def sync_from_tuning(self) -> None:
+        for field, ctrl in self._number_controls.items():
+            value = float(getattr(self._tuning, field))
+            clamped = max(ctrl._minimum, min(ctrl._maximum, value))
+            ctrl.slider["value"] = ctrl._to_slider_value(clamped)
+            ctrl.entry.enterText(ctrl._display_text(clamped))
+        for field in self._toggle_buttons.keys():
+            self._refresh_toggle_button(field)
 
     def _build_group(self, group_name: str, numeric_fields: list[str], toggle_fields: list[str]) -> None:
         box = DirectFrame(

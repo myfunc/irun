@@ -20,7 +20,7 @@ The UI kit is designed to be iterated on outside the main runtime UI, then wired
 - `apps/ivan/src/ivan/__main__.py`: Ivan entrypoint (`python -m ivan`)
 - `apps/ivan/src/ivan/game.py`: App wiring (Panda3D ShowBase), input, camera, and frame update loop
 - `apps/ivan/src/ivan/maps/catalog.py`: runtime catalog helpers for shipped bundles and GoldSrc-like map discovery
-- `apps/ivan/src/ivan/state.py`: small persistent user state (last launched map, last game dir/mod, debug tuning overrides)
+- `apps/ivan/src/ivan/state.py`: small persistent user state (last launched map, last game dir/mod, tuning profiles + active profile snapshot)
 - `apps/ivan/src/ivan/world/scene.py`: Scene building, external map-bundle loading (`--map`), spawn point/yaw
 - `apps/ivan/src/ivan/maps/steam.py`: Steam library scanning helpers (manual Half-Life auto-detect)
 - `apps/ivan/src/ivan/physics/tuning.py`: Tunable movement/physics parameters (exposed via debug/admin UI)
