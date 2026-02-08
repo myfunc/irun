@@ -56,8 +56,18 @@ See: `docs/ui-kit.md`.
 - Movement simulation runs at a fixed `60 Hz` tick to support deterministic input replay.
 - Multiplayer networking:
   - TCP bootstrap for join/session token assignment.
+  - Bootstrap welcome includes server map reference (`map_json`) so connecting clients can auto-load matching content.
+  - Bootstrap welcome also includes tuning ownership (`can_configure`) and initial authoritative tuning snapshot/version.
   - UDP packets for gameplay input and world snapshots.
+  - Snapshot replication runs at `30 Hz` to reduce visible interpolation stutter.
   - Server simulates movement authoritatively at `60 Hz`; clients use prediction + reconciliation for local player and snapshot-buffer interpolation for remote players.
+  - Server broadcasts authoritative tuning snapshot/version in UDP snapshots; clients apply updates in-flight.
+  - Only server config owner may submit tuning updates; non-owner clients are read-only for runtime config.
+  - Respawn requests are sent to server over TCP; server performs authoritative respawn and replicates result.
+  - Player snapshots include respawn sequence (`rs`) to force immediate authoritative client reset after respawn events.
+  - Local reconciliation uses sequence-based prediction history: rollback to authoritative acked state, replay unacked inputs, then apply short visual error decay.
+  - Local first-person render path uses a short camera shell smoothing layer in online mode; reconciliation offsets are not applied directly to the camera.
+  - Remote interpolation delay is adaptive (derived from observed snapshot interval mean/stddev), and server-tick estimation uses smoothed offset tracking.
   - Client-host mode: the game can run an embedded local server thread on demand; `Esc` menu `Open To Network` toggles host mode ON/OFF.
   - Client join mode: `Esc` menu `Multiplayer` tab allows runtime remote connect/disconnect by host+port (no restart required).
   - Host toggle handles busy local ports gracefully by attempting to join an already running local server.
