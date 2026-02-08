@@ -19,6 +19,7 @@ class RunMetadata:
     mode_config: dict | None = None
     spawn_override: dict | None = None  # {"position":[x,y,z], "yaw":deg}
     lighting: dict | None = None  # {"preset": str, "overrides": {style(str): pattern(str)}}
+    visibility: dict | None = None  # {"enabled": bool, "mode": "auto"|"goldsrc_pvs", "build_cache": bool}
 
 
 def load_run_metadata(*, bundle_ref: Path) -> RunMetadata:
@@ -57,7 +58,17 @@ def load_run_metadata(*, bundle_ref: Path) -> RunMetadata:
     if not isinstance(lighting, dict):
         lighting = None
 
-    return RunMetadata(mode=mode, mode_config=mode_config, spawn_override=spawn, lighting=lighting)
+    visibility = payload.get("visibility")
+    if not isinstance(visibility, dict):
+        visibility = None
+
+    return RunMetadata(
+        mode=mode,
+        mode_config=mode_config,
+        spawn_override=spawn,
+        lighting=lighting,
+        visibility=visibility,
+    )
 
 
 def set_run_metadata_lighting(*, bundle_ref: Path, lighting: dict | None) -> None:

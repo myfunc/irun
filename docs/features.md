@@ -24,6 +24,7 @@
   - Supports masked transparency for `{` textures via GoldSrc-style blue colorkey / palette index 255
   - Converts GoldSrc skybox textures from `gfx/env/` into bundle `materials/skybox/` (when present)
   - Extracts baked GoldSrc lightmaps (RGB) into bundle `lightmaps/` and renders them in runtime (supports up to 4 light styles per face)
+- Ivan: GoldSrc PVS visibility culling (BSP VISIBILITY + leaf surface lists) to avoid rendering geometry hidden behind walls (when cache is available)
 - Ivan: main menu (retro) with map bundle selection and on-demand GoldSrc/Xash3D import from a chosen game directory
   - Fast navigation: hold Up/Down for accelerated scrolling, Left/Right page jump, and `Cmd+F`/`Ctrl+F` search
   - Delete imported/generated map bundles from the UI (safe delete: `assets/imported/**` and `assets/generated/*`)
@@ -48,6 +49,7 @@
 - Camera: follow camera with collision avoidance and smoothing
 - Levels: modular blocks, checkpoints, hazards, collectibles
 - Maps: format v3 (entities, triggers, lights, chunked baked geometry) + editor workflow
+- Tools: Baker app (map viewer + import manager + configurable lighting rebake with light rig overrides and quality presets)
 - Time trial: portal/leaderboards (plus ghosts/replays; map_hash binding)
 - Rendering: retro texture filtering options (nearest-neighbor, mipmap strategy)
 - Game loop: pause, restart, level select

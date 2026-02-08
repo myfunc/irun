@@ -19,3 +19,6 @@ class RunConfig:
     # Optional lighting override for this run (e.g. picked from the main menu).
     # If None, the map falls back to bundle run.json "lighting" (if present), then map.json defaults.
     lighting: dict | None = None
+    # Optional visibility/culling configuration for this run.
+    # If None, the map falls back to bundle run.json "visibility" (if present), else defaults.
+    visibility: dict | None = None
