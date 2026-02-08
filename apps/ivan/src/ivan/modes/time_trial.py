@@ -29,7 +29,8 @@ class TimeTrialMode(GameMode):
         self._leaderboard_rank: tuple[int, int] | None = None
 
     def bindings(self) -> ModeBindings:
-        ev: list[tuple[str, callable]] = [("f4", self._restart)]
+        # F4 is reserved for the in-game console. Keep restart on a shifted chord.
+        ev: list[tuple[str, callable]] = [("shift-f4", self._restart)]
         if self._allow_marker_edit:
             ev += [
                 ("f5", self._set_start_marker),

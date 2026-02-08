@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import errno
+import os
 import subprocess
 import sys
 import threading
@@ -32,6 +33,10 @@ from panda3d.core import (
 
 from ivan.app_config import RunConfig
 from ivan.common.error_log import ErrorLog
+from ivan.console.control_server import ConsoleControlServer
+from ivan.console.core import CommandContext
+from ivan.console.ivan_bindings import build_client_console
+from ivan.console.line_bus import ThreadSafeLineBus
 from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, resolve_bundle_handle
 from ivan.maps.run_metadata import RunMetadata, load_run_metadata
 from ivan.modes.base import ModeContext
@@ -52,6 +57,7 @@ from ivan.replays import (
 )
 from ivan.state import IvanState, load_state, update_state
 from ivan.ui.debug_ui import DebugUI
+from ivan.ui.console_ui import ConsoleUI
 from ivan.ui.error_console_ui import ErrorConsoleUI
 from ivan.ui.input_debug_ui import InputDebugUI
 from ivan.ui.main_menu import ImportRequest, MainMenuController
@@ -127,6 +133,7 @@ class _RemotePlayerVisual:
     respawn_seq: int = 0
     sample_ticks: list[int] = field(default_factory=list)
     sample_pos: list[LVector3f] = field(default_factory=list)
+    sample_vel: list[LVector3f] = field(default_factory=list)
     sample_yaw: list[float] = field(default_factory=list)
 
 
@@ -206,6 +213,7 @@ class RunnerDemo(ShowBase):
         self._pause_menu_open = False
         self._debug_menu_open = False
         self._replay_browser_open = False
+        self._console_open = False
         self._mode: str = "boot"  # boot | menu | game
         self._last_mouse: tuple[float, float] | None = None
         self._input_debug_until: float = 0.0
@@ -240,6 +248,8 @@ class RunnerDemo(ShowBase):
         self._net_local_respawn_seq: int = 0
         self._net_last_snapshot_local_time: float = 0.0
         self._net_interp_delay_ticks: float = 6.0
+        # GoldSrc/Source-style dead reckoning when snapshots stall (short clamp to avoid runaway).
+        self._net_remote_extrapolate_max_ticks: float = 8.0
         self._net_can_configure: bool = False
         self._net_authoritative_tuning: dict[str, float | bool] = {}
         self._net_authoritative_tuning_version: int = 0
@@ -264,8 +274,11 @@ class RunnerDemo(ShowBase):
         self._net_perf_text: str = ""
         self._embedded_server: EmbeddedHostServer | None = None
         self._open_to_network: bool = False
-        self._runtime_connect_host: str | None = (str(self.cfg.net_host).strip() if self.cfg.net_host else None)
-        self._runtime_connect_port: int = int(self.cfg.net_port)
+        # If no explicit CLI connect target is provided, keep last used host/port for fast iteration.
+        st_host = str(self._loaded_state.last_net_host).strip() if self._loaded_state.last_net_host else None
+        st_port = int(self._loaded_state.last_net_port) if isinstance(self._loaded_state.last_net_port, int) else None
+        self._runtime_connect_host: str | None = (str(self.cfg.net_host).strip() if self.cfg.net_host else st_host)
+        self._runtime_connect_port: int = int(self.cfg.net_port) if self.cfg.net_host else int(st_port or self.cfg.net_port)
         self._local_hp: int = 100
         self._sim_prev_player_pos = LVector3f(0, 0, 0)
         self._sim_curr_player_pos = LVector3f(0, 0, 0)
@@ -343,8 +356,22 @@ class RunnerDemo(ShowBase):
             on_select=self._load_replay_from_path,
             on_close=self._close_replay_browser,
         )
+        self.console_ui = ConsoleUI(aspect2d=self.aspect2d, theme=self.ui_theme, on_submit=self._console_submit_line)
         self.input_debug = InputDebugUI(aspect2d=self.aspect2d, theme=self.ui_theme)
         self._setup_input()
+
+        # Minimal console runtime (no in-game UI yet). Primarily driven via MCP/control socket.
+        self.console = build_client_console(self)
+        self._console_bus = ThreadSafeLineBus(max_lines=500)
+        self.console.register_listener(self._console_bus.listener)
+        # Default chosen to be near the multiplayer default (7777) but not collide.
+        self._console_control_port = int(os.environ.get("IRUN_IVAN_CONSOLE_PORT", "7779"))
+        self.console_control = ConsoleControlServer(console=self.console, port=int(self._console_control_port))
+        try:
+            self.console_control.start()
+        except Exception:
+            # Best-effort: if the port is in use, keep running without the control bridge.
+            self.console_control = None
 
         # Boot behavior:
         # - --map: run immediately (useful for fast iteration)
@@ -381,6 +408,7 @@ class RunnerDemo(ShowBase):
         self.accept("`", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
         self.accept("ascii`", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
         self.accept("grave", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
+        self.accept("f4", lambda: self._safe_call("input.console", self._toggle_console))
         self.accept("r", lambda: self._safe_call("input.respawn", self._on_respawn_pressed))
         self.accept("f2", self.input_debug.toggle)
         self.accept("f3", self.error_console.toggle)
@@ -795,10 +823,15 @@ class RunnerDemo(ShowBase):
         self._pause_menu_open = False
         self._debug_menu_open = False
         self._replay_browser_open = False
+        self._console_open = False
         self._awaiting_noclip_rebind = False
         self.pause_ui.hide()
         self.replay_browser_ui.hide()
         self.ui.hide()
+        try:
+            self.console_ui.hide()
+        except Exception:
+            pass
         self._set_pointer_lock(True)
 
     def _open_pause_menu(self) -> None:
@@ -807,7 +840,12 @@ class RunnerDemo(ShowBase):
         self._pause_menu_open = True
         self._debug_menu_open = False
         self._replay_browser_open = False
+        self._console_open = False
         self._awaiting_noclip_rebind = False
+        try:
+            self.console_ui.hide()
+        except Exception:
+            pass
         self.pause_ui.show_main()
         self.pause_ui.set_keybind_status("")
         self.pause_ui.set_open_to_network(self._open_to_network)
@@ -839,8 +877,13 @@ class RunnerDemo(ShowBase):
         if self._debug_menu_open:
             self._pause_menu_open = False
             self._replay_browser_open = False
+            self._console_open = False
             self.pause_ui.hide()
             self.replay_browser_ui.hide()
+            try:
+                self.console_ui.hide()
+            except Exception:
+                pass
             self.ui.show()
             self._set_pointer_lock(False)
             return
@@ -863,10 +906,43 @@ class RunnerDemo(ShowBase):
         if self._replay_browser_open:
             self._close_replay_browser()
             return
+        if self._console_open:
+            self._close_console()
+            return
         if self._debug_menu_open or self._pause_menu_open:
             self._close_all_game_menus()
             return
         self._open_pause_menu()
+
+    def _toggle_console(self) -> None:
+        if self._mode != "game":
+            return
+        if self._console_open:
+            self._close_console()
+        else:
+            self._open_console()
+
+    def _open_console(self) -> None:
+        if self._mode != "game":
+            return
+        # Keep console mutually exclusive with other in-game menus.
+        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open:
+            self._close_all_game_menus()
+        self._console_open = True
+        self.console_ui.show()
+        self._set_pointer_lock(False)
+
+    def _close_console(self) -> None:
+        self._console_open = False
+        try:
+            self.console_ui.hide()
+        except Exception:
+            pass
+        if not (self._pause_menu_open or self._debug_menu_open or self._replay_browser_open):
+            self._set_pointer_lock(True)
+
+    def _console_submit_line(self, line: str) -> list[str]:
+        return list(self.console.execute_line(ctx=CommandContext(role="client", origin="ui"), line=str(line)))
 
     def _open_keybindings_menu(self) -> None:
         if self._mode != "game":
@@ -878,6 +954,11 @@ class RunnerDemo(ShowBase):
     def _open_replay_browser(self) -> None:
         if self._mode != "game":
             return
+        self._console_open = False
+        try:
+            self.console_ui.hide()
+        except Exception:
+            pass
         items: list[ReplayListItem] = []
         for p in list_replays():
             label = p.stem
@@ -1564,6 +1645,8 @@ class RunnerDemo(ShowBase):
             self._net_perf.reset()
             self._net_perf_last_publish = 0.0
             self._net_perf_text = ""
+            if self._runtime_connect_host:
+                update_state(last_net_host=str(self._runtime_connect_host), last_net_port=int(self._runtime_connect_port))
             self.ui.set_status(f"Connected to server {target_host}:{target_port} as #{self._net_player_id}")
             role = "host config owner" if self._net_can_configure else "client (read-only config)"
             self.pause_ui.set_multiplayer_status(f"Connected to {target_host}:{target_port} | {role}")
@@ -1688,6 +1771,7 @@ class RunnerDemo(ShowBase):
             self.pause_ui.set_multiplayer_status("Port must be between 1 and 65535.")
             return
 
+        update_state(last_net_host=host_clean, last_net_port=int(port))
         self._runtime_connect_host = host_clean
         self._runtime_connect_port = int(port)
         self.pause_ui.set_connect_target(host=self._runtime_connect_host, port=self._runtime_connect_port)
@@ -1845,13 +1929,16 @@ class RunnerDemo(ShowBase):
                 rp.respawn_seq = int(rs)
                 rp.sample_ticks.clear()
                 rp.sample_pos.clear()
+                rp.sample_vel.clear()
                 rp.sample_yaw.clear()
             rp.sample_ticks.append(int(tick))
             rp.sample_pos.append(LVector3f(x, y, z))
+            rp.sample_vel.append(LVector3f(vx, vy, vz))
             rp.sample_yaw.append(float(yaw))
             if len(rp.sample_ticks) > 48:
                 rp.sample_ticks = rp.sample_ticks[-48:]
                 rp.sample_pos = rp.sample_pos[-48:]
+                rp.sample_vel = rp.sample_vel[-48:]
                 rp.sample_yaw = rp.sample_yaw[-48:]
             rp.hp = max(0, hp)
 
@@ -1887,6 +1974,18 @@ class RunnerDemo(ShowBase):
             elif i1 >= len(rp.sample_ticks):
                 p = rp.sample_pos[-1]
                 y = rp.sample_yaw[-1]
+                # Short dead reckoning to reduce "stuck remote players" when snapshots stall.
+                if rp.sample_vel:
+                    dt_ticks = float(target_tick) - float(rp.sample_ticks[-1])
+                    if dt_ticks > 0.0:
+                        dt_ticks = min(float(dt_ticks), float(self._net_remote_extrapolate_max_ticks))
+                        dt_s = dt_ticks / float(self._sim_tick_rate_hz)
+                        v = rp.sample_vel[-1]
+                        p = LVector3f(
+                            float(p.x) + float(v.x) * float(dt_s),
+                            float(p.y) + float(v.y) * float(dt_s),
+                            float(p.z) + float(v.z) * float(dt_s),
+                        )
             else:
                 t0 = float(rp.sample_ticks[i1 - 1])
                 t1 = float(rp.sample_ticks[i1])
@@ -2073,11 +2172,23 @@ class RunnerDemo(ShowBase):
             )
 
     def _queue_jump(self) -> None:
-        if self.player is not None and self._mode == "game" and not self._pause_menu_open and not self._debug_menu_open:
+        if (
+            self.player is not None
+            and self._mode == "game"
+            and not self._pause_menu_open
+            and not self._debug_menu_open
+            and not self._console_open
+        ):
             self.player.queue_jump()
 
     def _on_grapple_primary_down(self) -> None:
-        if self.player is None or self._mode != "game" or self._pause_menu_open or self._debug_menu_open:
+        if (
+            self.player is None
+            or self._mode != "game"
+            or self._pause_menu_open
+            or self._debug_menu_open
+            or self._console_open
+        ):
             return
         if not bool(self.tuning.grapple_enabled):
             return
@@ -2262,6 +2373,15 @@ class RunnerDemo(ShowBase):
 
     def _update(self, task: Task) -> int:
         try:
+            # Drain console output produced by background threads (MCP/control bridge) into the UI.
+            try:
+                if getattr(self, "_console_bus", None) is not None:
+                    lines = self._console_bus.drain()
+                    if lines:
+                        self.console_ui.append(*lines)
+            except Exception:
+                pass
+
             if self._mode == "menu":
                 self.ui.set_crosshair_visible(False)
                 if self._menu is not None:
@@ -2289,7 +2409,7 @@ class RunnerDemo(ShowBase):
             if self._replay_browser_open:
                 self.replay_browser_ui.tick(now)
 
-            menu_open = self._pause_menu_open or self._debug_menu_open or self._replay_browser_open
+            menu_open = self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open
             self.ui.set_crosshair_visible(not menu_open)
 
             # Precompute wish from keyboard so debug overlay can show it even if movement seems dead.
@@ -2434,6 +2554,15 @@ class RunnerDemo(ShowBase):
             return Task.done
         return Task.cont
 
+    def userExit(self, *args, **kwargs) -> None:  # type: ignore[override]
+        try:
+            if getattr(self, "console_control", None) is not None:
+                try:
+                    self.console_control.close()
+                except Exception:
+                    pass
+        finally:
+            super().userExit(*args, **kwargs)
 
     def _write_smoke_screenshot(self) -> None:
         if not self.cfg.smoke or not self.cfg.smoke_screenshot:

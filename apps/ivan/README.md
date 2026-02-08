@@ -69,7 +69,8 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 - `Esc -> Replays`: open replay browser and load an input-demo file
 - `` ` `` (tilde/backtick): opens the debug/admin tuning menu
 - `F`: save current demo recording (recording window starts on respawn and ends when saved)
-- `F4`: restart run (time trial mode)
+- `F4`: toggle the in-game console
+- `Shift+F4`: restart run (time trial mode)
 - `F5`: set Start marker at current position (time trial mode dev helper)
 - `F6`: set Finish marker at current position (time trial mode dev helper)
 - `F7`: clear local course markers (time trial mode dev helper)
@@ -102,6 +103,14 @@ python -m ivan --connect <server-host> --port 7777 --name <player-name>
 - `Esc` menu includes `Open To Network` checkbox:
   - OFF: no local host server is running
   - ON: starts embedded host server bound to `0.0.0.0` so other clients can join by your machine IP
+
+MCP console control:
+- IVAN starts a localhost console control bridge (JSON-lines TCP) on port `7779` by default.
+  - Override port via env var `IRUN_IVAN_CONSOLE_PORT`.
+- Run the MCP stdio server (for an MCP-capable client) with:
+```bash
+ivan-mcp --control-host 127.0.0.1 --control-port 7779
+```
 
 ## Main Menu
 Booting without `--map` starts in the main menu:

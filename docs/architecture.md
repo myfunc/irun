@@ -76,6 +76,13 @@ See: `docs/ui-kit.md`.
   - Client join mode: `Esc` menu `Multiplayer` tab allows runtime remote connect/disconnect by host+port (no restart required).
   - Host toggle handles busy local ports gracefully by attempting to join an already running local server.
   - Default multiplayer port uses env var `DEFAULT_HOST_PORT` (fallback `7777`).
+- Console control / MCP:
+  - Runtime includes a minimal command console engine (`apps/ivan/src/ivan/console/`) for command + cvar execution.
+  - IVAN client process starts a localhost control bridge (JSON-lines TCP) for driving the console externally.
+    - Env: `IRUN_IVAN_CONSOLE_PORT` (default `7779`).
+    - Protocol: request `{"line":"echo hi","role":"client","origin":"mcp"}` -> response `{"ok":true,"out":["hi"]}`.
+  - Dedicated server process also starts a localhost control bridge on `IRUN_IVAN_SERVER_CONSOLE_PORT` (default `39001`).
+  - `ivan-mcp` runs an MCP stdio server (Python 3.9, no deps) that exposes a single tool: `console_exec`.
 - In-game UI/input split:
   - `Esc` opens gameplay menu and unlocks cursor.
   - `` ` `` opens debug/admin tuning menu and unlocks cursor.
@@ -145,7 +152,7 @@ Built-in modes:
 - Course is defined by **Start** and **Finish** AABB volumes (provided via `run.json` `config`).
 - Runs are persisted in the user state file (`~/.irun/ivan/state.json`) keyed by `map_id`.
 - Optional dev helper: if a bundle does not provide Start/Finish yet, the player can set them locally:
-  - `F4`: restart (respawn + cancel attempt)
+  - `Shift+F4`: restart (respawn + cancel attempt)
   - `F5`: set Start marker at current player position
   - `F6`: set Finish marker at current player position
   - `F7`: clear local course markers

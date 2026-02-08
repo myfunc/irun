@@ -28,6 +28,7 @@ dev = [
 
 [project.scripts]
 ivan = "ivan.__main__:main"
+ivan-mcp = "ivan.mcp_server:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

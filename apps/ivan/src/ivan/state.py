@@ -14,6 +14,8 @@ class IvanState:
     last_map_json: str | None = None
     last_game_root: str | None = None
     last_mod: str | None = None
+    last_net_host: str | None = None
+    last_net_port: int | None = None
     tuning_overrides: dict[str, float | bool] = field(default_factory=dict)
     # Local-only time-trial info keyed by map_id.
     time_trials: dict[str, dict] | None = None
@@ -52,6 +54,8 @@ def load_state() -> IvanState:
     lm = payload.get("last_map_json")
     gr = payload.get("last_game_root")
     mod = payload.get("last_mod")
+    lnh = payload.get("last_net_host")
+    lnp = payload.get("last_net_port")
     raw_tuning = payload.get("tuning_overrides")
     tuning_overrides: dict[str, float | bool] = {}
     if isinstance(raw_tuning, dict):
@@ -89,6 +93,8 @@ def load_state() -> IvanState:
         last_map_json=str(lm) if isinstance(lm, str) and lm.strip() else None,
         last_game_root=str(gr) if isinstance(gr, str) and gr.strip() else None,
         last_mod=str(mod) if isinstance(mod, str) and mod.strip() else None,
+        last_net_host=str(lnh) if isinstance(lnh, str) and lnh.strip() else None,
+        last_net_port=int(lnp) if isinstance(lnp, int) and 1 <= int(lnp) <= 65535 else None,
         tuning_overrides=tuning_overrides,
         time_trials=dict(tt) if isinstance(tt, dict) else None,
         tuning_profiles=tuning_profiles,
@@ -108,6 +114,8 @@ def save_state(state: IvanState) -> None:
                 "last_map_json": state.last_map_json,
                 "last_game_root": state.last_game_root,
                 "last_mod": state.last_mod,
+                "last_net_host": state.last_net_host,
+                "last_net_port": int(state.last_net_port) if isinstance(state.last_net_port, int) else None,
                 "tuning_overrides": state.tuning_overrides,
                 "time_trials": state.time_trials,
                 "tuning_profiles": state.tuning_profiles,
@@ -127,6 +135,8 @@ def update_state(
     last_map_json: str | None = None,
     last_game_root: str | None = None,
     last_mod: str | None = None,
+    last_net_host: str | None = None,
+    last_net_port: int | None = None,
     tuning_overrides: dict[str, float | bool] | None = None,
     tuning_profiles: dict[str, dict[str, float | bool]] | None = None,
     active_tuning_profile: str | None = None,
@@ -144,6 +154,8 @@ def update_state(
             last_map_json=last_map_json if last_map_json is not None else s.last_map_json,
             last_game_root=last_game_root if last_game_root is not None else s.last_game_root,
             last_mod=last_mod if last_mod is not None else s.last_mod,
+            last_net_host=last_net_host if last_net_host is not None else s.last_net_host,
+            last_net_port=int(last_net_port) if isinstance(last_net_port, int) else s.last_net_port,
             tuning_overrides=merged_tuning,
             time_trials=s.time_trials,
             tuning_profiles=merged_profiles,
