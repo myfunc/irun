@@ -3,13 +3,17 @@
 ## Overview
 Game apps use **Panda3D** directly to keep iteration fast for movement-focused prototypes.
 
-## UI Kit (Experimental)
-We maintain an **experimental procedural UI kit** under `apps/ui_kit/` to standardize:
+## UI Kit
+We maintain an internal procedural UI kit under `apps/ui_kit/` to standardize:
 - layout constants (padding/margins/gaps)
 - theme tokens (palette + typography)
 - reusable primitives (windows/panels/buttons/text inputs)
 
-The UI kit is designed to be iterated on outside the main runtime UI, then wired into Ivan once stable.
+Policy:
+- Ivan should prefer using the UI kit for **all non-HUD UI** (main menu, pause menu, debug/admin panels, etc).
+- If a shared UI feature is missing, implement it in `apps/ui_kit` rather than shipping one-off game-side UI.
+- Exclusions in this policy pass: gameplay log/error overlays, crosshair, and in-game hint overlays.
+
 See: `docs/ui-kit.md`.
 
 ## Code Layout
@@ -17,7 +21,7 @@ See: `docs/ui-kit.md`.
 - `apps/baker/src/baker/__main__.py`: Baker entrypoint (`python -m baker`)
 - `apps/baker/src/baker/app.py`: Viewer wiring (Panda3D ShowBase), fly camera, tonemap hotkeys
 - `apps/baker/src/baker/render/tonemapping.py`: GLSL 120 post-process view transform (gamma-only/Reinhard/ACES approx)
-- `apps/ui_kit/src/irun_ui_kit/`: Experimental procedural UI kit (Panda3D DirectGUI), used for iterating on reusable windows/panels/controls and theme tokens outside the main runtime UI
+- `apps/ui_kit/src/irun_ui_kit/`: Internal procedural UI kit (Panda3D DirectGUI) used by Ivan UI screens
 - `apps/ivan/src/ivan/__main__.py`: Ivan entrypoint (`python -m ivan`)
 - `apps/ivan/src/ivan/game.py`: App wiring (Panda3D ShowBase), input, camera, and frame update loop
 - `apps/ivan/src/ivan/maps/catalog.py`: runtime catalog helpers for shipped bundles and GoldSrc-like map discovery
@@ -29,7 +33,6 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/physics/collision_world.py`: Bullet collision query world (convex sweeps against static geometry)
 - `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (CS-style grouped boxes, collapsible sections, scrollable content, normalized sliders, profile dropdown/save)
 - `apps/ivan/src/ivan/ui/main_menu.py`: main menu controller (bundle list + import flow)
-- `apps/ivan/src/ivan/ui/retro_menu_ui.py`: retro-styled menu widgets (procedural background)
 - `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game ESC menu (Resume/Map Selector/Key Bindings/Back/Quit) and keybinding controls
 - `apps/ivan/src/ivan/common/error_log.py`: small in-memory error feed used to prevent hard crashes and surface unhandled exceptions in-game
 - `apps/ivan/src/ivan/ui/error_console_ui.py`: bottom-screen error console (toggle with `F3`)
