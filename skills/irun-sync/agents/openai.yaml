@@ -1,0 +1,6 @@
+# Optional UI metadata. Keep in sync with SKILL.md.
+display_name: IRUN Sync
+short_description: Push to PR and sync local main (optionally merge).
+default_prompt: |
+  Synchronize this IRUN repo using the PR-only workflow: push current branch, create/update a PR to main, detect conflicts, and update local main. If asked to ship, attempt squash-merge the PR. Stop and request manual resolution if merge conflicts are detected.
+

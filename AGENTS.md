@@ -65,6 +65,10 @@ Goal: enable fast "vibe-coding" without stepping on each other, while keeping `m
   5. If the merge is blocked by conflicts, stop and ask the user how to proceed (see "Conflicts" below).
   6. After a successful merge, sync the local `main` to the latest `origin/main` (see "Post-Merge Sync" below).
 
+Local helper script (preferred to reduce manual steps and token usage):
+- Sync (push current branch -> create/update PR -> fast-forward local `main`): `./scripts/pr sync`
+- Ship (sync + attempt squash-merge PR): `./scripts/pr ship`
+
 Implementation notes for the agent:
 - Prefer GitHub CLI:
   - Create PR: `gh pr create --base main --head <branch> --fill`
