@@ -163,6 +163,9 @@ python -m ivan --map <bundle-dir>/map.json
 Notes:
 - By default, the importer extracts only textures referenced by the BSP into `<bundle-dir>/materials/` and does not
   copy other game assets. If you need extra assets copied, pass `--copy-resources`.
+- The importer extracts embedded BSP textures when present (common for custom/community maps).
+- If the BSP does not declare a worldspawn `wad` list, the importer falls back to scanning `--game-root` (and common
+  subfolders like `wads/` and `maps/`) for `.wad` files and extracts only the textures the BSP actually uses.
 - When copying resources, the importer intentionally skips executable code/binaries (e.g. `dlls/`, `cl_dlls/`, `bin/`,
   and extensions like `.dll`, `.exe`, `.dylib`, `.so`).
 - Triangle-map collision response uses Bullet convex sweep tests and a Quake3-style kinematic controller

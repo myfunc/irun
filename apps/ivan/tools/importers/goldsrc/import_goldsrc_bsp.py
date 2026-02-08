@@ -10,6 +10,7 @@ import bsp_tool
 from PIL import Image
 
 from goldsrc_wad import Wad3
+from goldsrc_wad import WadError, decode_wad3_miptex
 
 NO_RENDER_TEXTURES = {
     "aaatrigger",
@@ -269,6 +270,154 @@ def _expand_animated_textures(names: set[str]) -> set[str]:
     return out
 
 
+def _discover_wad_files(game_root: Path) -> list[Path]:
+    """
+    Best-effort WAD discovery.
+
+    Some GoldSrc maps omit the worldspawn "wad" key. In that case we fall back to
+    scanning common locations under the provided game_root.
+    """
+
+    cands: list[Path] = []
+    for sub in ("", "wads", "WAD", "maps"):
+        d = game_root / sub
+        if not d.exists() or not d.is_dir():
+            continue
+        try:
+            cands.extend(sorted(d.glob("*.wad")))
+        except Exception:
+            continue
+
+    # De-dupe by real path; keep stable ordering.
+    seen: set[Path] = set()
+    out: list[Path] = []
+    for p in cands:
+        try:
+            rp = p.resolve()
+        except Exception:
+            rp = p
+        if rp in seen:
+            continue
+        seen.add(rp)
+        out.append(p)
+    return out
+
+
+def _extract_embedded_textures(
+    *,
+    bsp,
+    materials_dir: Path,
+    used_textures_cf: set[str],
+    extract_all: bool,
+) -> int:
+    """
+    Extract textures embedded in the BSP texture lump (MIPTEXTURES).
+
+    Many community maps embed custom textures directly in the BSP. When present,
+    this avoids needing external WADs.
+    """
+
+    extracted = 0
+    mip = getattr(bsp, "MIP_TEXTURES", None)
+    if mip is None:
+        return 0
+
+    for entry in mip:
+        if not (isinstance(entry, tuple) and len(entry) == 2):
+            continue
+        mt, mips = entry
+        if not (isinstance(mips, list) and len(mips) == 4):
+            continue
+        if not any(isinstance(b, (bytes, bytearray)) and len(b) for b in mips):
+            continue
+
+        name = _decode_miptex_name(getattr(mt, "name", mt))
+        if not name:
+            continue
+        if not extract_all:
+            if name.casefold() not in used_textures_cf:
+                continue
+            if not _should_render_texture(name):
+                continue
+
+        dst = materials_dir / f"{name}.png"
+        if dst.exists():
+            continue
+
+        # Reconstruct a WAD3-style MIPTEX lump and reuse the existing decoder.
+        # The BSP texture lump uses the same on-disk layout for each embedded texture.
+        try:
+            size = getattr(mt, "size", None)
+            offsets = getattr(mt, "offsets", None)
+            if size is None or offsets is None:
+                continue
+            w = int(float(getattr(size, "x", 0)))
+            h = int(float(getattr(size, "y", 0)))
+            if w <= 0 or h <= 0:
+                continue
+
+            # Offsets are relative to the start of the miptex struct.
+            o0 = int(getattr(offsets, "full"))
+            o1 = int(getattr(offsets, "half"))
+            o2 = int(getattr(offsets, "quarter"))
+            o3 = int(getattr(offsets, "eighth"))
+            if o0 <= 0 or o1 <= 0 or o2 <= 0 or o3 <= 0:
+                # External texture reference (not embedded).
+                continue
+
+            # Name field is fixed 16 bytes in the struct.
+            raw_name = getattr(mt, "name", b"")
+            if isinstance(raw_name, bytes):
+                name16 = (raw_name + b"\x00" * 16)[:16]
+            else:
+                name16 = (str(raw_name).encode("ascii", errors="ignore") + b"\x00" * 16)[:16]
+
+            # The last element in bsp_tool's mips list appears to include mip3 plus palette bytes.
+            # Slice the expected mip3 length; keep the remainder as palette payload.
+            mip3_len = max(1, (w // 8)) * max(1, (h // 8))
+            mip0 = bytes(mips[0] or b"")
+            mip1 = bytes(mips[1] or b"")
+            mip2 = bytes(mips[2] or b"")
+            tail = bytes(mips[3] or b"")
+            mip3 = tail[:mip3_len]
+            pal = tail[mip3_len:]
+
+            # Build the blob with explicit padding to match offsets.
+            header = bytearray()
+            header += name16
+            header += int(w).to_bytes(4, "little", signed=False)
+            header += int(h).to_bytes(4, "little", signed=False)
+            header += int(o0).to_bytes(4, "little", signed=False)
+            header += int(o1).to_bytes(4, "little", signed=False)
+            header += int(o2).to_bytes(4, "little", signed=False)
+            header += int(o3).to_bytes(4, "little", signed=False)
+
+            buf = bytearray(header)
+            if len(buf) < o0:
+                buf += b"\x00" * (o0 - len(buf))
+            buf += mip0
+            if len(buf) < o1:
+                buf += b"\x00" * (o1 - len(buf))
+            buf += mip1
+            if len(buf) < o2:
+                buf += b"\x00" * (o2 - len(buf))
+            buf += mip2
+            if len(buf) < o3:
+                buf += b"\x00" * (o3 - len(buf))
+            buf += mip3
+            buf += pal
+
+            tex = decode_wad3_miptex(name=name, data=bytes(buf))
+            _save_png(dst, width=tex.width, height=tex.height, rgba=tex.rgba)
+            extracted += 1
+        except (WadError, ValueError, OverflowError):
+            continue
+        except Exception:
+            continue
+
+    return extracted
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Import a GoldSrc/Xash3D BSP into an IVAN map bundle (geometry + extracted textures + resource copy)."
@@ -474,6 +623,9 @@ def main() -> None:
     resources.update(_scan_entities_for_resources(entities))
 
     wad_names = _parse_wad_list(entities)
+    # Some maps omit the editor WAD list; fall back to scanning common WAD locations.
+    if not wad_names:
+        wad_names = [p.name for p in _discover_wad_files(game_root)]
     for w in wad_names:
         resources.add(_norm_rel(w))
 
@@ -524,10 +676,17 @@ def main() -> None:
             shutil.copy2(src, dst)
             copied.append(_norm_rel(rel))
 
-    # Extract textures from referenced WADs into bundle materials/.
+    # Extract textures embedded in the BSP and/or from referenced WADs into bundle materials/.
     materials_dir = out_dir / "materials"
     extracted_textures: int = 0
     used_cf = {u.casefold() for u in used_textures}
+
+    extracted_textures += _extract_embedded_textures(
+        bsp=bsp,
+        materials_dir=materials_dir,
+        used_textures_cf=used_cf,
+        extract_all=bool(args.extract_all_wad_textures),
+    )
     for wad_name in wad_names:
         wad_src = None
         # WAD paths in worldspawn are often absolute; treat as filename.
