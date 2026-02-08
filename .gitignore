@@ -24,3 +24,6 @@ coverage.xml
 .DS_Store
 .idea/
 .vscode/
+
+# Repo scratch
+.tmp/
