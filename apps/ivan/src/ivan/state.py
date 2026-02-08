@@ -17,6 +17,8 @@ class IvanState:
     tuning_overrides: dict[str, float | bool] = field(default_factory=dict)
     # Local-only time-trial info keyed by map_id.
     time_trials: dict[str, dict] | None = None
+    tuning_profiles: dict[str, dict[str, float | bool]] = field(default_factory=dict)
+    active_tuning_profile: str | None = None
 
 
 def state_dir() -> Path:
@@ -62,12 +64,35 @@ def load_state() -> IvanState:
             if isinstance(value, (int, float)):
                 tuning_overrides[key] = float(value)
     tt = payload.get("time_trials")
+
+    tuning_profiles: dict[str, dict[str, float | bool]] = {}
+    raw_profiles = payload.get("tuning_profiles")
+    if isinstance(raw_profiles, dict):
+        for profile_name, profile_vals in raw_profiles.items():
+            if not isinstance(profile_name, str) or not profile_name.strip():
+                continue
+            if not isinstance(profile_vals, dict):
+                continue
+            cleaned: dict[str, float | bool] = {}
+            for key, value in profile_vals.items():
+                if not isinstance(key, str) or not key.strip():
+                    continue
+                if isinstance(value, bool):
+                    cleaned[key] = value
+                elif isinstance(value, (int, float)):
+                    cleaned[key] = float(value)
+            tuning_profiles[profile_name] = cleaned
+
+    active_tuning_profile = payload.get("active_tuning_profile")
+    active_name = str(active_tuning_profile) if isinstance(active_tuning_profile, str) and active_tuning_profile.strip() else None
     return IvanState(
         last_map_json=str(lm) if isinstance(lm, str) and lm.strip() else None,
         last_game_root=str(gr) if isinstance(gr, str) and gr.strip() else None,
         last_mod=str(mod) if isinstance(mod, str) and mod.strip() else None,
         tuning_overrides=tuning_overrides,
         time_trials=dict(tt) if isinstance(tt, dict) else None,
+        tuning_profiles=tuning_profiles,
+        active_tuning_profile=active_name,
     )
 
 
@@ -85,6 +110,8 @@ def save_state(state: IvanState) -> None:
                 "last_mod": state.last_mod,
                 "tuning_overrides": state.tuning_overrides,
                 "time_trials": state.time_trials,
+                "tuning_profiles": state.tuning_profiles,
+                "active_tuning_profile": state.active_tuning_profile,
             },
             indent=2,
             sort_keys=True,
@@ -101,11 +128,17 @@ def update_state(
     last_game_root: str | None = None,
     last_mod: str | None = None,
     tuning_overrides: dict[str, float | bool] | None = None,
+    tuning_profiles: dict[str, dict[str, float | bool]] | None = None,
+    active_tuning_profile: str | None = None,
 ) -> None:
     s = load_state()
     merged_tuning = dict(s.tuning_overrides)
     if tuning_overrides is not None:
         merged_tuning.update(tuning_overrides)
+    merged_profiles = dict(s.tuning_profiles)
+    if tuning_profiles is not None:
+        merged_profiles = dict(tuning_profiles)
+    final_active_profile = active_tuning_profile if active_tuning_profile is not None else s.active_tuning_profile
     save_state(
         IvanState(
             last_map_json=last_map_json if last_map_json is not None else s.last_map_json,
@@ -113,6 +146,8 @@ def update_state(
             last_mod=last_mod if last_mod is not None else s.last_mod,
             tuning_overrides=merged_tuning,
             time_trials=s.time_trials,
+            tuning_profiles=merged_profiles,
+            active_tuning_profile=final_active_profile,
         )
     )
 
@@ -165,6 +200,8 @@ def set_time_trial_course_override(*, map_id: str, course: dict | None) -> None:
             last_mod=s.last_mod,
             tuning_overrides=s.tuning_overrides,
             time_trials=root,
+            tuning_profiles=s.tuning_profiles,
+            active_tuning_profile=s.active_tuning_profile,
         )
     )
 
@@ -233,6 +270,8 @@ def record_time_trial_run(
             last_mod=s.last_mod,
             tuning_overrides=s.tuning_overrides,
             time_trials=root,
+            tuning_profiles=s.tuning_profiles,
+            active_tuning_profile=s.active_tuning_profile,
         )
     )
     return (new_pb, last, rank_info)
