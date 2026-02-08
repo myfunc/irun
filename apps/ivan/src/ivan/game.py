@@ -271,14 +271,42 @@ class RunnerDemo(ShowBase):
                 "friction": 3.8,
             }
         )
+
+        surf_sky2_server = dict(snap)
+        surf_sky2_server.update(
+            {
+                # Approximation of publicly listed surf_ski_2/surf_sky_2 server cvars:
+                # sv_accelerate 5, sv_airaccelerate 100, sv_friction 4, sv_maxspeed 900, sv_gravity 800.
+                "gravity": 24.0,
+                "max_ground_speed": 23.90,
+                "max_air_speed": 23.90,
+                "ground_accel": 5.0,
+                "jump_accel": 3.0,
+                "friction": 4.0,
+                "air_control": 0.10,
+                "air_counter_strafe_brake": 8.0,
+                "surf_enabled": True,
+                "surf_accel": 10.0,
+                "surf_gravity_scale": 1.0,
+                "surf_min_normal_z": 0.05,
+                "surf_max_normal_z": 0.72,
+                "autojump_enabled": False,
+                "enable_coyote": False,
+                "enable_jump_buffer": False,
+                "walljump_enabled": False,
+                "wallrun_enabled": False,
+                "vault_enabled": False,
+            }
+        )
         return {
             "surf_bhop": surf_bhop,
             "bhop": bhop,
             "surf": surf,
+            "surf_sky2_server": surf_sky2_server,
         }
 
     def _profile_names(self) -> list[str]:
-        ordered = ["surf_bhop", "bhop", "surf"]
+        ordered = ["surf_bhop", "bhop", "surf", "surf_sky2_server"]
         extras = sorted([n for n in self._profiles.keys() if n not in ordered])
         return [n for n in ordered if n in self._profiles] + extras
 

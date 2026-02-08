@@ -111,23 +111,34 @@ class PlayerController:
             if self._consume_jump_request() and self.can_ground_jump():
                 self._apply_jump()
         else:
-            surf_active = self.has_surf_surface()
+            surf_active = self._has_recent_surf_contact_for_physics(dt)
             air_wish = LVector3f(wish_dir)
             air_accel = float(self.tuning.jump_accel)
             if surf_active:
+                # Redirect existing horizontal momentum onto the ramp plane so speed can naturally
+                # exchange between horizontal and vertical components while surfing.
+                self._redirect_surf_inertia(dt)
                 # GoldSrc-like surf: still "air move", but wish direction gets constrained by ramp plane.
                 air_wish = self._project_to_plane(wish_dir, self._surf_normal)
                 air_accel *= max(0.0, float(self.tuning.surf_accel)) / 10.0
+            # On surf ramps, keep the projected ramp-plane wish so momentum can redirect up/down slope.
+            accel_wish = air_wish if surf_active else self._horizontal_unit(air_wish)
 
-            counter_strafe = (not surf_active) and self._is_counter_strafe(air_wish)
+            counter_strafe = (not surf_active) and self._is_counter_strafe(accel_wish)
             if counter_strafe:
                 # Opposite input in air should brake aggressively instead of accelerating backward.
-                self._apply_air_counter_strafe_brake(air_wish, dt)
+                self._apply_air_counter_strafe_brake(accel_wish, dt)
             else:
-                self._accelerate(air_wish, float(self.tuning.max_air_speed), air_accel, dt)
-                self._air_control(air_wish, dt)
+                if surf_active:
+                    self._accelerate_surf_redirect(accel_wish, float(self.tuning.max_air_speed), air_accel, dt)
+                else:
+                    self._accelerate(accel_wish, float(self.tuning.max_air_speed), air_accel, dt)
+                self._air_control(accel_wish, dt)
 
             gravity_scale = float(self.tuning.surf_gravity_scale) if surf_active else 1.0
+            if surf_active and self.vel.z < 0.0:
+                # Descending on surf should follow normal gravity, not surf-specific gravity tuning.
+                gravity_scale = 1.0
             if self.tuning.wallrun_enabled and self.has_wall_for_jump():
                 # Preserve upward jump motion along walls, but reduce fall speed while descending.
                 if self.vel.z <= 0.0:
@@ -371,6 +382,48 @@ class PlayerController:
         self.vel.x += wish_dir.x * steer
         self.vel.y += wish_dir.y * steer
 
+    def _accelerate_surf_redirect(self, wish_dir: LVector3f, wish_speed: float, accel: float, dt: float) -> None:
+        if wish_dir.lengthSquared() <= 0.0:
+            return
+        horiz_factor = min(1.0, math.sqrt(wish_dir.x * wish_dir.x + wish_dir.y * wish_dir.y))
+        if horiz_factor <= 1e-4:
+            return
+        effective_wish_speed = wish_speed * horiz_factor
+        current_speed = self.vel.dot(wish_dir)
+        add_speed = effective_wish_speed - current_speed
+        if add_speed <= 0.0:
+            return
+
+        accel_speed = accel * dt * effective_wish_speed
+        accel_speed = min(accel_speed, add_speed)
+        if accel_speed <= 0.0:
+            return
+
+        delta = wish_dir * accel_speed
+
+        # Prevent instant one-frame horizontal reversal while preserving perpendicular and vertical
+        # redirection components so surf steering can still turn speed into height.
+        pre_h = LVector3f(self.vel.x, self.vel.y, 0.0)
+        if pre_h.lengthSquared() > 1e-12:
+            post_h = LVector3f(pre_h.x + delta.x, pre_h.y + delta.y, 0.0)
+            if pre_h.dot(post_h) < 0.0:
+                pre_len = pre_h.length()
+                if pre_len > 1e-12:
+                    pre_h.normalize()
+                    delta_along_pre = delta.x * pre_h.x + delta.y * pre_h.y
+                    # Keep at least some carry each tick; steer should redirect momentum, not hard-stop it.
+                    min_delta_along_pre = -(pre_len * 0.55)
+                    if delta_along_pre < min_delta_along_pre:
+                        correction = min_delta_along_pre - delta_along_pre
+                        delta.x += pre_h.x * correction
+                        delta.y += pre_h.y * correction
+
+        # Input-driven surf acceleration can add uphill vertical, but must not force extra downhill pull.
+        if delta.z < 0.0:
+            delta.z = 0.0
+
+        self.vel += delta
+
     def _is_counter_strafe(self, wish_dir: LVector3f) -> bool:
         horiz = LVector3f(self.vel.x, self.vel.y, 0)
         speed = horiz.length()
@@ -400,6 +453,15 @@ class PlayerController:
     def has_surf_surface(self) -> bool:
         return bool(self.tuning.surf_enabled) and self._surf_contact_timer <= 0.30 and self._surf_normal.lengthSquared() > 0.01
 
+    def _has_recent_surf_contact_for_physics(self, dt: float) -> bool:
+        if not bool(self.tuning.surf_enabled):
+            return False
+        if self._surf_normal.lengthSquared() <= 0.01:
+            return False
+        # Surf acceleration/gravity rules apply only while contact is fresh.
+        # This prevents extra "post-leave" push/pull after sliding off a ramp.
+        return self._surf_contact_timer <= max(0.0, float(dt) * 1.25)
+
     @staticmethod
     def _project_to_plane(vec: LVector3f, normal: LVector3f) -> LVector3f:
         n = LVector3f(normal)
@@ -410,6 +472,32 @@ class PlayerController:
         if out.lengthSquared() > 1e-12:
             out.normalize()
         return out
+
+    @staticmethod
+    def _horizontal_unit(vec: LVector3f) -> LVector3f:
+        out = LVector3f(vec.x, vec.y, 0.0)
+        if out.lengthSquared() > 1e-12:
+            out.normalize()
+        return out
+
+    def _redirect_surf_inertia(self, dt: float) -> None:
+        horiz = LVector3f(self.vel.x, self.vel.y, 0.0)
+        horiz_speed = horiz.length()
+        if horiz_speed <= 1e-6:
+            return
+
+        # Build a ramp-tangent direction that follows current horizontal travel heading.
+        tangent = self._project_to_plane(horiz, self._surf_normal)
+        if tangent.lengthSquared() <= 1e-12:
+            return
+
+        desired = tangent * horiz_speed
+        current = LVector3f(horiz)
+
+        # Fast blend keeps surf responsive while still preserving inertia feel.
+        blend_rate = 7.0
+        blend = min(1.0, max(0.0, blend_rate * float(dt)))
+        self.vel += (desired - current) * blend
 
     def _refresh_wall_contact_from_probe(self) -> None:
         n, p = self._probe_nearby_wall()

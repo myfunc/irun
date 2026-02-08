@@ -111,7 +111,7 @@ Panel layout:
 - Hovering a setting name/control shows a tooltip with a short explanation.
 - Numeric sliders are normalized (`0..100`) while still mapping to each field's real min/max range.
 - Slider tracks are intentionally large for quick tuning while moving.
-- Top-right profile manager includes default presets (`surf_bhop`, `bhop`, `surf`) and a `save` action.
+- Top-right profile manager includes default presets (`surf_bhop`, `bhop`, `surf`, `surf_sky2_server`) and a `save` action.
   - Saving a modified default profile creates a short `*_copy` custom profile.
   - Saving a custom profile updates that profile in place.
 
@@ -144,6 +144,12 @@ Movement notes:
 - `vault_enabled` is OFF by default. If enabled, pressing jump again near a ledge can trigger a vault: feet must be below ledge top, vault jump is higher than normal, and a small forward speed boost is applied.
 - Step risers are filtered out for wall-contact detection to reduce jitter and accidental wall-state hits on stairs/steps.
 - Surf prototype uses GoldSrc-like air movement on steep ramps: wish direction is projected to ramp plane, then normal air acceleration + collision clipping drive surf movement.
+- On surf ramps, acceleration follows the ramp-plane wish direction (not world-up injection), allowing controlled horizontal-to-vertical momentum transfer.
+- While surfing, horizontal momentum is redirected toward the ramp tangent each frame, enabling natural horizontal<->vertical speed exchange (inertia transfer) on slopes.
+- Surf steering against current momentum preserves carry: it redirects momentum along the ramp and limits per-tick scrub so speed is not hard-stopped.
+- Surf input acceleration contributes vertical velocity only for uphill redirection; downhill acceleration uses normal gravity.
+- Once surf contact is lost, no additional surf accel/gravity modifiers are applied; existing velocity is preserved and normal air/gravity rules continue.
+- `surf_sky2_server` approximates publicly listed legacy surf server movement cvars used on surf_ski_2/surf_sky_2 variants (`sv_accelerate 5`, `sv_airaccelerate 100`, `sv_friction 4`, `sv_maxspeed 900`, `sv_gravity 800`).
 
 ## Level Layout
 The map is generated in code and includes:
