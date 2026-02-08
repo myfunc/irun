@@ -27,6 +27,7 @@ Implemented as small wrappers around DirectGUI.
 - `Theme` (`irun_ui_kit.theme.Theme`)
   - `with_overrides(**kwargs)` for in-code customization
   - `from_json(path)` for project-side theme overrides
+  - retro defaults (burnt orange accent, heavy shadows)
 - `Window` (`irun_ui_kit.widgets.window.Window`)
   - window frame + header
   - draggable by titlebar (implemented via task update while dragging)
@@ -34,10 +35,17 @@ Implemented as small wrappers around DirectGUI.
 - `Panel` (`irun_ui_kit.widgets.panel.Panel`)
   - outline + fill + optional header/title
   - local coordinate container for children
+  - procedural drop shadow (theme-driven)
 - `Button` (`irun_ui_kit.widgets.button.Button`)
   - consistent sizing + baseline text alignment
 - `TextInput` (`irun_ui_kit.widgets.text_input.TextInput`)
   - textbox suited for search fields and quick inputs
+- `Tabs` (`irun_ui_kit.widgets.tabs.Tabs`)
+  - tab bar + pages (hide/show groups of controls)
+- `Checkbox` (`irun_ui_kit.widgets.checkbox.Checkbox`)
+  - minimal procedural toggle (ASCII prefix)
+- `Slider` (`irun_ui_kit.widgets.slider.Slider`)
+  - basic slider with value readout
 
 ## Layout Helpers
 - `GridSpec` (`irun_ui_kit.layout.GridSpec`)
@@ -93,4 +101,3 @@ Next features to add, in order:
 5. Text + content
    - proper text clipping/ellipsis utilities
    - scroll container (for long debug/settings menus)
-
