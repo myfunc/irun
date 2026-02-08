@@ -78,3 +78,21 @@ def test_wad3_transparent_texture_uses_index_255_as_alpha0() -> None:
     lump = _build_miptex_lump(name="{TRN", width=width, height=height, indices=indices, palette=palette)
     tex = decode_wad3_miptex(name="{TRN", data=lump)
     assert tex.rgba[0:4] == bytes([10, 20, 30, 0])
+
+
+def test_wad3_transparent_texture_uses_bright_blue_as_colorkey_alpha0() -> None:
+    _add_tools_to_syspath()
+    from goldsrc_wad import decode_wad3_miptex  # noqa: E402
+
+    width, height = 2, 2
+    # Index 1 will be bright blue in the palette.
+    indices = bytes([1, 0, 0, 0])
+    pal = bytearray(256 * 3)
+    pal[1 * 3 + 0] = 0
+    pal[1 * 3 + 1] = 0
+    pal[1 * 3 + 2] = 255
+    palette = bytes(pal)
+
+    lump = _build_miptex_lump(name="{TRN", width=width, height=height, indices=indices, palette=palette)
+    tex = decode_wad3_miptex(name="{TRN", data=lump)
+    assert tex.rgba[0:4] == bytes([0, 0, 255, 0])

@@ -428,9 +428,11 @@ def main() -> None:
 
                         # Some GoldSrc branches may not provide UV pairs; treat as best-effort.
                         try:
-                            uv0 = [float(v0.uv[0].x), float(v0.uv[0].y)]
-                            uv1 = [float(v1.uv[0].x), float(v1.uv[0].y)]
-                            uv2 = [float(v2.uv[0].x), float(v2.uv[0].y)]
+                            # BSP UV convention is effectively upside-down compared to how Panda3D
+                            # samples images loaded from PNG. Flip V to match expected in-game orientation.
+                            uv0 = [float(v0.uv[0].x), -float(v0.uv[0].y)]
+                            uv1 = [float(v1.uv[0].x), -float(v1.uv[0].y)]
+                            uv2 = [float(v2.uv[0].x), -float(v2.uv[0].y)]
                         except Exception:
                             uv0 = [0.0, 0.0]
                             uv1 = [0.0, 0.0]

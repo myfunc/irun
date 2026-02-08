@@ -66,6 +66,8 @@ def decode_wad3_miptex(*, name: str, data: bytes) -> WadTexture:
         raise WadError("palette out of bounds")
     palette = data[pal_start:pal_end]
 
+    # GoldSrc/Xash3D convention: textures prefixed with "{" are masked (1-bit) transparent.
+    # The "transparent color" is usually palette index 255, which is commonly bright blue (0,0,255).
     transparent = tex_name.startswith("{")
     out = bytearray(width * height * 4)
     for i, idx in enumerate(mip0):
@@ -73,7 +75,12 @@ def decode_wad3_miptex(*, name: str, data: bytes) -> WadTexture:
         r = palette[pi + 0]
         g = palette[pi + 1]
         b = palette[pi + 2]
-        a = 0 if (transparent and idx == 255) else 255
+        # Prefer the canonical index-255 rule, but also support the practical "bright blue" colorkey.
+        # Some mods/tools may not preserve the exact palette index when generating WADs.
+        if transparent and (idx == 255 or (r == 0 and g == 0 and b == 255)):
+            a = 0
+        else:
+            a = 255
         o = i * 4
         out[o + 0] = r
         out[o + 1] = g
@@ -144,4 +151,3 @@ class Wad3:
             except WadError:
                 continue
         return out
-
