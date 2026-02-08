@@ -281,7 +281,7 @@ def test_corner_jump_uses_ground_jump_not_walljump() -> None:
 
     ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
 
-    # Ground/coyote jump path should win; walljump should not inject horizontal boost.
+    # Ground jump path should win; walljump should not inject horizontal boost.
     assert abs(ctrl.vel.x) < 1e-5
     assert abs(ctrl.vel.y) < 1e-5
     assert ctrl.vel.z > 0.0
@@ -341,3 +341,53 @@ def test_surf_strafe_accelerates_on_slanted_surface() -> None:
     base.step(dt=0.016, wish_dir=LVector3f(0.0, 1.0, 0.0), yaw_deg=0.0, crouching=False)
     strafe.step(dt=0.016, wish_dir=LVector3f(1.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
     assert strafe.vel.x > base.vel.x
+
+
+def test_grapple_attach_and_detach_state() -> None:
+    ctrl = _make_controller(PhysicsTuning(grapple_enabled=True))
+    ctrl.attach_grapple(anchor=LVector3f(5.0, 0.0, 2.0))
+    assert ctrl.is_grapple_attached()
+    ctrl.detach_grapple()
+    assert not ctrl.is_grapple_attached()
+
+
+def test_grapple_taut_rope_removes_outward_velocity() -> None:
+    ctrl = _make_controller(PhysicsTuning(grapple_enabled=True))
+    ctrl.pos = LVector3f(10.0, 0.0, 0.0)
+    ctrl.vel = LVector3f(5.0, 0.0, 0.0)  # moving away from anchor
+    ctrl.attach_grapple(anchor=LVector3f(0.0, 0.0, 0.0))
+    ctrl._grapple_length = 8.0
+
+    ctrl._apply_grapple_constraint(dt=0.016)
+    assert ctrl.vel.x <= 0.0
+
+
+def test_grapple_attach_boost_applies_velocity_toward_anchor() -> None:
+    ctrl = _make_controller(PhysicsTuning(grapple_enabled=True, grapple_attach_boost=9.0))
+    ctrl.pos = LVector3f(0.0, 0.0, 0.0)
+    ctrl.vel = LVector3f(0.0, 0.0, 0.0)
+    ctrl.attach_grapple(anchor=LVector3f(10.0, 0.0, 0.0))
+    assert ctrl.vel.x > 8.5
+
+
+def test_grapple_attach_auto_shortens_rope_for_configured_window() -> None:
+    ctrl = _make_controller(
+        PhysicsTuning(
+            grapple_enabled=True,
+            grapple_attach_boost=0.0,
+            grapple_attach_shorten_speed=12.0,
+            grapple_attach_shorten_time=0.20,
+            grapple_min_length=1.0,
+        )
+    )
+    ctrl.pos = LVector3f(0.0, 0.0, 0.0)
+    ctrl.attach_grapple(anchor=LVector3f(20.0, 0.0, 0.0))
+    start_len = ctrl._grapple_length
+
+    ctrl._apply_grapple_constraint(dt=0.10)
+    mid_len = ctrl._grapple_length
+    ctrl._apply_grapple_constraint(dt=0.10)
+    end_len = ctrl._grapple_length
+
+    assert mid_len < start_len
+    assert end_len < mid_len

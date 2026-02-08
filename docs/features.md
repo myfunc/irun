@@ -36,6 +36,7 @@
 - Ivan: wall-jump is gated to airborne state (grounded wall contact cannot trigger wall-jump)
 - Ivan: autojump queues only while grounded (prevents airborne corner wall-jump retriggers)
 - Ivan: autojump toggle (hold jump to continue hopping)
+- Ivan: grapple hook traversal (attach/detach on LMB, one-shot attach boost, rope swing constraint)
 - Ivan: vault is disabled by default (runtime toggle in debug menu)
 - Ivan: surf prototype on slanted surfaces (strafe-held surf with live tuning controls)
 - Ivan: legacy-style surf preset (`surf_sky2_server`) approximating public surf_ski_2/surf_sky_2 server cvars
@@ -48,7 +49,7 @@
 
 ## Planned (High-Level)
 - Movement: walk/run, jump, jump buffer, air control
-- Movement: iterate wallrun/grapple from toggleable prototype hooks
+- Movement: iterate wallrun from toggleable prototype hooks
 - Camera: follow camera with collision avoidance and smoothing
 - Levels: modular blocks, checkpoints, hazards, collectibles
 - Maps: format v3 (entities, triggers, lights, chunked baked geometry) + editor workflow

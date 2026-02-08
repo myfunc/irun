@@ -13,9 +13,16 @@ from direct.task import Task
 from panda3d.core import (
     ButtonHandle,
     Filename,
+    Geom,
+    GeomNode,
+    GeomTriangles,
+    GeomVertexData,
+    GeomVertexFormat,
+    GeomVertexWriter,
     KeyboardButton,
     LVector3f,
     PNMImage,
+    Texture,
     WindowProperties,
     loadPrcFileData,
 )
@@ -75,6 +82,14 @@ class RunnerDemo(ShowBase):
         self._noclip_toggle_key: str = "v"
         self._noclip_toggle_prev_down: bool = False
         self._awaiting_noclip_rebind: bool = False
+        self._grapple_rope_node = GeomNode("grapple-rope")
+        self._grapple_rope_np = self.render.attachNewNode(self._grapple_rope_node)
+        self._grapple_rope_np.setTwoSided(True)
+        self._grapple_rope_np.setTransparency(True)
+        self._grapple_rope_np.setBin("fixed", 12)
+        self._grapple_rope_np.setDepthWrite(True)
+        self._grapple_rope_np.setTexture(self._build_grapple_rope_texture())
+        self._grapple_rope_np.hide()
 
         self.scene: WorldScene | None = None
         self.collision: CollisionWorld | None = None
@@ -156,7 +171,7 @@ class RunnerDemo(ShowBase):
         self.accept("grave", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
         self.accept("r", lambda: self._safe_call("input.respawn", lambda: self._do_respawn(from_mode=False)))
         self.accept("space", lambda: self._safe_call("input.jump", self._queue_jump))
-        self.accept("mouse1", lambda: self._safe_call("input.grapple", self._grapple_mock))
+        self.accept("mouse1", lambda: self._safe_call("input.grapple.primary.down", self._on_grapple_primary_down))
         self.accept("f2", self.input_debug.toggle)
         self.accept("f3", self.error_console.toggle)
         self.accept("shift-f3", lambda: self._safe_call("errors.clear", self._clear_errors))
@@ -505,6 +520,7 @@ class RunnerDemo(ShowBase):
         # Hide in-game HUD while picking.
         self.ui.speed_hud_label.hide()
         self.ui.set_crosshair_visible(False)
+        self._grapple_rope_np.hide()
         self.ui.hide()
         self.pause_ui.hide()
 
@@ -535,6 +551,7 @@ class RunnerDemo(ShowBase):
         self.world_root = self.render.attachNewNode("world-root")
 
         self.input_debug.hide()
+        self._grapple_rope_np.hide()
         self.ui.hide()
         self.pause_ui.hide()
 
@@ -890,9 +907,120 @@ class RunnerDemo(ShowBase):
         if self.player is not None and self._mode == "game" and not self._pause_menu_open and not self._debug_menu_open:
             self.player.queue_jump()
 
-    def _grapple_mock(self) -> None:
-        if self.player is not None and self._mode == "game" and not self._pause_menu_open and not self._debug_menu_open:
-            self.player.apply_grapple_impulse(yaw_deg=self._yaw)
+    def _on_grapple_primary_down(self) -> None:
+        if self.player is None or self._mode != "game" or self._pause_menu_open or self._debug_menu_open:
+            return
+        if not bool(self.tuning.grapple_enabled):
+            return
+        if self.player.is_grapple_attached():
+            self.player.detach_grapple()
+            return
+        self._fire_grapple()
+
+    def _view_direction(self) -> LVector3f:
+        h = math.radians(float(self._yaw))
+        p = math.radians(float(self._pitch))
+        out = LVector3f(
+            -math.sin(h) * math.cos(p),
+            math.cos(h) * math.cos(p),
+            math.sin(p),
+        )
+        if out.lengthSquared() > 1e-12:
+            out.normalize()
+        return out
+
+    def _fire_grapple(self) -> None:
+        if self.player is None or self.collision is None:
+            return
+        origin = LVector3f(self.camera.getPos(self.render))
+        direction = self._view_direction()
+        if direction.lengthSquared() <= 1e-12:
+            return
+        reach = max(8.0, float(self.tuning.grapple_fire_range))
+        end = origin + direction * reach
+        hit = self.collision.ray_closest(origin, end)
+        if not hit.hasHit():
+            return
+        if hasattr(hit, "getHitPos"):
+            anchor = LVector3f(hit.getHitPos())
+        else:
+            frac = max(0.0, min(1.0, float(hit.getHitFraction())))
+            anchor = origin + (end - origin) * frac
+        self.player.attach_grapple(anchor=anchor)
+
+    @staticmethod
+    def _build_grapple_rope_texture() -> Texture:
+        img = PNMImage(8, 128, 4)
+        for y in range(128):
+            t = 0.35 if (y // 6) % 2 == 0 else 0.55
+            for x in range(8):
+                shade = t * (0.85 if (x // 2) % 2 == 0 else 1.0)
+                img.setXelA(x, y, shade, shade * 0.85, shade * 0.52, 0.95)
+        tex = Texture("grapple-rope")
+        tex.load(img)
+        tex.setWrapU(Texture.WMClamp)
+        tex.setWrapV(Texture.WMRepeat)
+        tex.setMinfilter(Texture.FTLinearMipmapLinear)
+        tex.setMagfilter(Texture.FTLinear)
+        return tex
+
+    def _update_grapple_rope_visual(self) -> None:
+        self._grapple_rope_node.removeAllGeoms()
+        if (
+            self.player is None
+            or self._mode != "game"
+            or self._pause_menu_open
+            or self._debug_menu_open
+            or not self.player.is_grapple_attached()
+        ):
+            self._grapple_rope_np.hide()
+            return
+
+        anchor = self.player.grapple_anchor()
+        if anchor is None:
+            self._grapple_rope_np.hide()
+            return
+        end = LVector3f(self.player.pos)
+        rope = end - anchor
+        length = float(rope.length())
+        if length <= 1e-4:
+            self._grapple_rope_np.hide()
+            return
+        rope_dir = rope / length
+
+        center = (anchor + end) * 0.5
+        cam_pos = LVector3f(self.camera.getPos(self.render))
+        to_cam = cam_pos - center
+        side = rope_dir.cross(to_cam)
+        if side.lengthSquared() <= 1e-10:
+            side = rope_dir.cross(LVector3f(0.0, 0.0, 1.0))
+        if side.lengthSquared() <= 1e-10:
+            side = rope_dir.cross(LVector3f(1.0, 0.0, 0.0))
+        side.normalize()
+        half_w = max(0.002, float(self.tuning.grapple_rope_half_width))
+        side *= half_w
+
+        p0 = anchor + side
+        p1 = anchor - side
+        p2 = end - side
+        p3 = end + side
+
+        vrep = max(1.0, length * 2.2)
+        vdata = GeomVertexData("grapple-rope", GeomVertexFormat.getV3t2(), Geom.UHDynamic)
+        vdata.setNumRows(4)
+        vw = GeomVertexWriter(vdata, "vertex")
+        tw = GeomVertexWriter(vdata, "texcoord")
+        for p, uv in ((p0, (0.0, 0.0)), (p1, (1.0, 0.0)), (p2, (1.0, vrep)), (p3, (0.0, vrep))):
+            vw.addData3f(p.x, p.y, p.z)
+            tw.addData2f(float(uv[0]), float(uv[1]))
+
+        prim = GeomTriangles(Geom.UHStatic)
+        prim.addVertices(0, 1, 2)
+        prim.addVertices(0, 2, 3)
+        geom = Geom(vdata)
+        geom.addPrimitive(prim)
+        self._grapple_rope_node.addGeom(geom)
+        self._grapple_rope_np.show()
 
     def request_respawn(self) -> None:
         self._do_respawn(from_mode=True)
@@ -1019,6 +1147,8 @@ class RunnerDemo(ShowBase):
             if self.tuning.noclip_enabled:
                 self._step_noclip(dt=dt, wish_dir=wish, crouching=crouching)
             else:
+                if not bool(self.tuning.grapple_enabled):
+                    self.player.detach_grapple()
                 self.player.step(dt=dt, wish_dir=wish, yaw_deg=self._yaw, crouching=crouching)
 
             if self.scene is not None and self.player.pos.z < float(self.scene.kill_z):
@@ -1039,7 +1169,8 @@ class RunnerDemo(ShowBase):
             self.ui.set_speed(hspeed)
             self.ui.set_status(
                 f"speed: {hspeed:.2f} | z-vel: {self.player.vel.z:.2f} | grounded: {self.player.grounded} | "
-                f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()}"
+                f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()} | "
+                f"grapple: {self.player.is_grapple_attached()}"
             )
 
             if self._game_mode is not None:
@@ -1047,6 +1178,8 @@ class RunnerDemo(ShowBase):
                     self._game_mode.tick(now=now, player_pos=self.player.pos)
                 except Exception as e:
                     self._handle_unhandled_error(context="mode.tick", exc=e)
+
+            self._update_grapple_rope_visual()
 
             return Task.cont
         except Exception as e:

@@ -75,7 +75,9 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 - `F9`: export spawn to run.json (time trial mode dev helper)
 - `F2`: toggle input debug overlay (useful when keyboard/mouse don't seem to register)
 - `F3`: toggle error console overlay (shows recent errors without crashing)
-- `LMB`: mock grapple impulse (only if grapple toggle enabled)
+- `LMB`: grapple hook primary
+  - click (not attached): fire grapple to aimed surface
+  - click (attached): detach
 - `V` (default): toggle noclip (rebindable from `Esc -> Key Bindings`)
 
 Menu/input behavior:
@@ -122,6 +124,7 @@ Numeric settings include normalized sliders + entry fields for precise tuning:
 - Air counter-strafe brake strength
 - Mouse sensitivity, crouch speed/height/camera
 - Wall jump boost + cooldown, vault jump/speed/ledge window, jump buffer time
+- Grapple hook range, attach boost, post-attach auto-shorten speed/time, rope pull strength, rope min/max length, rope thickness
 - Noclip fly speed
 - Surf acceleration / gravity scale / surfable slope-normal range (inspired by public CS surf server settings)
 
@@ -134,7 +137,7 @@ Boolean toggles are shown inline as labeled rows with `ON/OFF` buttons:
 - Wallrun (toggle only, prototype hook)
 - Vault (toggle only)
 - Crouch
-- Grapple (toggle + mock impulse)
+- Grapple hook
 
 Movement notes:
 - Counter-strafe braking in air decelerates horizontal speed based on `air_counter_strafe_brake` without hidden hardcoded bonus deceleration.
@@ -142,6 +145,10 @@ Movement notes:
 - Repeated wall-jumps are controlled by `wall_jump_cooldown` (default: `1.0s`).
 - Wall-jump is airborne-only: it cannot trigger while grounded, even if the player is touching a wall.
 - Autojump only queues while grounded; holding jump in fully airborne states will not trigger wall-jump retries.
+- Grapple hook can attach to any hit surface under crosshair and keeps rope length constraints for pendulum-style swinging.
+- Clicking LMB while already attached detaches the grapple.
+- On grapple attach, a one-shot boost is applied toward the rope direction (`grapple_attach_boost`).
+- After attach, rope also auto-shortens for a short configurable window (`grapple_attach_shorten_speed`, `grapple_attach_shorten_time`) for a seamless pull-in feel.
 - Wallrun is lateral; vertical climb gain is capped.
 - `vault_enabled` is OFF by default. If enabled, pressing jump again near a ledge can trigger a vault: feet must be below ledge top, vault jump is higher than normal, and a small forward speed boost is applied.
 - Step risers are filtered out for wall-contact detection to reduce jitter and accidental wall-state hits on stairs/steps.

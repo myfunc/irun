@@ -34,7 +34,8 @@ Game apps use **Panda3D** directly to keep iteration fast for movement-focused p
   - `Esc` opens gameplay menu and unlocks cursor.
   - `` ` `` opens debug/admin tuning menu and unlocks cursor.
   - While either menu is open, gameplay input is blocked but simulation continues.
-  - Gameplay movement step supports optional noclip mode, optional autojump queueing, and surf behavior on configured slanted surfaces.
+  - Gameplay movement step supports optional noclip mode, optional autojump queueing, surf behavior on configured slanted surfaces, and grapple-rope constraint movement.
+  - Grapple targeting uses collision-world ray queries (`ray_closest`) from camera center.
 
 ## Rendering Notes
 - Texture sizing: IVAN disables Panda3D's default power-of-two rescaling for textures (`textures-power-2 none`).
