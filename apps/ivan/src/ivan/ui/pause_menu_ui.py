@@ -63,18 +63,22 @@ class PauseMenuUI:
             parent=self._panel.content,
             frameColor=(0, 0, 0, 0),
             relief=DGG.FLAT,
-            frameSize=(theme.pad, w - theme.pad, theme.pad, h - header_total_h),
+            # Keep local origin at (0, 0) bottom-left for children.
+            frameSize=(0.0, content_w, 0.0, content_h),
+            pos=(theme.pad, 0.0, theme.pad),
         )
 
-        hint = DirectLabel(
-            parent=self._content,
+        # Keep button hints in a screen corner to avoid overlapping menus/HUD.
+        self._hint = DirectLabel(
+            parent=aspect2d,
             text="Esc: resume | `: debug menu",
             text_scale=theme.small_scale,
             text_align=TextNode.ALeft,
             text_fg=theme.text_muted,
             frameColor=(0, 0, 0, 0),
-            pos=(0.0, 0, content_h - theme.small_scale * 0.90),
+            pos=(-aspect_ratio + 0.06, 0, 0.93),
         )
+        self._hint.hide()
 
         tab_h = 0.11
         page_h = max(0.20, content_h - tab_h - theme.gap * 1.5)
@@ -194,23 +198,26 @@ class PauseMenuUI:
             on_click=self.show_main,
         )
 
-        # Keep hint above tabs.
-        _ = hint
-
         self.show_main()
         self.root.hide()
 
     def show(self) -> None:
         self.root.show()
+        self._hint.show()
 
     def hide(self) -> None:
         self.root.hide()
+        self._hint.hide()
         self.set_keybind_status("")
         self.show_main()
 
     def destroy(self) -> None:
         try:
             self.root.destroy()
+        except Exception:
+            pass
+        try:
+            self._hint.destroy()
         except Exception:
             pass
 
