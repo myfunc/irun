@@ -23,11 +23,9 @@ If you prefer running apps from the repo root (and passing through args), use:
 ./runapp baker
 ```
 
-Advanced:
+List apps:
 ```bash
-./runner list
-./runner ivan --map imported/halflife/valve/bounce
-./runner runapp ivan --map imported/halflife/valve/bounce
+./runapp list
 ```
 
 ## Quick Start (Baker / mapperoni)
