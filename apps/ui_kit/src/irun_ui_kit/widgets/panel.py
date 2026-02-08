@@ -36,6 +36,17 @@ class Panel:
         - local extents (0..w, 0..h)
         """
 
+        # Shadow goes behind the panel for a retro "heavy" layered look.
+        shadow = DirectFrame(
+            parent=parent,
+            frameColor=theme.shadow,
+            frameSize=(0.0, w, 0.0, h),
+            relief=DGG.FLAT,
+            pos=(x + theme.shadow_off_x, 0, y + theme.shadow_off_y),
+        )
+        # Ensure the shadow never intercepts mouse events.
+        shadow["state"] = DGG.DISABLED
+
         out = DirectFrame(
             parent=parent,
             frameColor=theme.outline,
@@ -69,4 +80,3 @@ class Panel:
                 )
 
         return Panel(node=inner, w=w, h=h)
-
