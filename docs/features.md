@@ -49,6 +49,13 @@
 - Baker: viewer MVP (`python -m baker --map ...`) reusing Ivan scene builder for WYSIWYG preview
   - Fly camera: WASD + mouse/trackpad look (Q/E vertical, Shift faster)
   - Preview view transforms: `1` gamma-only, `2` Reinhard, `3` ACES approx
+- UI Kit: experimental procedural DirectGUI kit (`apps/ui_kit`)
+  - Theme tokens (layout + typography + palette) with JSON overrides
+  - Best-effort DPI scaling (framebuffer/window ratio) for readable text on high-DPI displays
+  - Console-friendly mono font selection with nearest filtering for low-res readability
+  - Primitives: Window, Panel (accent outline + drop shadow), Tabs, CollapsiblePanel
+  - Controls: Button (hover/pressed), Checkbox (visual), Slider (compact), TextInput (basic editing hotkeys on macOS)
+  - Playground demo to exercise components in one place (`python -m irun_ui_kit.demo`)
 
 ## Planned (High-Level)
 - Movement: walk/run, jump, jump buffer, air control
