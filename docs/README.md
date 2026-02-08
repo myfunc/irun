@@ -9,7 +9,7 @@
 - `docs/features.md`: Feature inventory and scope boundaries
 - `docs/architecture.md`: Technical architecture and code structure
 - `docs/roadmap.md`: Milestones and near-term priorities
-- `docs/ui-kit.md`: IRUN UI Kit (experimental) overview and usage
+- `docs/ui-kit.md`: IRUN UI Kit overview and usage
 - `docs/decisions/`: ADRs (significant technical/product decisions)
 
 ## Brainstorm

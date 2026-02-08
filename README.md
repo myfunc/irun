@@ -27,6 +27,17 @@ List apps:
 ```bash
 ./runapp list
 ```
+
+## UI Kit Demo
+Run the UI kit playground:
+```bash
+./runapp ui_kit
+```
+
+Smoke screenshot:
+```bash
+./runapp ui_kit --smoke-screenshot /tmp/irun-ui-kit.png
+```
 ## Quick Start (Baker / mapperoni)
 ```bash
 cd apps/baker
