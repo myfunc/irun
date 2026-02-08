@@ -111,26 +111,30 @@ class PlayerController:
             if self._consume_jump_request() and self.can_ground_jump():
                 self._apply_jump()
         else:
-            surf_active = self.has_surf_surface() and self._is_strafe_input(wish_dir=wish_dir, yaw_deg=yaw_deg)
+            surf_active = self.has_surf_surface()
+            air_wish = LVector3f(wish_dir)
+            air_accel = float(self.tuning.jump_accel)
             if surf_active:
-                self._apply_surf_movement(wish_dir=wish_dir, yaw_deg=yaw_deg, dt=dt)
+                # GoldSrc-like surf: still "air move", but wish direction gets constrained by ramp plane.
+                air_wish = self._project_to_plane(wish_dir, self._surf_normal)
+                air_accel *= max(0.0, float(self.tuning.surf_accel)) / 10.0
+
+            counter_strafe = (not surf_active) and self._is_counter_strafe(air_wish)
+            if counter_strafe:
+                # Opposite input in air should brake aggressively instead of accelerating backward.
+                self._apply_air_counter_strafe_brake(air_wish, dt)
             else:
-                counter_strafe = self._is_counter_strafe(wish_dir)
-                if counter_strafe:
-                    # Opposite input in air should brake aggressively instead of accelerating backward.
-                    self._apply_air_counter_strafe_brake(wish_dir, dt)
-                else:
-                    self._accelerate(wish_dir, float(self.tuning.max_air_speed), float(self.tuning.jump_accel), dt)
-                    self._air_control(wish_dir, dt)
+                self._accelerate(air_wish, float(self.tuning.max_air_speed), air_accel, dt)
+                self._air_control(air_wish, dt)
 
-                gravity_scale = 1.0
-                if self.tuning.wallrun_enabled and self.has_wall_for_jump():
-                    # Preserve upward jump motion along walls, but reduce fall speed while descending.
-                    if self.vel.z <= 0.0:
-                        gravity_scale = 0.55
-                        self.vel.z = max(self.vel.z, -2.0)
+            gravity_scale = float(self.tuning.surf_gravity_scale) if surf_active else 1.0
+            if self.tuning.wallrun_enabled and self.has_wall_for_jump():
+                # Preserve upward jump motion along walls, but reduce fall speed while descending.
+                if self.vel.z <= 0.0:
+                    gravity_scale = min(gravity_scale, 0.55)
+                    self.vel.z = max(self.vel.z, -2.0)
 
-                self.vel.z -= float(self.tuning.gravity) * gravity_scale * dt
+            self.vel.z -= float(self.tuning.gravity) * gravity_scale * dt
 
             if self._consume_jump_request():
                 # Coyote jump must also be available from the airborne branch.
@@ -396,59 +400,16 @@ class PlayerController:
     def has_surf_surface(self) -> bool:
         return bool(self.tuning.surf_enabled) and self._surf_contact_timer <= 0.30 and self._surf_normal.lengthSquared() > 0.01
 
-    def _is_strafe_input(self, *, wish_dir: LVector3f, yaw_deg: float) -> bool:
-        if wish_dir.lengthSquared() <= 1e-12:
-            return False
-        h_rad = math.radians(float(yaw_deg))
-        forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0.0)
-        if forward.lengthSquared() > 1e-12:
-            forward.normalize()
-        side_component = abs(wish_dir.dot(forward))
-        return side_component < 0.62
-
-    def _apply_surf_movement(self, *, wish_dir: LVector3f, yaw_deg: float, dt: float) -> None:
-        n = LVector3f(self._surf_normal)
+    @staticmethod
+    def _project_to_plane(vec: LVector3f, normal: LVector3f) -> LVector3f:
+        n = LVector3f(normal)
         if n.lengthSquared() <= 1e-12:
-            return
+            return LVector3f(vec)
         n.normalize()
-
-        pre_speed = self.vel.length()
-        # Keep velocity tangent to surf plane to avoid sticking/bouncing.
-        self.vel -= n * self.vel.dot(n)
-        post_clip_speed = self.vel.length()
-        if post_clip_speed > 1e-6 and pre_speed > post_clip_speed:
-            # Preserve momentum through ramp-angle transitions.
-            self.vel *= pre_speed / post_clip_speed
-
-        wish_plane = wish_dir - n * wish_dir.dot(n)
-        if wish_plane.lengthSquared() > 1e-12:
-            wish_plane.normalize()
-
-        # Classic surf feel: strafe keys add tangent speed along the ramp edge.
-        h_rad = math.radians(float(yaw_deg))
-        right = LVector3f(math.cos(h_rad), math.sin(h_rad), 0.0)
-        if right.lengthSquared() > 1e-12:
-            right.normalize()
-        strafe_amount = max(-1.0, min(1.0, float(wish_dir.dot(right))))
-        strafe_sign = 1.0 if strafe_amount > 0.08 else (-1.0 if strafe_amount < -0.08 else 0.0)
-
-        edge_dir = LVector3f(0.0, 0.0, 1.0).cross(n)
-        if edge_dir.lengthSquared() > 1e-12:
-            edge_dir.normalize()
-            if strafe_sign != 0.0:
-                if edge_dir.dot(right) * strafe_sign < 0.0:
-                    edge_dir *= -1.0
-                edge_accel = float(self.tuning.surf_accel) * abs(strafe_amount)
-                self.vel += edge_dir * edge_accel * dt
-            if wish_plane.lengthSquared() > 1e-12:
-                # Fallback for mixed input so surf tuning still has visible effect.
-                self.vel += wish_plane * (float(self.tuning.surf_accel) * 0.25) * dt
-
-        gravity_vec = LVector3f(0.0, 0.0, -float(self.tuning.gravity))
-        gravity_on_plane = gravity_vec - n * gravity_vec.dot(n)
-        gravity_scale = float(self.tuning.surf_gravity_scale) * (1.0 - 0.55 * abs(strafe_amount))
-        gravity_scale = max(0.15, gravity_scale)
-        self.vel += gravity_on_plane * gravity_scale * dt
+        out = LVector3f(vec) - n * LVector3f(vec).dot(n)
+        if out.lengthSquared() > 1e-12:
+            out.normalize()
+        return out
 
     def _refresh_wall_contact_from_probe(self) -> None:
         n, p = self._probe_nearby_wall()

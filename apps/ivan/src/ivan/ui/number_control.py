@@ -21,6 +21,8 @@ class NumberControl:
         normalized_slider: bool = False,
         normalized_entry: bool = False,
         slider_scale: float = 0.12,
+        slider_frame_size: tuple[float, float, float, float] | None = None,
+        slider_thumb_size: tuple[float, float, float, float] | None = None,
         entry_scale: float = 0.045,
         precision: int = 3,
     ) -> None:
@@ -52,9 +54,13 @@ class NumberControl:
             pos=(x + slider_offset, 0, y),
             frameColor=(0.16, 0.16, 0.16, 0.95),
             thumb_frameColor=(0.82, 0.82, 0.82, 1.0),
-            thumb_relief=DGG.FLAT,
+            thumb_relief=DGG.RIDGE,
             command=self._from_slider,
         )
+        if slider_frame_size is not None:
+            self.slider["frameSize"] = slider_frame_size
+        if slider_thumb_size is not None:
+            self.slider["thumb_frameSize"] = slider_thumb_size
         self.entry = DirectEntry(
             parent=parent,
             initialText=f"{value:.3f}",
