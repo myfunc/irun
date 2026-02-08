@@ -32,7 +32,6 @@ class PlayerController:
 
         self.grounded = False
         self.crouched = False
-        self._ground_timer = 0.0
         self._jump_buffer_timer = 0.0
         self._jump_pressed = False
 
@@ -44,6 +43,10 @@ class PlayerController:
         self._wall_jump_lock_timer = 999.0
         self._vault_cooldown_timer = 999.0
         self._ground_normal = LVector3f(0, 0, 1)
+        self._grapple_attached = False
+        self._grapple_anchor = LVector3f(0, 0, 0)
+        self._grapple_length = 0.0
+        self._grapple_attach_shorten_left = 0.0
 
         self.apply_hull_settings()
 
@@ -62,6 +65,7 @@ class PlayerController:
         self.pos = LVector3f(self.spawn_point)
         self.vel = LVector3f(0, 0, 0)
         self.crouched = False
+        self.detach_grapple()
         self.apply_hull_settings()
 
     def queue_jump(self) -> None:
@@ -71,26 +75,40 @@ class PlayerController:
         self._jump_pressed = True
 
     def can_ground_jump(self) -> bool:
-        if self.grounded:
-            return True
-        return bool(self.tuning.enable_coyote) and self._ground_timer <= float(self.tuning.coyote_time)
+        return self.grounded
 
     def has_wall_for_jump(self) -> bool:
         if self.grounded:
-            return False
-        # During active coyote window, prefer ground-style jump over wall-jump in corners.
-        if bool(self.tuning.enable_coyote) and 0.0 < self._ground_timer <= float(self.tuning.coyote_time):
             return False
         if self._wall_contact_timer > 0.18 or self._wall_normal.lengthSquared() <= 0.01:
             return False
         return self._wall_jump_lock_timer >= float(self.tuning.wall_jump_cooldown)
 
-    def apply_grapple_impulse(self, *, yaw_deg: float) -> None:
-        if not self.tuning.grapple_enabled:
-            return
-        h_rad = math.radians(yaw_deg)
-        forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0)
-        self.vel += forward * 4.5 + LVector3f(0, 0, 1.8)
+    def attach_grapple(self, *, anchor: LVector3f) -> None:
+        self._grapple_anchor = LVector3f(anchor)
+        rope = self._grapple_anchor - self.pos
+        rope_dist = float(rope.length())
+        self._grapple_length = min(
+            float(self.tuning.grapple_max_length),
+            max(float(self.tuning.grapple_min_length), rope_dist),
+        )
+        self._grapple_attached = True
+        self._grapple_attach_shorten_left = max(0.0, float(self.tuning.grapple_attach_shorten_time))
+        if rope_dist > 1e-9:
+            rope.normalize()
+            self.vel += rope * max(0.0, float(self.tuning.grapple_attach_boost))
+
+    def detach_grapple(self) -> None:
+        self._grapple_attached = False
+        self._grapple_attach_shorten_left = 0.0
+
+    def is_grapple_attached(self) -> bool:
+        return bool(self._grapple_attached) and bool(self.tuning.grapple_enabled)
+
+    def grapple_anchor(self) -> LVector3f | None:
+        if not self.is_grapple_attached():
+            return None
+        return LVector3f(self._grapple_anchor)
 
     def step(self, *, dt: float, wish_dir: LVector3f, yaw_deg: float, crouching: bool) -> None:
         dt = float(dt)
@@ -153,13 +171,12 @@ class PlayerController:
             self.vel.z -= float(self.tuning.gravity) * gravity_scale * dt
 
             if self._consume_jump_request():
-                # Coyote jump must also be available from the airborne branch.
-                if self.can_ground_jump():
-                    self._apply_jump()
-                elif self.tuning.vault_enabled and self._try_vault(yaw_deg=yaw_deg):
+                if self.tuning.vault_enabled and self._try_vault(yaw_deg=yaw_deg):
                     pass
                 elif self.tuning.walljump_enabled and self.has_wall_for_jump():
                     self._apply_wall_jump(yaw_deg=yaw_deg)
+
+        self._apply_grapple_constraint(dt=dt)
 
         # Movement + collision resolution.
         if self.collision is not None:
@@ -171,10 +188,9 @@ class PlayerController:
         else:
             self._move_and_collide(self.vel * dt)
 
-        if not self.grounded:
-            self._ground_timer += dt
-        else:
-            self._ground_timer = 0.0
+        self._enforce_grapple_length()
+
+        if self.grounded:
             self._wall_jump_lock_timer = 999.0
 
     def _consume_jump_request(self) -> bool:
@@ -187,8 +203,6 @@ class PlayerController:
         self.vel.z = self._jump_up_speed()
         self._jump_buffer_timer = 0.0
         self.grounded = False
-        # Coyote time should only represent "just walked off a ledge", not "already jumped".
-        self._ground_timer = float(self.tuning.coyote_time) + 1.0
 
     def _apply_wall_jump(self, *, yaw_deg: float) -> None:
         away = LVector3f(self._wall_normal.x, self._wall_normal.y, 0)
@@ -302,6 +316,42 @@ class PlayerController:
         scale = new_speed / speed
         self.vel.x *= scale
         self.vel.y *= scale
+
+    def _apply_grapple_constraint(self, *, dt: float) -> None:
+        if not self.is_grapple_attached():
+            return
+
+        if self._grapple_attach_shorten_left > 0.0:
+            auto_speed = max(0.0, float(self.tuning.grapple_attach_shorten_speed))
+            self._grapple_length = max(float(self.tuning.grapple_min_length), self._grapple_length - auto_speed * dt)
+            self._grapple_attach_shorten_left = max(0.0, self._grapple_attach_shorten_left - dt)
+
+        to_player = self.pos - self._grapple_anchor
+        dist = float(to_player.length())
+        if dist <= 1e-6 or dist <= self._grapple_length:
+            return
+        n = to_player / dist
+
+        # Rope is taut: remove outward radial speed and add a pull to restore rope length.
+        radial_out = float(self.vel.dot(n))
+        if radial_out > 0.0:
+            self.vel -= n * radial_out
+        pull_max = max(0.0, float(self.tuning.grapple_pull_strength))
+        pull = min(pull_max, max(0.0, (dist - self._grapple_length) / max(1e-5, dt)))
+        self.vel -= n * pull
+
+    def _enforce_grapple_length(self) -> None:
+        if not self.is_grapple_attached():
+            return
+        to_player = self.pos - self._grapple_anchor
+        dist = float(to_player.length())
+        if dist <= 1e-6 or dist <= self._grapple_length:
+            return
+        n = to_player / dist
+        self.pos = self._grapple_anchor + n * self._grapple_length
+        radial_out = float(self.vel.dot(n))
+        if radial_out > 0.0:
+            self.vel -= n * radial_out
 
     def _current_target_half_height(self) -> float:
         stand_h = max(0.15, float(self._standing_half_height))

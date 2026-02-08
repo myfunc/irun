@@ -29,9 +29,7 @@ class PhysicsTuning:
     vault_min_ledge_height: float = 0.20
     vault_max_ledge_height: float = 1.40
     vault_cooldown: float = 0.30
-    coyote_time: float = 0.12
     jump_buffer_time: float = 0.14
-    enable_coyote: bool = True
     enable_jump_buffer: bool = True
     autojump_enabled: bool = False
     noclip_enabled: bool = False
@@ -42,6 +40,14 @@ class PhysicsTuning:
     vault_enabled: bool = False
     crouch_enabled: bool = True
     grapple_enabled: bool = False
+    grapple_fire_range: float = 180.0
+    grapple_attach_boost: float = 8.0
+    grapple_attach_shorten_speed: float = 20.0
+    grapple_attach_shorten_time: float = 0.20
+    grapple_pull_strength: float = 60.0
+    grapple_min_length: float = 1.2
+    grapple_max_length: float = 150.0
+    grapple_rope_half_width: float = 0.028
     # Quake3-style character collision parameters.
     max_ground_slope_deg: float = 46.0
     step_height: float = 0.55
