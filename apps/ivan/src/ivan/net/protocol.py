@@ -64,11 +64,21 @@ def decode_input_packet(payload: bytes) -> tuple[str, InputCommand] | None:
     return (token, cmd)
 
 
-def encode_snapshot_packet(*, tick: int, players: list[dict]) -> bytes:
+def encode_snapshot_packet(
+    *,
+    tick: int,
+    players: list[dict],
+    cfg_v: int | None = None,
+    tuning: dict[str, float | bool] | None = None,
+) -> bytes:
     obj = {
         "t": "snap",
         "v": PROTOCOL_VERSION,
         "tick": int(tick),
         "players": players,
     }
+    if cfg_v is not None:
+        obj["cfg_v"] = int(cfg_v)
+    if isinstance(tuning, dict):
+        obj["tuning"] = tuning
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=True).encode("utf-8")

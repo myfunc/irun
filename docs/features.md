@@ -45,8 +45,18 @@
   - normal client sessions are offline by default; ESC menu `Open To Network` starts/stops embedded host mode for LAN joinability while keeping the local player in-session
   - if the local host port is already in use, host-toggle falls back to connecting an existing local server instead of crashing
   - ESC menu `Multiplayer` tab supports runtime server join via host/port input plus Connect/Disconnect controls
+  - joining a server auto-loads the server map on the client before multiplayer session starts
+  - host-opened server starts with host client tuning (no config reset on open-to-network)
+  - dedicated server defaults to `surf_bhop_c2` tuning (same movement baseline as client default profile)
+  - server tuning is authoritative: only config owner (host client) can change it; other clients receive live updates and apply them in-session
+  - multiplayer respawn (`R`) is server-authoritative to prevent client/server state divergence
+  - player snapshots include per-player respawn sequence so clients force immediate authoritative reposition on respawn
+  - local player netcode uses sequence-history reconciliation (rollback + replay) for smoother online movement
+  - local first-person camera uses a short render-shell smoothing path in online mode to avoid sluggish/jerky correction pops
+  - remote interpolation delay auto-adjusts to observed snapshot jitter
   - clients can connect, send input, and receive replicated player snapshots
   - client-side prediction + server reconciliation for local player movement
+  - reconciliation smoothing reduces visible micro-stutter from frequent authoritative corrections
   - remote players are rendered with simple avatar models and snapshot-buffer interpolation
   - server-side lag compensation for grapple hit checks (rewind by client tick hint)
   - health system with grapple damage (`20` per hit) and corner HP HUD

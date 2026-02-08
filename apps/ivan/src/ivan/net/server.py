@@ -42,24 +42,34 @@ class _ClientState:
     yaw: float
     pitch: float
     hp: int
+    respawn_seq: int
     last_input: InputCommand
     rewind_history: deque[tuple[int, LVector3f]]
 
 
 class MultiplayerServer:
-    def __init__(self, *, host: str, tcp_port: int, udp_port: int, map_json: str | None) -> None:
+    def __init__(
+        self,
+        *,
+        host: str,
+        tcp_port: int,
+        udp_port: int,
+        map_json: str | None,
+        initial_tuning: dict[str, float | bool] | None = None,
+    ) -> None:
         self.host = str(host)
         self.tcp_port = int(tcp_port)
         self.udp_port = int(udp_port)
-        self.map_json = map_json
+        self.map_json = str(map_json) if map_json else None
 
         self.tick_rate_hz = 60
         self.fixed_dt = 1.0 / float(self.tick_rate_hz)
-        self.snapshot_rate_hz = 20
+        self.snapshot_rate_hz = 30
         self.snapshot_dt = 1.0 / float(self.snapshot_rate_hz)
 
         self.tuning = PhysicsTuning()
         self.tuning.noclip_enabled = False
+        self._apply_tuning_snapshot(initial_tuning if isinstance(initial_tuning, dict) else self._default_server_tuning())
 
         self.spawn_point = LVector3f(0, 35, 1.9)
         self.spawn_yaw = 0.0
@@ -83,6 +93,8 @@ class MultiplayerServer:
         self._clients_by_token: dict[str, _ClientState] = {}
         self._tcp_clients: dict[socket.socket, bytes] = {}
         self._tick = 0
+        self._config_owner_token: str | None = None
+        self._tuning_version: int = 1
 
         self._tcp_listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._tcp_listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -95,6 +107,85 @@ class MultiplayerServer:
         self._udp_sock.bind((self.host, self.udp_port))
         self._udp_sock.setblocking(False)
         self._closed = False
+
+    @staticmethod
+    def _normalize_tuning_snapshot(values: dict[str, float | bool] | None) -> dict[str, float | bool]:
+        if not isinstance(values, dict):
+            return {}
+        fields = set(PhysicsTuning.__annotations__.keys())
+        out: dict[str, float | bool] = {}
+        for k, v in values.items():
+            if k not in fields:
+                continue
+            if isinstance(v, bool):
+                out[k] = bool(v)
+            elif isinstance(v, (int, float)):
+                out[k] = float(v)
+        return out
+
+    @staticmethod
+    def _default_server_tuning() -> dict[str, float | bool]:
+        # Match IVAN runtime default profile (surf_bhop_c2) when no explicit host tuning is provided.
+        base = PhysicsTuning()
+        out: dict[str, float | bool] = {}
+        for field in PhysicsTuning.__annotations__.keys():
+            value = getattr(base, field)
+            out[field] = bool(value) if isinstance(value, bool) else float(value)
+        out.update(
+            {
+                "surf_enabled": True,
+                "autojump_enabled": True,
+                "enable_jump_buffer": True,
+                "gravity": 39.6196435546875,
+                "jump_height": 1.0108081703186036,
+                "max_ground_speed": 6.622355737686157,
+                "max_air_speed": 6.845157165527343,
+                "ground_accel": 49.44859447479248,
+                "jump_accel": 31.738659286499026,
+                "friction": 13.672204017639162,
+                "air_control": 0.24100000381469727,
+                "air_counter_strafe_brake": 23.000001525878908,
+                "mouse_sensitivity": 0.09978364143371583,
+                "jump_buffer_time": 0.2329816741943359,
+                "wall_jump_cooldown": 0.9972748947143555,
+                "surf_accel": 23.521632385253906,
+                "surf_gravity_scale": 0.33837084770202636,
+                "surf_min_normal_z": 0.05,
+                "surf_max_normal_z": 0.72,
+                "grapple_enabled": True,
+                "grapple_attach_shorten_speed": 7.307412719726562,
+                "grapple_attach_shorten_time": 0.35835513305664063,
+                "grapple_pull_strength": 30.263092041015625,
+                "grapple_min_length": 0.7406494271755218,
+                "grapple_rope_half_width": 0.015153287963867187,
+            }
+        )
+        return out
+
+    def _tuning_snapshot(self) -> dict[str, float | bool]:
+        out: dict[str, float | bool] = {}
+        for field in PhysicsTuning.__annotations__.keys():
+            value = getattr(self.tuning, field)
+            out[field] = bool(value) if isinstance(value, bool) else float(value)
+        return out
+
+    def _apply_tuning_snapshot(self, values: dict[str, float | bool] | None) -> None:
+        snap = self._normalize_tuning_snapshot(values)
+        if not snap:
+            return
+        for field, value in snap.items():
+            setattr(self.tuning, field, value)
+        for st in getattr(self, "_clients_by_token", {}).values():
+            try:
+                st.ctrl.apply_hull_settings()
+            except Exception:
+                pass
+
+    def _client_state_by_tcp(self, cs: socket.socket) -> _ClientState | None:
+        for st in self._clients_by_token.values():
+            if st.tcp_sock is cs:
+                return st
+        return None
 
     @staticmethod
     def _safe_close_socket(sock: socket.socket | None) -> None:
@@ -122,6 +213,8 @@ class MultiplayerServer:
         handle = resolve_bundle_handle(self.map_json)
         if handle is None:
             return
+        # Advertise the concrete map.json path so clients can load the same map on connect.
+        self.map_json = str(handle.map_json)
         payload_path = handle.map_json
         try:
             payload = json.loads(payload_path.read_text(encoding="utf-8"))
@@ -222,7 +315,29 @@ class MultiplayerServer:
                 obj = decode_json_line(line)
                 if not obj:
                     continue
-                if obj.get("t") != "hello":
+                t = str(obj.get("t") or "")
+                if t == "cfg":
+                    st = self._client_state_by_tcp(cs)
+                    if st is None:
+                        continue
+                    if self._config_owner_token is None or st.token != self._config_owner_token:
+                        continue
+                    tuning_val = obj.get("tuning")
+                    if isinstance(tuning_val, dict):
+                        self._apply_tuning_snapshot(tuning_val)
+                        self._tuning_version += 1
+                    continue
+                if t == "respawn":
+                    st = self._client_state_by_tcp(cs)
+                    if st is None:
+                        continue
+                    st.ctrl.respawn()
+                    st.yaw = float(self.spawn_yaw)
+                    st.pitch = 0.0
+                    st.hp = 100
+                    st.respawn_seq = int(st.respawn_seq) + 1
+                    continue
+                if t != "hello":
                     continue
                 name = str(obj.get("name") or "player")[:24]
                 pid = self._next_player_id
@@ -239,6 +354,7 @@ class MultiplayerServer:
                     yaw=float(self.spawn_yaw),
                     pitch=0.0,
                     hp=100,
+                    respawn_seq=0,
                     last_input=InputCommand(
                         seq=0,
                         server_tick_hint=0,
@@ -255,6 +371,8 @@ class MultiplayerServer:
                     rewind_history=deque(maxlen=240),
                 )
                 self._clients_by_token[token] = st
+                if self._config_owner_token is None:
+                    self._config_owner_token = token
                 resp = {
                     "t": "welcome",
                     "v": PROTOCOL_VERSION,
@@ -263,6 +381,10 @@ class MultiplayerServer:
                     "tick_rate": self.tick_rate_hz,
                     "udp_port": self.udp_port,
                     "spawn": [float(self.spawn_point.x), float(self.spawn_point.y), float(self.spawn_point.z)],
+                    "map_json": self.map_json,
+                    "can_configure": bool(token == self._config_owner_token),
+                    "cfg_v": int(self._tuning_version),
+                    "tuning": self._tuning_snapshot(),
                 }
                 try:
                     cs.sendall(encode_json(resp))
@@ -282,6 +404,8 @@ class MultiplayerServer:
                 break
         if token_to_drop is not None:
             self._clients_by_token.pop(token_to_drop, None)
+            if token_to_drop == self._config_owner_token:
+                self._config_owner_token = None
         try:
             cs.close()
         except Exception:
@@ -405,6 +529,7 @@ class MultiplayerServer:
                 nearest_player.yaw = float(self.spawn_yaw)
                 nearest_player.pitch = 0.0
                 nearest_player.hp = 100
+                nearest_player.respawn_seq = int(nearest_player.respawn_seq) + 1
             return
 
         if st.ctrl.is_grapple_attached():
@@ -455,6 +580,7 @@ class MultiplayerServer:
                 st.yaw = float(self.spawn_yaw)
                 st.pitch = 0.0
                 st.hp = 100
+                st.respawn_seq = int(st.respawn_seq) + 1
             st.rewind_history.append((int(self._tick), LVector3f(st.ctrl.pos)))
 
     def _snapshot_players(self) -> list[dict]:
@@ -464,23 +590,29 @@ class MultiplayerServer:
                 {
                     "id": int(st.player_id),
                     "n": st.name,
-                    "x": round(float(st.ctrl.pos.x), 4),
-                    "y": round(float(st.ctrl.pos.y), 4),
-                    "z": round(float(st.ctrl.pos.z), 4),
-                    "yaw": round(float(st.yaw), 3),
-                    "pitch": round(float(st.pitch), 3),
-                    "vx": round(float(st.ctrl.vel.x), 4),
-                    "vy": round(float(st.ctrl.vel.y), 4),
-                    "vz": round(float(st.ctrl.vel.z), 4),
+                    "x": round(float(st.ctrl.pos.x), 6),
+                    "y": round(float(st.ctrl.pos.y), 6),
+                    "z": round(float(st.ctrl.pos.z), 6),
+                    "yaw": round(float(st.yaw), 4),
+                    "pitch": round(float(st.pitch), 4),
+                    "vx": round(float(st.ctrl.vel.x), 6),
+                    "vy": round(float(st.ctrl.vel.y), 6),
+                    "vz": round(float(st.ctrl.vel.z), 6),
                     "ack": int(st.last_input.seq),
                     "hp": int(st.hp),
+                    "rs": int(st.respawn_seq),
                 }
             )
         return out
 
     def _broadcast_snapshot(self) -> None:
         players = self._snapshot_players()
-        pkt = encode_snapshot_packet(tick=self._tick, players=players)
+        pkt = encode_snapshot_packet(
+            tick=self._tick,
+            players=players,
+            cfg_v=int(self._tuning_version),
+            tuning=self._tuning_snapshot(),
+        )
         for st in self._clients_by_token.values():
             if st.udp_addr is None:
                 continue
@@ -517,8 +649,22 @@ class MultiplayerServer:
 
 
 class EmbeddedHostServer:
-    def __init__(self, *, host: str, tcp_port: int, udp_port: int, map_json: str | None) -> None:
-        self._srv = MultiplayerServer(host=host, tcp_port=tcp_port, udp_port=udp_port, map_json=map_json)
+    def __init__(
+        self,
+        *,
+        host: str,
+        tcp_port: int,
+        udp_port: int,
+        map_json: str | None,
+        initial_tuning: dict[str, float | bool] | None = None,
+    ) -> None:
+        self._srv = MultiplayerServer(
+            host=host,
+            tcp_port=tcp_port,
+            udp_port=udp_port,
+            map_json=map_json,
+            initial_tuning=initial_tuning,
+        )
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._srv.run_forever,
@@ -536,6 +682,19 @@ class EmbeddedHostServer:
         self._srv.close()
 
 
-def run_server(*, host: str, tcp_port: int, udp_port: int, map_json: str | None) -> None:
-    srv = MultiplayerServer(host=host, tcp_port=tcp_port, udp_port=udp_port, map_json=map_json)
+def run_server(
+    *,
+    host: str,
+    tcp_port: int,
+    udp_port: int,
+    map_json: str | None,
+    initial_tuning: dict[str, float | bool] | None = None,
+) -> None:
+    srv = MultiplayerServer(
+        host=host,
+        tcp_port=tcp_port,
+        udp_port=udp_port,
+        map_json=map_json,
+        initial_tuning=initial_tuning,
+    )
     srv.run_forever()
