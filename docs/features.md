@@ -87,6 +87,8 @@
   - Controls: Button (hover/pressed), Checkbox (visual), Slider (compact), TextInput (basic editing hotkeys on macOS)
   - Higher-level widgets used by Ivan: ListMenu, Scrolled, Dropdown, NumericControl, Tooltip
   - Playground demo to exercise components in one place (`python -m irun_ui_kit.demo`)
+- Ivan: minimal command console engine + localhost control bridge (JSON-lines TCP) for external command execution
+  - MCP stdio server (`ivan-mcp`) exposes a `console_exec` tool that forwards to the running game process
 
 ## Planned (High-Level)
 - Movement: walk/run, jump, jump buffer, air control
@@ -102,6 +104,6 @@
 - UI: extend the procedural UI kit to cover remaining runtime UI needs (avoid one-off custom UI)
 
 ## Out of Scope (For Now)
-- Multiplayer
-- Networked features
+- Matchmaking/lobbies/NAT traversal
+- Anti-cheat and strong authoritative validation (beyond basic server authority)
 - Modding pipeline
