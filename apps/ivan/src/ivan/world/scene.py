@@ -5,7 +5,6 @@ from pathlib import Path
 
 from panda3d.core import (
     AmbientLight,
-    BitMask32,
     CardMaker,
     ColorBlendAttrib,
     CompassEffect,
@@ -55,13 +54,16 @@ class WorldScene:
         self._lightstyle_mode: str = "animate"  # animate | static
         self._map_id: str = "scene"
         self._course: dict | None = None
+        # Map bundle world scale (GoldSrc/Source BSPs are typically far larger than our gameplay space).
+        # GoldSrc importer convention: world = (x*scale, -y*scale, z*scale).
+        self._map_scale: float = 1.0
         self._skybox_np = None
         self._world_root_np = None
         self._camera_np = None
 
         # Optional GoldSrc PVS visibility culling.
         self._vis_goldsrc: GoldSrcBspVis | None = None
-        self._vis_mask = BitMask32.bit(19)
+        self._vis_enabled: bool = False
         self._vis_current_leaf: int | None = None
         # face_idx -> [NodePath...]
         self._vis_face_nodes: dict[int, list[object]] = {}
@@ -69,6 +71,8 @@ class WorldScene:
         # Used to lazy-load per-face lightmap textures (big GoldSrc maps) when a face becomes visible via PVS.
         self._vis_deferred_lightmaps: dict[int, dict] = {}
         self._vis_initial_world_face_flags: bytearray | None = None
+        self._map_json_path: Path | None = None
+        self._map_payload: dict | None = None
 
     @property
     def map_id(self) -> str:
@@ -126,6 +130,46 @@ class WorldScene:
                     pass
 
         # 2) Visibility culling (GoldSrc PVS) - only updates when camera leaf changes.
+        if self._vis_enabled:
+            self._tick_visibility()
+
+    def set_visibility_enabled(self, enabled: bool) -> None:
+        """
+        Enable/disable runtime visibility culling.
+
+        Default is OFF because some maps/positions can cause visible popping.
+        """
+
+        enabled = bool(enabled)
+        if enabled == bool(self._vis_enabled):
+            return
+
+        # Lazy-enable: attempt to load/build cache if we didn't resolve it at map load.
+        if enabled and self._vis_goldsrc is None and self._map_json_path is not None and isinstance(self._map_payload, dict):
+            try:
+                class _Cfg:
+                    visibility = {"enabled": True, "mode": "goldsrc_pvs", "build_cache": True}
+
+                self._vis_goldsrc = self._resolve_visibility(cfg=_Cfg(), map_json=self._map_json_path, payload=self._map_payload)
+            except Exception:
+                self._vis_goldsrc = None
+
+        self._vis_enabled = enabled and (self._vis_goldsrc is not None)
+
+        # Reset state so the next tick applies cleanly.
+        self._vis_current_leaf = None
+
+        if not self._vis_enabled:
+            # Show everything.
+            try:
+                for nodes in self._vis_face_nodes.values():
+                    for np in nodes:
+                        np.show()
+            except Exception:
+                pass
+            return
+
+        # Apply immediately to avoid a one-frame "everything visible" flash.
         self._tick_visibility()
 
     def _tick_visibility(self) -> None:
@@ -138,8 +182,10 @@ class WorldScene:
 
         try:
             pos = self._camera_np.getPos(self._world_root_np)
-            leaf = self._vis_goldsrc.point_leaf(x=float(pos[0]), y=float(pos[1]), z=float(pos[2]))
+            leaf = self._best_effort_visibility_leaf(pos=pos)
         except Exception:
+            return
+        if leaf is None:
             return
 
         if self._vis_current_leaf is not None and int(leaf) == int(self._vis_current_leaf):
@@ -156,16 +202,57 @@ class WorldScene:
                 show = bool(flags[int(face_idx - w0)])
             for np in nodes:
                 try:
+                    # Use full show/hide (no bitmasks). Using masked show/hide without also
+                    # restricting the camera mask leaves the geometry visible via other bits.
                     if show:
-                        np.show(self._vis_mask)
+                        np.show()
                     else:
-                        np.hide(self._vis_mask)
+                        np.hide()
                 except Exception:
                     pass
 
             # Lazy-load per-face lightmaps when a world face becomes visible for the first time.
             if show and int(w0) <= int(face_idx) < int(w1):
                 self._ensure_deferred_lightmaps_loaded(face_idx=int(face_idx))
+
+    def _best_effort_visibility_leaf(self, *, pos: LVector3f) -> int | None:
+        """
+        Find a reasonable BSP leaf index for PVS culling.
+
+        VIS BSP data lives in source BSP coordinates (unscaled, unflipped). Convert from runtime
+        world coords before traversal. If we land in a leaf without VIS data, prefer keeping the
+        previous leaf (avoids spikes when clipping into walls).
+        """
+
+        if self._vis_goldsrc is None:
+            return None
+        if self._world_root_np is None or self._camera_np is None:
+            return None
+
+        scale = float(self._map_scale) if float(self._map_scale) > 0.0 else 1.0
+        bsp_pos = LVector3f(float(pos[0]) / scale, -float(pos[1]) / scale, float(pos[2]) / scale)
+
+        try:
+            leaf0 = int(self._vis_goldsrc.point_leaf(x=float(bsp_pos[0]), y=float(bsp_pos[1]), z=float(bsp_pos[2])))
+        except Exception:
+            return None
+
+        try:
+            vis_offset = int(self._vis_goldsrc.leaves[int(leaf0)][0])
+        except Exception:
+            vis_offset = -1
+        if vis_offset >= 0:
+            return int(leaf0)
+
+        # No-VIS leaf: keep previous valid leaf if possible.
+        if self._vis_current_leaf is not None:
+            try:
+                prev_ofs = int(self._vis_goldsrc.leaves[int(self._vis_current_leaf)][0])
+            except Exception:
+                prev_ofs = -1
+            if prev_ofs >= 0:
+                return int(self._vis_current_leaf)
+        return int(leaf0)
 
     def _ensure_deferred_lightmaps_loaded(self, *, face_idx: int) -> None:
         """
@@ -386,6 +473,8 @@ class WorldScene:
             payload = json.loads(map_json.read_text(encoding="utf-8"))
         except Exception:
             return False
+        self._map_json_path = Path(map_json)
+        self._map_payload = dict(payload) if isinstance(payload, dict) else None
 
         triangles = payload.get("triangles")
         if not isinstance(triangles, list) or not triangles:
@@ -422,6 +511,11 @@ class WorldScene:
 
         self._material_texture_index = None
         self._material_texture_root = self._resolve_material_root(map_json=map_json, payload=payload)
+        try:
+            s = float(payload.get("scale") or 1.0)
+            self._map_scale = s if s > 0.0 else 1.0
+        except Exception:
+            self._map_scale = 1.0
         mm = payload.get("materials_meta")
         self._materials_meta = mm if isinstance(mm, dict) else None
         self._lightmap_faces = self._resolve_lightmaps(map_json=map_json, payload=payload)
@@ -432,6 +526,7 @@ class WorldScene:
         self._vis_goldsrc = self._resolve_visibility(cfg=cfg, map_json=map_json, payload=payload)
         self._vis_face_nodes = {}
         self._vis_current_leaf = None
+        self._vis_enabled = False
 
         collision_override = payload.get("collision_triangles")
 
@@ -463,8 +558,7 @@ class WorldScene:
             self._attach_triangle_map_geometry(render=render, triangles=triangles)
 
         self.triangle_collision_mode = True
-        # Apply visibility immediately after load to avoid a one-frame "everything visible" flash.
-        self._tick_visibility()
+        # Visibility is disabled by default (can be toggled via debug).
         return True
 
     def _resolve_visibility(self, *, cfg, map_json: Path, payload: dict) -> GoldSrcBspVis | None:
@@ -476,7 +570,8 @@ class WorldScene:
         """
 
         vis_cfg = getattr(cfg, "visibility", None)
-        enabled = True
+        # Default OFF: PVS culling has proven too artifact-prone on some maps/positions.
+        enabled = False
         mode = "auto"  # auto | goldsrc_pvs
         build_cache = True
         if isinstance(vis_cfg, dict):

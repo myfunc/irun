@@ -59,3 +59,6 @@ class PhysicsTuning:
     # Time-trial course marker placement (F5/F6): half extents for the AABB volumes.
     course_marker_half_extent_xy: float = 2.5
     course_marker_half_extent_z: float = 2.0
+
+    # Rendering / visibility debugging (default OFF: avoid artifacts on GoldSrc PVS maps).
+    vis_culling_enabled: bool = False

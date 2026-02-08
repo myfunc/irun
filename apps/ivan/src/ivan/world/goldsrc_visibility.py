@@ -85,7 +85,14 @@ class GoldSrcBspVis:
         world_end = int(self.world_face_end)
 
         # Union leaf face lists for all visible leaves.
-        for other_leaf in iter_visible_leaf_indices(row=row):
+        #
+        # Defensive: ensure the current leaf is always included. Some toolchains can produce VIS
+        # rows that do not include the leaf itself; culling away local faces causes obvious popping.
+        visible_leaves = iter_visible_leaf_indices(row=row)
+        if int(leaf_idx) not in visible_leaves:
+            visible_leaves.append(int(leaf_idx))
+
+        for other_leaf in visible_leaves:
             if other_leaf < 0 or other_leaf >= len(self.leaves):
                 continue
             _, first, count = self.leaves[int(other_leaf)]
@@ -383,4 +390,3 @@ def build_visibility_from_goldsrc_bsp(*, source_bsp_path: Path) -> GoldSrcBspVis
         world_first_face=int(world_first_face),
         world_num_faces=int(world_num_faces),
     )
-

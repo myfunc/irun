@@ -92,6 +92,7 @@ See: `docs/ui-kit.md`.
 - Imported BSP bundles render with baked lightmaps (Source/GoldSrc) and disable dynamic scene lights for map geometry.
 - Optional visibility culling:
   - GoldSrc bundles can use BSP PVS (VISIBILITY + leaf face lists) to avoid rendering world geometry behind walls.
+  - Currently disabled by default; can be toggled at runtime via debug setting `vis_culling_enabled`.
   - The runtime stores a derived cache next to the bundle as `visibility.goldsrc.json` (directory bundle) or next to the extracted cache (packed bundle).
 - Per-map run options can be stored in:
   - directory bundles: `<bundle>/run.json`
