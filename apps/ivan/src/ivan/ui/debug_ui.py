@@ -83,6 +83,7 @@ class DebugUI:
         "vault_enabled",
         "crouch_enabled",
         "grapple_enabled",
+        "vis_culling_enabled",
     ]
 
     GROUPS: list[tuple[str, list[str], list[str]]] = [
@@ -149,6 +150,11 @@ class DebugUI:
                 "noclip_speed",
             ],
             ["crouch_enabled", "noclip_enabled", "grapple_enabled"],
+        ),
+        (
+            "Rendering / Visibility",
+            [],
+            ["vis_culling_enabled"],
         ),
     ]
 
@@ -222,6 +228,7 @@ class DebugUI:
         "vault_enabled": "Lower (OFF): ledge vault disabled. Higher (ON): second-jump ledge vault enabled.",
         "crouch_enabled": "Lower (OFF): crouch input ignored. Higher (ON): hold C to crouch.",
         "grapple_enabled": "Lower (OFF): grapple hook disabled. Higher (ON): LMB click attach/detach.",
+        "vis_culling_enabled": "Lower (OFF): disable GoldSrc PVS culling (stable visuals). Higher (ON): enable visibility culling (may pop).",
     }
 
     def __init__(

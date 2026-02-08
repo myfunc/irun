@@ -418,6 +418,12 @@ class RunnerDemo(ShowBase):
         if field in ("player_radius", "player_half_height", "crouch_half_height"):
             if self.player is not None:
                 self.player.apply_hull_settings()
+        if field == "vis_culling_enabled":
+            if self.scene is not None:
+                try:
+                    self.scene.set_visibility_enabled(bool(self.tuning.vis_culling_enabled))
+                except Exception:
+                    pass
         if self._active_profile_name in self._profiles:
             self._profiles[self._active_profile_name][field] = self._to_persisted_value(getattr(self.tuning, field))
         if not self._suspend_tuning_persist:
@@ -1227,6 +1233,8 @@ class RunnerDemo(ShowBase):
             )
             self.scene = WorldScene()
             self.scene.build(cfg=cfg, loader=self.loader, render=self.world_root, camera=self.camera)
+            # Visibility culling defaults OFF (can be enabled via the debug menu).
+            self.scene.set_visibility_enabled(bool(self.tuning.vis_culling_enabled))
             self._current_map_json = cfg_map_json
             self._clear_remote_players()
 
