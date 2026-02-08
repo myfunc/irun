@@ -69,6 +69,10 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 - `LMB`: mock grapple impulse (only if grapple toggle enabled)
 - `V` (default): toggle noclip (rebindable from `Esc -> Key Bindings`)
 
+Menu/input behavior:
+- When `Esc` menu or debug menu is open, gameplay input (mouse look / movement keys) is ignored.
+- The world simulation continues running (no hard pause), so physics/time still progress.
+
 ## Main Menu
 Booting without `--map` starts in the main menu:
 - Run an existing bundle shipped under `apps/ivan/assets/` (imported/generated/hand-authored).
@@ -83,6 +87,7 @@ Navigation:
 Notes:
 - Directory picking uses a native dialog via `tkinter` (stdlib). If Tk is unavailable, the menu will show an error.
 - State file location defaults to `~/.irun/ivan/state.json` (override via `IRUN_IVAN_STATE_DIR`).
+- Debug-tuned values are persisted in state and reused as startup defaults on the next launch.
 
 ## HUD
 - A top-center speed readout is always visible (`Speed: <int> u/s`).
@@ -91,24 +96,26 @@ Notes:
 
 ## Debug/Admin Menu
 Panel layout:
-- The setting list is rendered in dynamic columns.
-- Total panel height is capped at two-thirds of the game window height.
-- As settings grow, new columns are added so the list does not run to the bottom.
+- CS1.6-inspired boxed panel style with grouped collapsible sections (spoilers).
+- Scrollable settings canvas for large parameter sets.
 - Hovering a setting name/control shows a tooltip with a short explanation.
+- Numeric sliders are normalized (`0..100`) while still mapping to each field's real min/max range.
 
-Numeric settings include sliders + entry fields for precise tuning:
+Numeric settings include normalized sliders + entry fields for precise tuning:
 - Gravity, jump height, ground/air speed caps
 - Ground acceleration, jump acceleration (bunnyhop/strafe), friction, air control
 - Air counter-strafe brake strength
 - Mouse sensitivity, crouch speed/height/camera
 - Wall jump boost + cooldown, vault jump/speed/ledge window, coyote time, jump buffer time
 - Noclip fly speed
+- Surf acceleration / gravity scale / surfable slope-normal range (inspired by public CS surf server settings)
 
 Boolean toggles are shown inline as labeled rows with `ON/OFF` buttons:
 - Coyote time
 - Jump buffer
 - Autojump (hold jump to keep hopping)
 - Noclip
+- Surf
 - Wall jump
 - Wallrun (toggle only, prototype hook)
 - Vault (toggle only)
@@ -117,10 +124,12 @@ Boolean toggles are shown inline as labeled rows with `ON/OFF` buttons:
 
 Movement notes:
 - Counter-strafe braking in air decelerates horizontal speed based on `air_counter_strafe_brake` without hidden hardcoded bonus deceleration.
+- Default `air_counter_strafe_brake` is `23.0`.
 - Repeated wall-jumps are controlled by `wall_jump_cooldown` (default: `1.0s`).
 - Wallrun is lateral; vertical climb gain is capped.
 - `vault_enabled` is OFF by default. If enabled, pressing jump again near a ledge can trigger a vault: feet must be below ledge top, vault jump is higher than normal, and a small forward speed boost is applied.
 - Step risers are filtered out for wall-contact detection to reduce jitter and accidental wall-state hits on stairs/steps.
+- Surf prototype: on non-walkable slanted surfaces within the surf normal range, holding strafe input applies plane-projected acceleration and gravity so ramps can be surfed.
 
 ## Level Layout
 The map is generated in code and includes:

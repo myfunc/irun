@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from ivan.state import IvanState, load_state, resolve_map_json, save_state
+from ivan.state import IvanState, load_state, resolve_map_json, save_state, update_state
 from ivan.paths import app_root as ivan_app_root
 
 
@@ -31,3 +31,19 @@ def test_resolve_map_json_accepts_assets_alias_if_present() -> None:
         assert p.resolve() == bounce.resolve()
     else:
         assert p is None
+
+
+def test_update_state_merges_tuning_overrides(tmp_path: Path) -> None:
+    prev = os.environ.get("IRUN_IVAN_STATE_DIR")
+    os.environ["IRUN_IVAN_STATE_DIR"] = str(tmp_path / "state")
+    try:
+        update_state(tuning_overrides={"air_counter_strafe_brake": 23.0})
+        update_state(tuning_overrides={"surf_enabled": True})
+        s = load_state()
+        assert s.tuning_overrides["air_counter_strafe_brake"] == 23.0
+        assert s.tuning_overrides["surf_enabled"] is True
+    finally:
+        if prev is None:
+            os.environ.pop("IRUN_IVAN_STATE_DIR", None)
+        else:
+            os.environ["IRUN_IVAN_STATE_DIR"] = prev
