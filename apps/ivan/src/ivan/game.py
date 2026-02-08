@@ -6,6 +6,7 @@ import sys
 import threading
 import traceback
 from pathlib import Path
+from typing import Any
 
 from direct.showbase.ShowBase import ShowBase
 from direct.task import Task
@@ -21,11 +22,14 @@ from panda3d.core import (
 
 from ivan.app_config import RunConfig
 from ivan.common.error_log import ErrorLog
+from ivan.maps.run_metadata import RunMetadata, load_run_metadata
+from ivan.modes.base import ModeContext
+from ivan.modes.loader import load_mode
 from ivan.physics.collision_world import CollisionWorld
 from ivan.physics.player_controller import PlayerController
 from ivan.physics.tuning import PhysicsTuning
 from ivan.paths import app_root as ivan_app_root
-from ivan.state import load_state, update_state
+from ivan.state import load_state, resolve_map_json, update_state
 from ivan.ui.debug_ui import DebugUI
 from ivan.ui.error_console_ui import ErrorConsoleUI
 from ivan.ui.input_debug_ui import InputDebugUI
@@ -71,6 +75,9 @@ class RunnerDemo(ShowBase):
         self.player: PlayerController | None = None
         self.player_node = self.render.attachNewNode("player-node")
         self.world_root = self.render.attachNewNode("world-root")
+        self._game_mode: Any | None = None
+        self._game_mode_ctx: ModeContext | None = None
+        self._game_mode_events: list[str] = []
 
         self._menu: MainMenuController | None = None
         self._import_thread: threading.Thread | None = None
@@ -134,7 +141,7 @@ class RunnerDemo(ShowBase):
         self.accept("`", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
         self.accept("ascii`", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
         self.accept("grave", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
-        self.accept("r", lambda: self._safe_call("input.respawn", self._respawn))
+        self.accept("r", lambda: self._safe_call("input.respawn", lambda: self._do_respawn(from_mode=False)))
         self.accept("space", lambda: self._safe_call("input.jump", self._queue_jump))
         self.accept("mouse1", lambda: self._safe_call("input.grapple", self._grapple_mock))
         self.accept("f2", self.input_debug.toggle)
@@ -318,6 +325,7 @@ class RunnerDemo(ShowBase):
             return
         if self._importing:
             return
+        self._teardown_game_mode()
 
         # Tear down active world state so returning to menu doesn't leak nodes/state.
         self.scene = None
@@ -433,6 +441,7 @@ class RunnerDemo(ShowBase):
 
     def _start_game(self, map_json: str | None) -> None:
         try:
+            self._teardown_game_mode()
             if map_json:
                 update_state(last_map_json=map_json)
 
@@ -462,9 +471,17 @@ class RunnerDemo(ShowBase):
             self.world_root.removeNode()
             self.world_root = self.render.attachNewNode("world-root")
 
-            cfg = RunConfig(smoke=self.cfg.smoke, map_json=map_json, hl_root=self.cfg.hl_root, hl_mod=self.cfg.hl_mod)
+            resolved = resolve_map_json(map_json) if map_json else None
+            bundle_root = resolved.parent if resolved is not None else None
+            run_meta: RunMetadata = load_run_metadata(bundle_root=bundle_root) if bundle_root is not None else RunMetadata()
+
+            cfg_map_json = str(resolved) if resolved is not None else map_json
+            cfg = RunConfig(smoke=self.cfg.smoke, map_json=cfg_map_json, hl_root=self.cfg.hl_root, hl_mod=self.cfg.hl_mod)
             self.scene = WorldScene()
             self.scene.build(cfg=cfg, loader=self.loader, render=self.world_root, camera=self.camera)
+
+            # Optional spawn override stored next to the map (bundle run.json).
+            self._apply_spawn_override(spawn=run_meta.spawn_override)
             self._yaw = float(self.scene.spawn_yaw)
 
             self.collision = CollisionWorld(
@@ -483,10 +500,67 @@ class RunnerDemo(ShowBase):
                 collision=self.collision,
             )
             self.player_node.setPos(self.player.pos)
+
+            # Install game mode after the world/player exist.
+            mode = load_mode(mode=run_meta.mode, config=run_meta.mode_config)
+            self._setup_game_mode(mode=mode, bundle_root=bundle_root)
         except Exception as e:
             # Avoid leaving the app in a broken half-loaded state where input feels "dead".
             self._handle_unhandled_error(context="start_game", exc=e)
             self._back_to_menu()
+
+    def _apply_spawn_override(self, *, spawn: dict | None) -> None:
+        if self.scene is None or not isinstance(spawn, dict):
+            return
+        pos = spawn.get("position")
+        yaw = spawn.get("yaw")
+        if isinstance(pos, list) and len(pos) == 3:
+            try:
+                self.scene.spawn_point = LVector3f(float(pos[0]), float(pos[1]), float(pos[2]))
+            except Exception:
+                pass
+        if isinstance(yaw, (int, float)):
+            self.scene.spawn_yaw = float(yaw)
+
+    def _setup_game_mode(self, *, mode: Any, bundle_root: Path | None) -> None:
+        if self.scene is None:
+            return
+        self._game_mode = mode
+        self._game_mode_events = []
+        self._game_mode_ctx = ModeContext(
+            map_id=str(self.scene.map_id),
+            bundle_root=str(bundle_root) if bundle_root is not None else None,
+            tuning=self.tuning,
+            ui=self.ui,
+            host=self,
+        )
+        try:
+            bindings = mode.bindings()
+            for evt, cb in getattr(bindings, "events", []) or []:
+                self.accept(evt, lambda cb=cb, e=evt: self._safe_call(f"mode.{mode.id}.{e}", cb))
+                self._game_mode_events.append(evt)
+        except Exception as e:
+            self._handle_unhandled_error(context="mode.bindings", exc=e)
+        try:
+            mode.on_enter(ctx=self._game_mode_ctx)
+        except Exception as e:
+            self._handle_unhandled_error(context="mode.on_enter", exc=e)
+
+    def _teardown_game_mode(self) -> None:
+        if self._game_mode is None:
+            return
+        for evt in self._game_mode_events:
+            try:
+                self.ignore(evt)
+            except Exception:
+                pass
+        try:
+            self._game_mode.on_exit()
+        except Exception as e:
+            self._handle_unhandled_error(context="mode.on_exit", exc=e)
+        self._game_mode = None
+        self._game_mode_ctx = None
+        self._game_mode_events = []
 
     def _clear_errors(self) -> None:
         self.error_log.clear()
@@ -603,9 +677,33 @@ class RunnerDemo(ShowBase):
         if self.player is not None and self._mode == "game" and not self._pause_menu_open and not self._debug_menu_open:
             self.player.apply_grapple_impulse(yaw_deg=self._yaw)
 
-    def _respawn(self) -> None:
+    def request_respawn(self) -> None:
+        self._do_respawn(from_mode=True)
+
+    def player_pos(self) -> LVector3f:
+        if self.player is None:
+            return LVector3f(0, 0, 0)
+        return LVector3f(self.player.pos)
+
+    def now(self) -> float:
+        return float(globalClock.getFrameTime())
+
+    def player_yaw_deg(self) -> float:
+        return float(self._yaw)
+
+    def _do_respawn(self, *, from_mode: bool) -> None:
         if self.player is None or self.scene is None:
             return
+        if not from_mode and self._game_mode is not None:
+            try:
+                handled = bool(self._game_mode.on_reset_requested())
+            except Exception as e:
+                self._handle_unhandled_error(context="mode.on_reset_requested", exc=e)
+                handled = False
+            if handled:
+                return
+        # Keep respawn synced to the current scene spawn (may be overridden by run.json).
+        self.player.spawn_point = LVector3f(self.scene.spawn_point)
         self.player.respawn()
         self._yaw = float(self.scene.spawn_yaw)
         self._pitch = 0.0
@@ -647,6 +745,10 @@ class RunnerDemo(ShowBase):
                 return Task.cont
 
             dt = min(globalClock.getDt(), 1.0 / 30.0)
+            now = float(globalClock.getFrameTime())
+
+            if self.scene is not None:
+                self.scene.tick(now=now)
 
             menu_open = self._pause_menu_open or self._debug_menu_open
 
@@ -714,6 +816,12 @@ class RunnerDemo(ShowBase):
                 f"speed: {hspeed:.2f} | z-vel: {self.player.vel.z:.2f} | grounded: {self.player.grounded} | "
                 f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()}"
             )
+
+            if self._game_mode is not None:
+                try:
+                    self._game_mode.tick(now=now, player_pos=self.player.pos)
+                except Exception as e:
+                    self._handle_unhandled_error(context="mode.tick", exc=e)
 
             return Task.cont
         except Exception as e:

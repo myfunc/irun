@@ -55,6 +55,8 @@ class DebugUI:
         ("player_radius", 0.20, 0.80),
         ("player_half_height", 0.70, 1.60),
         ("player_eye_height", 0.20, 1.30),
+        ("course_marker_half_extent_xy", 0.5, 20.0),
+        ("course_marker_half_extent_z", 0.25, 20.0),
     ]
     TOGGLE_CONTROLS: list[str] = [
         "enable_coyote",
@@ -163,6 +165,8 @@ class DebugUI:
         "player_radius": "Lower: narrower collision capsule. Higher: wider body collision.",
         "player_half_height": "Lower: shorter collision capsule. Higher: taller collision capsule.",
         "player_eye_height": "Lower: camera sits lower. Higher: camera sits higher.",
+        "course_marker_half_extent_xy": "Lower: smaller Start/Finish trigger volumes (harder to hit). Higher: larger trigger volumes (easier to hit).",
+        "course_marker_half_extent_z": "Lower: shorter Start/Finish trigger volumes (harder to hit). Higher: taller trigger volumes (easier to hit).",
         "enable_coyote": "Lower (OFF): no coyote-time forgiveness. Higher (ON): edge grace jumps allowed.",
         "enable_jump_buffer": "Lower (OFF): no jump input buffering. Higher (ON): buffered jump before landing.",
         "autojump_enabled": "Lower (OFF): jump on press only. Higher (ON): holding jump repeatedly queues jumps.",
@@ -226,6 +230,17 @@ class DebugUI:
             frameColor=(0, 0, 0, 0),
             pos=(0.0, 0, 0.93),
         )
+
+        self.time_trial_hud_label = DirectLabel(
+            parent=aspect2d,
+            text="",
+            text_scale=0.038,
+            text_align=TextNode.ARight,
+            text_fg=(0.94, 0.94, 0.94, 0.95),
+            frameColor=(0, 0, 0, 0),
+            pos=(aspect_ratio - 0.06, 0, 0.90),
+        )
+        self.time_trial_hud_label.hide()
 
         self._tooltip_label = DirectLabel(
             parent=self.debug_root,
@@ -393,6 +408,14 @@ class DebugUI:
 
     def set_speed(self, hspeed: float) -> None:
         self.speed_hud_label["text"] = f"Speed: {int(hspeed)} u/s"
+
+    def set_time_trial_hud(self, text: str | None) -> None:
+        if text is None or not str(text).strip():
+            self.time_trial_hud_label.hide()
+            self.time_trial_hud_label["text"] = ""
+            return
+        self.time_trial_hud_label["text"] = str(text)
+        self.time_trial_hud_label.show()
 
     def set_status(self, text: str) -> None:
         self.status_label["text"] = text

@@ -22,6 +22,7 @@ Game apps use **Panda3D** directly to keep iteration fast for movement-focused p
 - `apps/ivan/src/ivan/ui/error_console_ui.py`: bottom-screen error console (toggle with `F3`)
 - `apps/ivan/src/ivan/common/aabb.py`: Shared AABB type used for graybox fallback
 - `apps/ivan/tools/build_source_bsp_assets.py`: Source BSP -> IVAN map bundle (triangles + textures; VTF->PNG)
+  - Extracts per-face Source lightmaps and basic VMT metadata (e.g. `$basetexture`, translucency hints) into `map.json`.
 - `apps/ivan/tools/importers/goldsrc/import_goldsrc_bsp.py`: GoldSrc/Xash3D BSP -> IVAN map bundle (triangles + WAD textures + resource copy)
   - Notes: GoldSrc masked textures use `{` prefix; importer emits PNG alpha using palette/index rules and runtime enables binary transparency for those materials.
   - Notes: The importer extracts embedded BSP textures when present and falls back to scanning `--game-root` for `.wad` files if the BSP omits the worldspawn `wad` list.
@@ -38,6 +39,7 @@ Game apps use **Panda3D** directly to keep iteration fast for movement-focused p
 ## Rendering Notes
 - Texture sizing: IVAN disables Panda3D's default power-of-two rescaling for textures (`textures-power-2 none`).
   - Reason: imported GoldSrc maps commonly reference non-power-of-two textures; automatic rescaling breaks BSP UV mapping.
+- Imported BSP bundles render with baked lightmaps (Source/GoldSrc) and disable dynamic scene lights for map geometry.
 
 ## Dependencies
 - `panda3d`: 3D engine and window/event loop
@@ -55,6 +57,34 @@ Planned format v3 extends the current v2 triangle bundles with:
 - Optional **render hints** to support a retro look (e.g., nearest-neighbor texture filtering); renderer decides actual behavior.
 
 See: `docs/brainstorm/tech/2026-02-08_map-format-v3-entities-chunking.md`.
+
+## Game Modes (Runtime)
+Ivan supports **game modes** as small plugins that define "rules around the movement sandbox" without changing
+the core player controller or rendering loop.
+
+Mode selection is driven by optional per-bundle metadata:
+- File: `<bundle>/run.json` (sits next to `map.json`)
+- Fields:
+  - `mode`: mode id (`free_run`, `time_trial`, or `some.module:ClassName`)
+  - `config`: mode-specific configuration (JSON object)
+  - `spawn`: optional spawn override `{ "position": [x, y, z], "yaw": deg }`
+
+Built-in modes:
+- `free_run`: default "just run around"
+- `time_trial`: local time trial (Start/Finish volumes, restart, local PB + local leaderboard)
+
+## Time Trial (Local Mode)
+`time_trial` is currently **local-only**:
+- Course is defined by **Start** and **Finish** AABB volumes (provided via `run.json` `config`).
+- Runs are persisted in the user state file (`~/.irun/ivan/state.json`) keyed by `map_id`.
+- Optional dev helper: if a bundle does not provide Start/Finish yet, the player can set them locally:
+  - `F4`: restart (respawn + cancel attempt)
+  - `F5`: set Start marker at current player position
+  - `F6`: set Finish marker at current player position
+  - `F7`: clear local course markers
+  - `F8`: export Start/Finish into `<bundle>/run.json`
+  - `F9`: export spawn override into `<bundle>/run.json`
+  - Marker size is controlled by tuning fields (`course_marker_half_extent_xy`, `course_marker_half_extent_z`).
 
 ## Competitive Integrity (Planned)
 For speedrun/time-trial workflows we want runs to be comparable and verifiable across map updates.

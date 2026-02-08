@@ -15,6 +15,8 @@ class IvanState:
     last_game_root: str | None = None
     last_mod: str | None = None
     tuning_overrides: dict[str, float | bool] = field(default_factory=dict)
+    # Local-only time-trial info keyed by map_id.
+    time_trials: dict[str, dict] | None = None
 
 
 def state_dir() -> Path:
@@ -59,11 +61,13 @@ def load_state() -> IvanState:
                 continue
             if isinstance(value, (int, float)):
                 tuning_overrides[key] = float(value)
+    tt = payload.get("time_trials")
     return IvanState(
         last_map_json=str(lm) if isinstance(lm, str) and lm.strip() else None,
         last_game_root=str(gr) if isinstance(gr, str) and gr.strip() else None,
         last_mod=str(mod) if isinstance(mod, str) and mod.strip() else None,
         tuning_overrides=tuning_overrides,
+        time_trials=dict(tt) if isinstance(tt, dict) else None,
     )
 
 
@@ -80,6 +84,7 @@ def save_state(state: IvanState) -> None:
                 "last_game_root": state.last_game_root,
                 "last_mod": state.last_mod,
                 "tuning_overrides": state.tuning_overrides,
+                "time_trials": state.time_trials,
             },
             indent=2,
             sort_keys=True,
@@ -107,8 +112,130 @@ def update_state(
             last_game_root=last_game_root if last_game_root is not None else s.last_game_root,
             last_mod=last_mod if last_mod is not None else s.last_mod,
             tuning_overrides=merged_tuning,
+            time_trials=s.time_trials,
         )
     )
+
+
+def _tt_maps(state: IvanState) -> dict[str, dict]:
+    root = state.time_trials if isinstance(state.time_trials, dict) else {}
+    maps = root.get("maps")
+    if isinstance(maps, dict):
+        return maps
+    return {}
+
+
+def get_time_trial_course_override(*, map_id: str) -> dict | None:
+    s = load_state()
+    maps = _tt_maps(s)
+    entry = maps.get(map_id)
+    if not isinstance(entry, dict):
+        return None
+    course = entry.get("course")
+    return dict(course) if isinstance(course, dict) else None
+
+
+def get_time_trial_pb_seconds(*, map_id: str) -> float | None:
+    s = load_state()
+    maps = _tt_maps(s)
+    entry = maps.get(map_id)
+    if not isinstance(entry, dict):
+        return None
+    pb = entry.get("pb_seconds")
+    if isinstance(pb, (int, float)) and pb >= 0:
+        return float(pb)
+    return None
+
+
+def set_time_trial_course_override(*, map_id: str, course: dict | None) -> None:
+    s = load_state()
+    root = dict(s.time_trials) if isinstance(s.time_trials, dict) else {}
+    maps = dict(root.get("maps")) if isinstance(root.get("maps"), dict) else {}
+    entry = dict(maps.get(map_id)) if isinstance(maps.get(map_id), dict) else {}
+    if course is None:
+        entry.pop("course", None)
+    else:
+        entry["course"] = dict(course)
+    maps[map_id] = entry
+    root["maps"] = maps
+    save_state(
+        IvanState(
+            last_map_json=s.last_map_json,
+            last_game_root=s.last_game_root,
+            last_mod=s.last_mod,
+            tuning_overrides=s.tuning_overrides,
+            time_trials=root,
+        )
+    )
+
+
+def record_time_trial_run(
+    *,
+    map_id: str,
+    seconds: float,
+    finished_at: float | None = None,
+    leaderboard_size: int = 20,
+) -> tuple[float | None, float, tuple[int, int]]:
+    """
+    Record a finished run.
+
+    Returns (new_pb_or_none, last_seconds, (rank, total_entries)).
+    """
+
+    last = max(0.0, float(seconds))
+    s = load_state()
+    root = dict(s.time_trials) if isinstance(s.time_trials, dict) else {}
+    maps = dict(root.get("maps")) if isinstance(root.get("maps"), dict) else {}
+    entry = dict(maps.get(map_id)) if isinstance(maps.get(map_id), dict) else {}
+
+    pb = entry.get("pb_seconds")
+    pb_f = float(pb) if isinstance(pb, (int, float)) and pb >= 0 else None
+
+    new_pb: float | None = None
+    if pb_f is None or last < pb_f:
+        entry["pb_seconds"] = last
+        new_pb = last
+
+    entry["last_seconds"] = last
+
+    # Local leaderboard: list of best times (seconds ascending).
+    lb = entry.get("leaderboard")
+    runs: list[dict] = []
+    if isinstance(lb, list):
+        for it in lb:
+            if isinstance(it, dict) and isinstance(it.get("seconds"), (int, float)):
+                sec = float(it["seconds"])
+                if sec >= 0:
+                    runs.append({"seconds": sec, "finished_at": it.get("finished_at")})
+    runs.append({"seconds": last, "finished_at": float(finished_at) if isinstance(finished_at, (int, float)) else None})
+    runs.sort(key=lambda r: float(r.get("seconds", 1e18)))
+    if leaderboard_size > 0:
+        runs = runs[: int(leaderboard_size)]
+    entry["leaderboard"] = runs
+
+    # Rank of this run within the kept leaderboard (1-based).
+    rank = 1
+    for i, it in enumerate(runs):
+        try:
+            if float(it.get("seconds")) == last:
+                rank = i + 1
+                break
+        except Exception:
+            pass
+    rank_info = (rank, len(runs))
+
+    maps[map_id] = entry
+    root["maps"] = maps
+    save_state(
+        IvanState(
+            last_map_json=s.last_map_json,
+            last_game_root=s.last_game_root,
+            last_mod=s.last_mod,
+            tuning_overrides=s.tuning_overrides,
+            time_trials=root,
+        )
+    )
+    return (new_pb, last, rank_info)
 
 
 def resolve_map_json(map_json: str) -> Path | None:
