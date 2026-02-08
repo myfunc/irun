@@ -45,6 +45,9 @@
 - Game modes: maps can declare how they should run via bundle metadata (`run.json`)
   - `free_run`: default "just run around"
   - `time_trial`: local time trial with restart and local PB/leaderboard (per `map_id`)
+- Baker: viewer MVP (`python -m baker --map ...`) reusing Ivan scene builder for WYSIWYG preview
+  - Fly camera: WASD + mouse/trackpad look (Q/E vertical, Shift faster)
+  - Preview view transforms: `1` gamma-only, `2` Reinhard, `3` ACES approx
 
 ## Planned (High-Level)
 - Movement: walk/run, jump, coyote time, jump buffer, air control
@@ -57,6 +60,7 @@
 - Rendering: retro texture filtering options (nearest-neighbor, mipmap strategy)
 - Game loop: pause, restart, level select
 - Debug: in-game tweakables and metrics
+- UI: procedural UI kit (experimental) to standardize windows/panels/controls and theme tokens before wiring into runtime UI
 
 ## Out of Scope (For Now)
 - Multiplayer
