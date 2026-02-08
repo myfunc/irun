@@ -36,10 +36,6 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     map_json = args.map_json
-    # Default to Bounce when running normally without an explicit map or HL map picker.
-    if not args.smoke and not args.hl_root and not map_json:
-        map_json = "imported/halflife/valve/bounce"
-
     run(smoke=args.smoke, map_json=map_json, hl_root=args.hl_root, hl_mod=args.hl_mod)
 
 

@@ -4,6 +4,7 @@ import math
 import subprocess
 import sys
 import threading
+import traceback
 from pathlib import Path
 
 from direct.showbase.ShowBase import ShowBase
@@ -17,13 +18,17 @@ from panda3d.core import (
 )
 
 from ivan.app_config import RunConfig
+from ivan.common.error_log import ErrorLog
 from ivan.physics.collision_world import CollisionWorld
 from ivan.physics.player_controller import PlayerController
 from ivan.physics.tuning import PhysicsTuning
 from ivan.paths import app_root as ivan_app_root
+from ivan.state import update_state
 from ivan.ui.debug_ui import DebugUI
+from ivan.ui.error_console_ui import ErrorConsoleUI
 from ivan.ui.input_debug_ui import InputDebugUI
-from ivan.ui.map_select_ui import MapEntry, MapSelectUI
+from ivan.ui.main_menu import ImportRequest, MainMenuController
+from ivan.ui.pause_menu_ui import PauseMenuUI
 from ivan.world.scene import WorldScene
 
 
@@ -52,21 +57,34 @@ class RunnerDemo(ShowBase):
         self.player_node = self.render.attachNewNode("player-node")
         self.world_root = self.render.attachNewNode("world-root")
 
-        self._map_menu: MapSelectUI | None = None
+        self._menu: MainMenuController | None = None
         self._import_thread: threading.Thread | None = None
         self._importing: bool = False
         self._import_error: str | None = None
         self._pending_map_json: str | None = None
 
+        self.error_log = ErrorLog(max_items=30)
+
         self._setup_window()
         self.ui = DebugUI(aspect2d=self.aspect2d, tuning=self.tuning, on_tuning_change=self._on_tuning_change)
+        self.error_console = ErrorConsoleUI(aspect2d=self.aspect2d, error_log=self.error_log)
+        self.pause_ui = PauseMenuUI(
+            aspect2d=self.aspect2d,
+            on_resume=self._toggle_pointer_lock,
+            on_back_to_menu=self._back_to_menu,
+            on_quit=self.userExit,
+        )
         self.input_debug = InputDebugUI(aspect2d=self.aspect2d)
         self._setup_input()
 
-        if self.cfg.hl_root and not self.cfg.map_json and not self.cfg.smoke:
-            self._enter_map_picker()
-        else:
+        # Boot behavior:
+        # - --map: run immediately (useful for fast iteration)
+        # - smoke: keep existing fast boot path (offscreen)
+        # - otherwise: start in the main menu (can still Quick Start a bundled map)
+        if self.cfg.map_json or self.cfg.smoke:
             self._start_game(map_json=self.cfg.map_json)
+        else:
+            self._enter_main_menu()
 
         self.taskMgr.add(self._update, "runner-update")
 
@@ -90,11 +108,13 @@ class RunnerDemo(ShowBase):
             self._center_mouse()
 
     def _setup_input(self) -> None:
-        self.accept("escape", self._on_escape)
-        self.accept("r", self._respawn)
-        self.accept("space", self._queue_jump)
-        self.accept("mouse1", self._grapple_mock)
+        self.accept("escape", lambda: self._safe_call("input.escape", self._on_escape))
+        self.accept("r", lambda: self._safe_call("input.respawn", self._respawn))
+        self.accept("space", lambda: self._safe_call("input.jump", self._queue_jump))
+        self.accept("mouse1", lambda: self._safe_call("input.grapple", self._grapple_mock))
         self.accept("f2", self.input_debug.toggle)
+        self.accept("f3", self.error_console.toggle)
+        self.accept("shift-f3", lambda: self._safe_call("errors.clear", self._clear_errors))
         self.accept("arrow_up", self._menu_up)
         self.accept("arrow_down", self._menu_down)
         self.accept("enter", self._menu_select)
@@ -116,18 +136,23 @@ class RunnerDemo(ShowBase):
         if self._mode == "game":
             if self._pointer_locked:
                 self.ui.hide()
+                self.pause_ui.hide()
             else:
                 self.ui.show()
+                self.pause_ui.show()
         if self._pointer_locked:
             self._center_mouse()
 
     def _on_escape(self) -> None:
         if self._mode == "menu":
-            self.userExit()
-            return
+            if self._importing:
+                return
+            if self._menu is not None:
+                self._safe_call("menu.escape", self._menu.on_escape)
+                return
         self._toggle_pointer_lock()
 
-    def _enter_map_picker(self) -> None:
+    def _enter_main_menu(self) -> None:
         self._mode = "menu"
         self._pointer_locked = False
         self._last_mouse = None
@@ -139,54 +164,58 @@ class RunnerDemo(ShowBase):
         # Hide in-game HUD while picking.
         self.ui.speed_hud_label.hide()
         self.ui.hide()
+        self.pause_ui.hide()
 
-        entries = self._list_hl_maps()
-        title = f"Select map to import/run ({self.cfg.hl_mod})"
-        self._map_menu = MapSelectUI(aspect2d=self.aspect2d, title=title)
-        self._map_menu.set_entries(entries)
+        self._menu = MainMenuController(
+            aspect2d=self.aspect2d,
+            initial_game_root=self.cfg.hl_root,
+            initial_mod=self.cfg.hl_mod if self.cfg.hl_root else None,
+            on_start_map_json=self._start_game,
+            on_import_bsp=self._start_import_from_request,
+            on_quit=self.userExit,
+        )
 
-        if not entries:
-            self._map_menu.set_status("No .bsp maps found.")
+    def _back_to_menu(self) -> None:
+        if self._mode != "game":
+            return
+        if self._importing:
             return
 
-        # Make Crossfire easy to find.
-        for i, e in enumerate(entries):
-            if e.label.lower() == "crossfire":
-                self._map_menu.move(i)
-                break
+        # Tear down active world state so returning to menu doesn't leak nodes/state.
+        self.scene = None
+        self.collision = None
+        self.player = None
+        try:
+            self.world_root.removeNode()
+        except Exception:
+            pass
+        self.world_root = self.render.attachNewNode("world-root")
 
-    def _list_hl_maps(self) -> list[MapEntry]:
-        if not self.cfg.hl_root:
-            return []
-        maps_dir = Path(self.cfg.hl_root) / self.cfg.hl_mod / "maps"
-        if not maps_dir.exists():
-            return []
-        out: list[MapEntry] = []
-        for p in sorted(maps_dir.glob("*.bsp")):
-            out.append(MapEntry(label=p.stem, bsp_path=str(p)))
-        return out
+        self.input_debug.hide()
+        self.ui.hide()
+        self.pause_ui.hide()
+
+        self._enter_main_menu()
 
     def _menu_up(self) -> None:
-        if self._mode == "menu" and self._map_menu is not None and not self._importing:
-            self._map_menu.move(-1)
+        if self._mode == "menu" and self._menu is not None and not self._importing:
+            self._safe_call("menu.up", self._menu.on_up)
 
     def _menu_down(self) -> None:
-        if self._mode == "menu" and self._map_menu is not None and not self._importing:
-            self._map_menu.move(1)
+        if self._mode == "menu" and self._menu is not None and not self._importing:
+            self._safe_call("menu.down", self._menu.on_down)
 
     def _menu_select(self) -> None:
-        if self._mode != "menu" or self._map_menu is None or self._importing:
+        if self._mode != "menu" or self._menu is None or self._importing:
             return
-        entry = self._map_menu.selected()
-        if entry is None:
-            return
-        self._start_import_goldsrc_map(entry)
+        self._safe_call("menu.enter", self._menu.on_enter)
 
-    def _start_import_goldsrc_map(self, entry: MapEntry) -> None:
-        assert self.cfg.hl_root is not None
+    def _start_import_from_request(self, req: ImportRequest) -> None:
+        update_state(last_game_root=req.game_root, last_mod=req.mod)
+
         app_root = ivan_app_root()
-        out_dir = app_root / "assets" / "imported" / "halflife" / self.cfg.hl_mod / entry.label
-        game_root = Path(self.cfg.hl_root) / self.cfg.hl_mod
+        out_dir = app_root / "assets" / "imported" / "halflife" / req.mod / req.map_label
+        game_root = Path(req.game_root) / req.mod
 
         script = app_root / "tools" / "importers" / "goldsrc" / "import_goldsrc_bsp.py"
         venv_py = app_root / ".venv" / "bin" / "python"
@@ -195,13 +224,13 @@ class RunnerDemo(ShowBase):
             python_exe,
             str(script),
             "--bsp",
-            entry.bsp_path,
+            req.bsp_path,
             "--game-root",
             str(game_root),
             "--out",
             str(out_dir),
             "--map-id",
-            entry.label,
+            req.map_label,
             "--scale",
             "0.03",
         ]
@@ -209,7 +238,8 @@ class RunnerDemo(ShowBase):
         self._importing = True
         self._import_error = None
         self._pending_map_json = None
-        self._map_menu.set_status(f"Importing {entry.label} ...")
+        if self._menu is not None:
+            self._menu.set_loading_status(f"Importing {req.map_label}", started_at=globalClock.getFrameTime())
 
         def worker() -> None:
             try:
@@ -235,10 +265,13 @@ class RunnerDemo(ShowBase):
         self._import_thread.start()
 
     def _start_game(self, map_json: str | None) -> None:
+        if map_json:
+            update_state(last_map_json=map_json)
+
         # Tear down menu.
-        if self._map_menu is not None:
-            self._map_menu.destroy()
-            self._map_menu = None
+        if self._menu is not None:
+            self._menu.destroy()
+            self._menu = None
 
         self._mode = "game"
         self._pointer_locked = True
@@ -250,6 +283,7 @@ class RunnerDemo(ShowBase):
             self.win.requestProperties(props)
         self.ui.speed_hud_label.show()
         self.ui.hide()
+        self.pause_ui.hide()
         if not self.cfg.smoke:
             self._center_mouse()
             # Show input debug briefly after loading a map (useful when mouse/keyboard seem dead).
@@ -281,6 +315,28 @@ class RunnerDemo(ShowBase):
             collision=self.collision,
         )
         self.player_node.setPos(self.player.pos)
+
+    def _clear_errors(self) -> None:
+        self.error_log.clear()
+        self.error_console.refresh(auto_reveal=False)
+
+    def _safe_call(self, context: str, fn) -> None:
+        try:
+            fn()
+        except Exception as e:
+            self._handle_unhandled_error(context=context, exc=e)
+
+    def _handle_unhandled_error(self, *, context: str, exc: BaseException) -> None:
+        # Avoid ever crashing because of a UI/update exception.
+        try:
+            self.error_log.log_exception(context=context, exc=exc)
+            self.error_console.refresh(auto_reveal=True)
+        except Exception:
+            # Last-ditch: never let the logger crash the app.
+            try:
+                print(f"[FATAL] error logger failed: {traceback.format_exc()}", file=sys.stderr)
+            except Exception:
+                pass
 
     def _center_mouse(self) -> None:
         if self.cfg.smoke:
@@ -381,73 +437,82 @@ class RunnerDemo(ShowBase):
         self.player_node.setPos(self.player.pos)
 
     def _update(self, task: Task) -> int:
-        if self._mode == "menu":
-            if self._import_error and self._map_menu is not None:
-                self._map_menu.set_status(f"Import failed: {self._import_error}")
-                self._import_error = None
-            if self._pending_map_json:
-                self._start_game(map_json=self._pending_map_json)
-                self._pending_map_json = None
-            return Task.cont
-        if self._mode != "game" or self.player is None:
-            return Task.cont
+        try:
+            if self._mode == "menu":
+                if self._menu is not None:
+                    self._menu.tick(globalClock.getFrameTime())
+                if self._import_error and self._menu is not None:
+                    # Importer failures are not unhandled exceptions, but are still useful in the error feed.
+                    self.error_log.log_message(context="import", message=self._import_error)
+                    self.error_console.refresh(auto_reveal=True)
+                    self._menu.set_status(f"Import failed: {self._import_error}")
+                    self._import_error = None
+                if self._pending_map_json:
+                    self._start_game(map_json=self._pending_map_json)
+                    self._pending_map_json = None
+                return Task.cont
+            if self._mode != "game" or self.player is None:
+                return Task.cont
 
-        dt = min(globalClock.getDt(), 1.0 / 30.0)
+            dt = min(globalClock.getDt(), 1.0 / 30.0)
 
-        # Precompute wish so debug overlay can show it even if movement seems dead.
-        wish = self._wish_direction()
+            # Precompute wish so debug overlay can show it even if movement seems dead.
+            wish = self._wish_direction()
 
-        if self.mouseWatcherNode is not None:
-            has_mouse = self.mouseWatcherNode.hasMouse()
-            mx = float(self.mouseWatcherNode.getMouseX()) if has_mouse else 0.0
-            my = float(self.mouseWatcherNode.getMouseY()) if has_mouse else 0.0
-            raw_w = self.mouseWatcherNode.isButtonDown(ButtonHandle("raw-w"))
-            raw_a = self.mouseWatcherNode.isButtonDown(ButtonHandle("raw-a"))
-            raw_s = self.mouseWatcherNode.isButtonDown(ButtonHandle("raw-s"))
-            raw_d = self.mouseWatcherNode.isButtonDown(ButtonHandle("raw-d"))
-            asc_w = self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key("w"))
-            asc_a = self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key("a"))
-            asc_s = self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key("s"))
-            asc_d = self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key("d"))
-            pos = self.player.pos if self.player is not None else LVector3f(0, 0, 0)
-            vel = self.player.vel if self.player is not None else LVector3f(0, 0, 0)
-            grounded = bool(self.player.grounded) if self.player is not None else False
-            self.input_debug.set_text(
-                "input debug (F2)\n"
-                f"mode={self._mode} lock={self._pointer_locked} dt={dt:.3f} hasMouse={has_mouse} mouse=({mx:+.2f},{my:+.2f})\n"
-                f"raw WASD={int(raw_w)}{int(raw_a)}{int(raw_s)}{int(raw_d)} ascii WASD={int(asc_w)}{int(asc_a)}{int(asc_s)}{int(asc_d)}\n"
-                f"wish=({wish.x:+.2f},{wish.y:+.2f}) pos=({pos.x:+.2f},{pos.y:+.2f},{pos.z:+.2f}) vel=({vel.x:+.2f},{vel.y:+.2f},{vel.z:+.2f}) grounded={int(grounded)}"
+            if self.mouseWatcherNode is not None:
+                has_mouse = self.mouseWatcherNode.hasMouse()
+                mx = float(self.mouseWatcherNode.getMouseX()) if has_mouse else 0.0
+                my = float(self.mouseWatcherNode.getMouseY()) if has_mouse else 0.0
+                raw_w = self.mouseWatcherNode.isButtonDown(ButtonHandle("raw-w"))
+                raw_a = self.mouseWatcherNode.isButtonDown(ButtonHandle("raw-a"))
+                raw_s = self.mouseWatcherNode.isButtonDown(ButtonHandle("raw-s"))
+                raw_d = self.mouseWatcherNode.isButtonDown(ButtonHandle("raw-d"))
+                asc_w = self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key("w"))
+                asc_a = self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key("a"))
+                asc_s = self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key("s"))
+                asc_d = self.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key("d"))
+                pos = self.player.pos if self.player is not None else LVector3f(0, 0, 0)
+                vel = self.player.vel if self.player is not None else LVector3f(0, 0, 0)
+                grounded = bool(self.player.grounded) if self.player is not None else False
+                self.input_debug.set_text(
+                    "input debug (F2)\n"
+                    f"mode={self._mode} lock={self._pointer_locked} dt={dt:.3f} hasMouse={has_mouse} mouse=({mx:+.2f},{my:+.2f})\n"
+                    f"raw WASD={int(raw_w)}{int(raw_a)}{int(raw_s)}{int(raw_d)} ascii WASD={int(asc_w)}{int(asc_a)}{int(asc_s)}{int(asc_d)}\n"
+                    f"wish=({wish.x:+.2f},{wish.y:+.2f}) pos=({pos.x:+.2f},{pos.y:+.2f},{pos.z:+.2f}) vel=({vel.x:+.2f},{vel.y:+.2f},{vel.z:+.2f}) grounded={int(grounded)}"
+                )
+            if self._input_debug_until and globalClock.getFrameTime() >= self._input_debug_until:
+                self._input_debug_until = 0.0
+                self.input_debug.hide()
+
+            self._update_look()
+
+            self.player.step(dt=dt, wish_dir=wish, yaw_deg=self._yaw, crouching=self._is_crouching())
+
+            if self.scene is not None and self.player.pos.z < float(self.scene.kill_z):
+                self._respawn()
+
+            self.player_node.setPos(self.player.pos)
+            eye_height = float(self.tuning.player_eye_height)
+            if self.player.crouched and bool(self.tuning.crouch_enabled):
+                eye_height = min(eye_height, float(self.tuning.crouch_eye_height))
+            self.camera.setPos(
+                self.player.pos.x,
+                self.player.pos.y,
+                self.player.pos.z + eye_height,
             )
-        if self._input_debug_until and globalClock.getFrameTime() >= self._input_debug_until:
-            self._input_debug_until = 0.0
-            self.input_debug.hide()
+            self.camera.setHpr(self._yaw, self._pitch, 0)
 
-        self._update_look()
+            hspeed = math.sqrt(self.player.vel.x * self.player.vel.x + self.player.vel.y * self.player.vel.y)
+            self.ui.set_speed(hspeed)
+            self.ui.set_status(
+                f"speed: {hspeed:.2f} | z-vel: {self.player.vel.z:.2f} | grounded: {self.player.grounded} | "
+                f"wall: {self.player.has_wall_for_jump()}"
+            )
 
-        self.player.step(dt=dt, wish_dir=wish, yaw_deg=self._yaw, crouching=self._is_crouching())
-
-        if self.scene is not None and self.player.pos.z < float(self.scene.kill_z):
-            self._respawn()
-
-        self.player_node.setPos(self.player.pos)
-        eye_height = float(self.tuning.player_eye_height)
-        if self.player.crouched and bool(self.tuning.crouch_enabled):
-            eye_height = min(eye_height, float(self.tuning.crouch_eye_height))
-        self.camera.setPos(
-            self.player.pos.x,
-            self.player.pos.y,
-            self.player.pos.z + eye_height,
-        )
-        self.camera.setHpr(self._yaw, self._pitch, 0)
-
-        hspeed = math.sqrt(self.player.vel.x * self.player.vel.x + self.player.vel.y * self.player.vel.y)
-        self.ui.set_speed(hspeed)
-        self.ui.set_status(
-            f"speed: {hspeed:.2f} | z-vel: {self.player.vel.z:.2f} | grounded: {self.player.grounded} | "
-            f"wall: {self.player.has_wall_for_jump()}"
-        )
-
-        return Task.cont
+            return Task.cont
+        except Exception as e:
+            self._handle_unhandled_error(context="update.loop", exc=e)
+            return Task.cont
 
     def _is_crouching(self) -> bool:
         if self.mouseWatcherNode is None:

@@ -17,6 +17,7 @@ from panda3d.core import (
     LVector4f,
     PNMImage,
     Texture,
+    TransparencyAttrib,
 )
 
 from ivan.common.aabb import AABB
@@ -339,6 +340,11 @@ class WorldScene:
             geom_node.addGeom(geom)
             np = render.attachNewNode(geom_node)
             np.setTwoSided(False)
+
+            # GoldSrc/Xash3D masked textures use "{" prefix (colorkeyed/1-bit transparency).
+            # Enable binary transparency so the alpha channel from imported PNGs is respected.
+            if mat_name.startswith("{"):
+                np.setTransparency(TransparencyAttrib.M_binary)
 
             tex_path = self._resolve_material_texture_path(material_name=mat_name)
             if tex_path and tex_path.exists():

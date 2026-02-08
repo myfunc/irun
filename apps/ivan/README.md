@@ -30,16 +30,17 @@ python -m pip install -e ".[dev]"
 python -m ivan
 ```
 
-Default map:
-- If `assets/imported/halflife/valve/bounce/map.json` exists, `python -m ivan` loads Bounce by default.
-- Override with `--map` or use the HL map picker with `--hl-root`.
+Default boot:
+- `python -m ivan` now boots into the **main menu**.
+- The menu includes `Quick Start: Bounce` if `assets/imported/halflife/valve/bounce/map.json` exists.
+- You can still run a bundle directly via `--map`.
 
 Smoke run:
 ```bash
 python -m ivan --smoke
 ```
 
-Half-Life map picker (imports GoldSrc maps on demand):
+Prefill the menu with a Half-Life install (imports GoldSrc/Xash3D maps on demand):
 ```bash
 python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steamapps/common/Half-Life" --hl-mod valve
 ```
@@ -56,9 +57,19 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 - `C` (hold): crouch
 - `Space`: jump
 - `R`: reset to spawn
-- `Esc`: toggle pointer lock and debug/admin menu
+- `Esc`: in-game toggles pointer lock and opens the debug/admin menu plus a right-side system panel (Resume / Back to Menu / Quit); in the main menu it acts as back/quit
 - `F2`: toggle input debug overlay (useful when keyboard/mouse don't seem to register)
 - `LMB`: mock grapple impulse (only if grapple toggle enabled)
+
+## Main Menu
+Booting without `--map` starts in the main menu:
+- Run an existing bundle shipped under `apps/ivan/assets/` (imported/generated/hand-authored).
+- Pick a GoldSrc/Xash3D game directory, select a mod, then select a `.bsp` to import and run.
+- `Continue` runs the last launched map (persisted in a small local state file).
+
+Notes:
+- Directory picking uses a native dialog via `tkinter` (stdlib). If Tk is unavailable, the menu will show an error.
+- State file location defaults to `~/.irun/ivan/state.json` (override via `IRUN_IVAN_STATE_DIR`).
 
 ## HUD
 - A top-center speed readout is always visible (`Speed: <int> u/s`).
