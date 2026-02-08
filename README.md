@@ -26,6 +26,7 @@ If you prefer running apps from the repo root (and passing through args), use:
 Advanced:
 ```bash
 ./runner list
+./runner ivan --map imported/halflife/valve/bounce
 ./runner runapp ivan --map imported/halflife/valve/bounce
 ```
 

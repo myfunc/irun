@@ -90,12 +90,37 @@ def cmd_runapp(args: argparse.Namespace) -> int:
         print(f"Unknown app: {app} (expected folder: {app_dir})", file=sys.stderr)
         return 2
 
-    module = str(args.module or _default_module_for_app(app))
+    # Also accept runner flags even if user placed them after <app>.
+    # This enables `./runner ivan --print-cmd --map ...` and `./runner runapp ivan --print-cmd ...`.
+    app_args = list(args.app_args or [])
+    print_cmd = bool(args.print_cmd)
+    module_override = args.module
+    i = 0
+    while i < len(app_args):
+        tok = str(app_args[i])
+        if tok == "--print-cmd":
+            print_cmd = True
+            app_args.pop(i)
+            continue
+        if tok.startswith("--module="):
+            module_override = tok.split("=", 1)[1]
+            app_args.pop(i)
+            continue
+        if tok == "--module":
+            if i + 1 >= len(app_args):
+                print("runner: --module requires a value", file=sys.stderr)
+                return 2
+            module_override = str(app_args[i + 1])
+            del app_args[i : i + 2]
+            continue
+        i += 1
+
+    module = str(module_override or _default_module_for_app(app))
     py = _python_for(app_dir)
 
-    cmd = [py, "-m", module, *args.app_args]
+    cmd = [py, "-m", module, *app_args]
 
-    if args.print_cmd:
+    if print_cmd:
         print("+", " ".join(shlex.quote(x) for x in cmd))
         return 0
 
@@ -129,10 +154,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Iterable[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    raw = list(argv) if argv is not None else sys.argv[1:]
+    # UX sugar: allow `./runner ivan --map ...` as shorthand for `./runner runapp ivan --map ...`.
+    if raw and not raw[0].startswith("-") and raw[0] not in {"list", "runapp"}:
+        raw = ["runapp", *raw]
+    args = parser.parse_args(raw)
     return int(args.fn(args))
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
