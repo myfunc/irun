@@ -16,6 +16,7 @@ class RunMetadata:
     mode: str = "free_run"
     mode_config: dict | None = None
     spawn_override: dict | None = None  # {"position":[x,y,z], "yaw":deg}
+    lighting: dict | None = None  # {"preset": str, "overrides": {style(str): pattern(str)}}
 
 
 def load_run_metadata(*, bundle_root: Path) -> RunMetadata:
@@ -42,5 +43,33 @@ def load_run_metadata(*, bundle_root: Path) -> RunMetadata:
     if not isinstance(spawn, dict):
         spawn = None
 
-    return RunMetadata(mode=mode, mode_config=mode_config, spawn_override=spawn)
+    lighting = payload.get("lighting")
+    if not isinstance(lighting, dict):
+        lighting = None
 
+    return RunMetadata(mode=mode, mode_config=mode_config, spawn_override=spawn, lighting=lighting)
+
+
+def set_run_metadata_lighting(*, bundle_root: Path, lighting: dict | None) -> None:
+    """
+    Persist a lighting preset for this bundle in <bundle>/run.json.
+
+    This is intended to be set from the main menu after the user tries a preset.
+    """
+
+    p = bundle_root / "run.json"
+    payload: dict = {}
+    if p.exists():
+        try:
+            old = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(old, dict):
+                payload = dict(old)
+        except Exception:
+            payload = {}
+
+    if lighting is None:
+        payload.pop("lighting", None)
+    else:
+        payload["lighting"] = dict(lighting)
+
+    p.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

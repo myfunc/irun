@@ -166,6 +166,8 @@ class RunnerDemo(ShowBase):
         self.accept("arrow_left", lambda: self._menu_page(-1))
         self.accept("arrow_right", lambda: self._menu_page(1))
         self.accept("enter", self._menu_select)
+        self.accept("delete", self._menu_delete)
+        self.accept("backspace", self._menu_delete)
         self.accept("w", lambda: self._menu_nav_press(-1))
         self.accept("s", lambda: self._menu_nav_press(1))
         self.accept("w-up", lambda: self._menu_nav_release(-1))
@@ -554,6 +556,11 @@ class RunnerDemo(ShowBase):
             return
         self._safe_call("menu.enter", self._menu.on_enter)
 
+    def _menu_delete(self) -> None:
+        if self._mode != "menu" or self._menu is None or self._importing:
+            return
+        self._safe_call("menu.delete", self._menu.on_delete)
+
     def _start_import_from_request(self, req: ImportRequest) -> None:
         update_state(last_game_root=req.game_root, last_mod=req.mod)
 
@@ -608,7 +615,7 @@ class RunnerDemo(ShowBase):
         self._import_thread = threading.Thread(target=worker, daemon=True)
         self._import_thread.start()
 
-    def _start_game(self, map_json: str | None) -> None:
+    def _start_game(self, map_json: str | None, lighting: dict | None = None) -> None:
         try:
             self._teardown_game_mode()
             if map_json:
@@ -645,7 +652,14 @@ class RunnerDemo(ShowBase):
             run_meta: RunMetadata = load_run_metadata(bundle_root=bundle_root) if bundle_root is not None else RunMetadata()
 
             cfg_map_json = str(resolved) if resolved is not None else map_json
-            cfg = RunConfig(smoke=self.cfg.smoke, map_json=cfg_map_json, hl_root=self.cfg.hl_root, hl_mod=self.cfg.hl_mod)
+            lighting_cfg = lighting if isinstance(lighting, dict) else run_meta.lighting
+            cfg = RunConfig(
+                smoke=self.cfg.smoke,
+                map_json=cfg_map_json,
+                hl_root=self.cfg.hl_root,
+                hl_mod=self.cfg.hl_mod,
+                lighting=lighting_cfg if isinstance(lighting_cfg, dict) else None,
+            )
             self.scene = WorldScene()
             self.scene.build(cfg=cfg, loader=self.loader, render=self.world_root, camera=self.camera)
 

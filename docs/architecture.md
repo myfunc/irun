@@ -40,6 +40,7 @@ Game apps use **Panda3D** directly to keep iteration fast for movement-focused p
 - Texture sizing: IVAN disables Panda3D's default power-of-two rescaling for textures (`textures-power-2 none`).
   - Reason: imported GoldSrc maps commonly reference non-power-of-two textures; automatic rescaling breaks BSP UV mapping.
 - Imported BSP bundles render with baked lightmaps (Source/GoldSrc) and disable dynamic scene lights for map geometry.
+- Per-map run options can be stored in `<bundle>/run.json` (mode/spawn/lighting presets).
 
 ## Dependencies
 - `panda3d`: 3D engine and window/event loop
