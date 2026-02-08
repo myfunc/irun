@@ -140,6 +140,10 @@ Movement notes:
 - Counter-strafe braking in air decelerates horizontal speed based on `air_counter_strafe_brake` without hidden hardcoded bonus deceleration.
 - Default `air_counter_strafe_brake` is `23.0`.
 - Repeated wall-jumps are controlled by `wall_jump_cooldown` (default: `1.0s`).
+- Wall-jump is airborne-only: it cannot trigger while grounded, even if the player is touching a wall.
+- Wall-jump is also blocked during coyote-time frames where ground jump is still valid; a single jump press in a corner resolves to ground/coyote jump only.
+- Coyote-time is not re-used after a successful ground jump, preventing autojump from re-triggering jump in immediate airborne corner frames.
+- Autojump only queues while ground/coyote jump is available; holding jump in fully airborne states will not trigger wall-jump retries.
 - Wallrun is lateral; vertical climb gain is capped.
 - `vault_enabled` is OFF by default. If enabled, pressing jump again near a ledge can trigger a vault: feet must be below ledge top, vault jump is higher than normal, and a small forward speed boost is applied.
 - Step risers are filtered out for wall-contact detection to reduce jitter and accidental wall-state hits on stairs/steps.
