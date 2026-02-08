@@ -5,11 +5,13 @@ import json
 import math
 import re
 import shutil
+import tempfile
 from pathlib import Path
 
 import bsp_tool
 from PIL import Image
 
+from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, pack_bundle_dir_to_irunmap
 from goldsrc_wad import Wad3
 from goldsrc_wad import WadError, decode_wad3_miptex
 
@@ -291,7 +293,25 @@ def _face_style_bytes(face) -> list[int]:
             out.extend([255, 255])
     except Exception:
         out.extend([255, 255])
-    return out[:4]
+
+    return _normalize_goldsrc_face_styles(out[:4])
+
+
+def _normalize_goldsrc_face_styles(styles: list[int]) -> list[int]:
+    """
+    Normalize a GoldSrc `styles[4]` array.
+
+    GoldSrc expects unused style slots to be 255. Some maps/tools may emit duplicates instead.
+    Treat later duplicates as unused to avoid reading extra style blocks from LIGHTING.
+    """
+
+    s = [(int(x) & 0xFF) for x in (styles[:4] + [255, 255, 255, 255])[:4]]
+    first = int(s[0])
+    if first != 255:
+        for i in range(1, 4):
+            if int(s[i]) == first:
+                s[i] = 255
+    return s
 
 
 def _tex_s_t(*, texinfo, pos) -> tuple[float, float]:
@@ -607,7 +627,19 @@ def main() -> None:
         "--out",
         required=False,
         default=None,
-        help="Output directory for the imported map bundle (will write map.json + materials/ + resources/). Not required with --analyze.",
+        help=(
+            "Output for the imported map bundle.\n"
+            "- If --out-format=dir: directory (writes map.json + materials/ + lightmaps/ + resources/)\n"
+            "- If --out-format=irunmap: output .irunmap file\n"
+            "- If --out-format=auto (default): infer from --out extension (.irunmap => packed; otherwise directory)\n"
+            "Not required with --analyze."
+        ),
+    )
+    parser.add_argument(
+        "--out-format",
+        choices=("auto", "dir", "irunmap"),
+        default="auto",
+        help="Output format (default: auto).",
     )
     parser.add_argument("--map-id", default=None, help="Optional map id for debugging/node naming.")
     parser.add_argument("--scale", type=float, default=0.03, help="GoldSrc-to-game unit scale.")
@@ -633,411 +665,447 @@ def main() -> None:
 
     bsp_path = Path(args.bsp)
     game_root = Path(args.game_root)
-    out_dir = Path(args.out or ".")
-    if not args.analyze:
-        out_dir.mkdir(parents=True, exist_ok=True)
+    out_ref = Path(args.out or ".")
 
-    map_name = bsp_path.stem
-    map_id = args.map_id or map_name
-    map_json = out_dir / "map.json"
+    out_format = str(args.out_format or "auto").strip().lower()
+    if out_format == "auto":
+        out_format = "irunmap" if out_ref.suffix.lower() == PACKED_BUNDLE_EXT else "dir"
+    if out_format not in ("dir", "irunmap"):
+        parser.error("--out-format must be one of: auto, dir, irunmap")
 
-    bsp = bsp_tool.load_bsp(str(bsp_path))
+    tmp_dir: tempfile.TemporaryDirectory[str] | None = None
+    out_dir = out_ref
+    packed_out: Path | None = None
 
-    entities = getattr(bsp, "ENTITIES", [])
-    spawn_pos, spawn_yaw = _pick_spawn(entities, args.scale)
-    skyname = _skyname_from_entities(entities)
-    lightmap_scale = _parse_lightmap_scale(entities)
-    lightstyles: dict[str, str] = {"0": "m"}
-    for ent in entities:
-        if not isinstance(ent, dict):
-            continue
-        style_raw = ent.get("style")
-        pat = ent.get("pattern")
-        if not isinstance(style_raw, str) or not isinstance(pat, str):
-            continue
-        try:
-            style = int(style_raw.strip())
-        except Exception:
-            continue
-        pat = pat.strip()
-        if not pat:
-            continue
-        # Store as string keys for JSON stability.
-        lightstyles[str(style)] = pat
+    try:
+        if not args.analyze:
+            if out_format == "dir":
+                out_dir = out_ref
+                out_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                packed_out = out_ref
+                packed_out.parent.mkdir(parents=True, exist_ok=True)
+                tmp_dir = tempfile.TemporaryDirectory(
+                    prefix=f"irun-import-{bsp_path.stem}-",
+                    dir=str(packed_out.parent),
+                )
+                out_dir = Path(tmp_dir.name)
 
-    model_entities: dict[int, dict] = {}
-    for ent in entities:
-        if not isinstance(ent, dict):
-            continue
-        idx = _model_index_from_entity(ent)
-        if idx is None:
-            continue
-        model_entities.setdefault(idx, ent)
+        map_name = bsp_path.stem
+        map_id = args.map_id or map_name
+        map_json = out_dir / "map.json"
 
-    # Precompute per-face lightmap metadata (used for extraction and UV mapping).
-    face_lm_meta: dict[int, dict] = {}
-    face_lm_bundle: dict[str, dict] = {}
-    lighting = getattr(bsp, "LIGHTING", None)
-    if lighting is not None:
-        for face_idx in range(len(getattr(bsp, "FACES", []))):
-            meta = _face_lightmap_meta(bsp=bsp, face_idx=int(face_idx), lightmap_scale=lightmap_scale)
-            if meta is not None:
-                face_lm_meta[int(face_idx)] = meta
+        bsp = bsp_tool.load_bsp(str(bsp_path))
 
-    # Build triangles (best-effort; depends on bsp_tool support for the given BSP branch).
-    render_triangles: list[dict] = []
-    collision_triangles: list[list[float]] = []
-    min_v = [float("inf"), float("inf"), float("inf")]
-    max_v = [float("-inf"), float("-inf"), float("-inf")]
+        entities = getattr(bsp, "ENTITIES", [])
+        spawn_pos, spawn_yaw = _pick_spawn(entities, args.scale)
+        skyname = _skyname_from_entities(entities)
+        lightmap_scale = _parse_lightmap_scale(entities)
+        lightstyles: dict[str, str] = {"0": "m"}
+        for ent in entities:
+            if not isinstance(ent, dict):
+                continue
+            style_raw = ent.get("style")
+            pat = ent.get("pattern")
+            if not isinstance(style_raw, str) or not isinstance(pat, str):
+                continue
+            try:
+                style = int(style_raw.strip())
+            except Exception:
+                continue
+            pat = pat.strip()
+            if not pat:
+                continue
+            # Store as string keys for JSON stability.
+            lightstyles[str(style)] = pat
 
-    brush_model_report: list[dict] = []
-    models = getattr(bsp, "MODELS", [])
-    for model_idx, model in enumerate(models):
-        ent = model_entities.get(model_idx)
-        classname = ent.get("classname") if isinstance(ent, dict) else None
-        classname = classname if isinstance(classname, str) else ""
-        cname = classname.strip().lower()
+        model_entities: dict[int, dict] = {}
+        for ent in entities:
+            if not isinstance(ent, dict):
+                continue
+            idx = _model_index_from_entity(ent)
+            if idx is None:
+                continue
+            model_entities.setdefault(idx, ent)
 
-        if model_idx == 0:
-            render_model = True
-            collide_model = True
-        elif cname.startswith("trigger_"):
-            render_model = False
-            collide_model = False
-        elif cname in RENDER_NO_COLLIDE_CLASSNAMES:
-            render_model = True
-            collide_model = False
-        elif cname in COLLIDE_BRUSH_CLASSNAMES:
-            render_model = True
-            collide_model = True
-        else:
-            # Conservative default: avoid importing invisible blockers.
-            render_model = True
-            collide_model = False
+        # Precompute per-face lightmap metadata (used for extraction and UV mapping).
+        face_lm_meta: dict[int, dict] = {}
+        face_lm_bundle: dict[str, dict] = {}
+        lighting = getattr(bsp, "LIGHTING", None)
+        if lighting is not None:
+            for face_idx in range(len(getattr(bsp, "FACES", []))):
+                meta = _face_lightmap_meta(bsp=bsp, face_idx=int(face_idx), lightmap_scale=lightmap_scale)
+                if meta is not None:
+                    face_lm_meta[int(face_idx)] = meta
 
-        first_face = getattr(model, "first_face", None)
-        num_faces = getattr(model, "num_faces", None)
-        if not isinstance(first_face, int) or not isinstance(num_faces, int) or num_faces <= 0:
-            continue
+        # Build triangles (best-effort; depends on bsp_tool support for the given BSP branch).
+        render_triangles: list[dict] = []
+        collision_triangles: list[list[float]] = []
+        min_v = [float("inf"), float("inf"), float("inf")]
+        max_v = [float("-inf"), float("-inf"), float("-inf")]
 
-        brush_model_report.append(
-            {
-                "model": int(model_idx),
-                "classname": cname,
-                "faces": [int(first_face), int(first_face + num_faces)],
-                "render": bool(render_model),
-                "collide": bool(collide_model),
+        brush_model_report: list[dict] = []
+        models = getattr(bsp, "MODELS", [])
+        for model_idx, model in enumerate(models):
+            ent = model_entities.get(model_idx)
+            classname = ent.get("classname") if isinstance(ent, dict) else None
+            classname = classname if isinstance(classname, str) else ""
+            cname = classname.strip().lower()
+
+            if model_idx == 0:
+                render_model = True
+                collide_model = True
+            elif cname.startswith("trigger_"):
+                render_model = False
+                collide_model = False
+            elif cname in RENDER_NO_COLLIDE_CLASSNAMES:
+                render_model = True
+                collide_model = False
+            elif cname in COLLIDE_BRUSH_CLASSNAMES:
+                render_model = True
+                collide_model = True
+            else:
+                # Conservative default: avoid importing invisible blockers.
+                render_model = True
+                collide_model = False
+
+            first_face = getattr(model, "first_face", None)
+            num_faces = getattr(model, "num_faces", None)
+            if not isinstance(first_face, int) or not isinstance(num_faces, int) or num_faces <= 0:
+                continue
+
+            brush_model_report.append(
+                {
+                    "model": int(model_idx),
+                    "classname": cname,
+                    "faces": [int(first_face), int(first_face + num_faces)],
+                    "render": bool(render_model),
+                    "collide": bool(collide_model),
+                }
+            )
+
+            if not (render_model or collide_model):
+                continue
+
+            for face_idx in range(int(first_face), int(first_face + num_faces)):
+                try:
+                    mesh = bsp.face_mesh(face_idx)
+                except Exception:
+                    continue
+
+                mat_name = mesh.material.name if getattr(mesh, "material", None) is not None else "unknown"
+                mat_name = str(mat_name).strip()
+                tri_renders = render_model and _should_render_texture(mat_name)
+
+                lm_meta = face_lm_meta.get(int(face_idx))
+                texinfo = None
+                if lm_meta is not None:
+                    try:
+                        texinfo = bsp.TEXTURE_INFO[bsp.FACES[int(face_idx)].texture_info]
+                    except Exception:
+                        texinfo = None
+
+                for poly in mesh.polygons:
+                    if len(poly.vertices) < 3:
+                        continue
+                    verts = poly.vertices
+                    for i in range(1, len(verts) - 1):
+                        v0 = verts[0]
+                        v1 = verts[i]
+                        v2 = verts[i + 1]
+
+                        # Same coordinate convention as Source conversion: flip Y.
+                        p0 = [
+                            float(v0.position.x) * args.scale,
+                            -float(v0.position.y) * args.scale,
+                            float(v0.position.z) * args.scale,
+                        ]
+                        p1 = [
+                            float(v1.position.x) * args.scale,
+                            -float(v1.position.y) * args.scale,
+                            float(v1.position.z) * args.scale,
+                        ]
+                        p2 = [
+                            float(v2.position.x) * args.scale,
+                            -float(v2.position.y) * args.scale,
+                            float(v2.position.z) * args.scale,
+                        ]
+                        pos9 = [*p0, *p1, *p2]
+
+                        if collide_model:
+                            collision_triangles.append(pos9)
+
+                        if tri_renders:
+                            n0 = [float(v0.normal.x), -float(v0.normal.y), float(v0.normal.z)]
+                            n1 = [float(v1.normal.x), -float(v1.normal.y), float(v1.normal.z)]
+                            n2 = [float(v2.normal.x), -float(v2.normal.y), float(v2.normal.z)]
+
+                            # Some GoldSrc branches may not provide UV pairs; treat as best-effort.
+                            try:
+                                # BSP UV convention is effectively upside-down compared to how Panda3D
+                                # samples images loaded from PNG. Flip V to match expected in-game orientation.
+                                uv0 = [float(v0.uv[0].x), -float(v0.uv[0].y)]
+                                uv1 = [float(v1.uv[0].x), -float(v1.uv[0].y)]
+                                uv2 = [float(v2.uv[0].x), -float(v2.uv[0].y)]
+                            except Exception:
+                                uv0 = [0.0, 0.0]
+                                uv1 = [0.0, 0.0]
+                                uv2 = [0.0, 0.0]
+
+                            # No baked vertex lighting for GoldSrc in this importer yet; keep white.
+                            c0 = [1.0, 1.0, 1.0, 1.0]
+                            c1 = [1.0, 1.0, 1.0, 1.0]
+                            c2 = [1.0, 1.0, 1.0, 1.0]
+
+                            # GoldSrc baked lighting lives in LIGHTING lump (RGB) and is mapped via texture vectors.
+                            if lm_meta is not None and texinfo is not None:
+                                w = float(lm_meta["w"])
+                                h = float(lm_meta["h"])
+                                mins_s = float(lm_meta["mins_s"])
+                                mins_t = float(lm_meta["mins_t"])
+                                scale = float(lm_meta["scale"])
+
+                                def lm_uv(pos) -> list[float]:
+                                    s, t = _tex_s_t(texinfo=texinfo, pos=pos)
+                                    u = (s / scale - mins_s + 0.5) / w
+                                    v = (t / scale - mins_t + 0.5) / h
+                                    # Panda's texture V origin differs from GoldSrc lightmap row order; flip V.
+                                    return [float(u), float(1.0 - v)]
+
+                                lm0 = lm_uv(v0.position)
+                                lm1 = lm_uv(v1.position)
+                                lm2 = lm_uv(v2.position)
+                                lmi = int(face_idx)
+                            else:
+                                lm0 = [0.0, 0.0]
+                                lm1 = [0.0, 0.0]
+                                lm2 = [0.0, 0.0]
+                                lmi = None
+
+                            tri = {
+                                "m": mat_name,
+                                "lmi": lmi,
+                                "p": pos9,
+                                "n": [
+                                    *n0,
+                                    *n1,
+                                    *n2,
+                                ],
+                                "uv": [*uv0, *uv1, *uv2],
+                                "lm": [*lm0, *lm1, *lm2],
+                                "c": [*c0, *c1, *c2],
+                            }
+                            render_triangles.append(tri)
+
+                        for j in range(0, 9, 3):
+                            px, py, pz = pos9[j], pos9[j + 1], pos9[j + 2]
+                            min_v[0] = min(min_v[0], px)
+                            min_v[1] = min(min_v[1], py)
+                            min_v[2] = min(min_v[2], pz)
+                            max_v[0] = max(max_v[0], px)
+                            max_v[1] = max(max_v[1], py)
+                            max_v[2] = max(max_v[2], pz)
+
+        # Resources: .res file + entity scan.
+        res_path = bsp_path.with_suffix(".res")
+        resources: set[str] = set()
+        if res_path.exists():
+            resources.update(parse_res_file(res_path))
+        resources.update(_scan_entities_for_resources(entities))
+
+        wad_names = _parse_wad_list(entities)
+        # Some maps omit the editor WAD list; fall back to scanning common WAD locations.
+        if not wad_names:
+            wad_names = [p.name for p in _discover_wad_files(game_root)]
+        for w in wad_names:
+            resources.add(_norm_rel(w))
+
+        # Used by the default texture extraction mode and useful for analysis output.
+        used_textures = _expand_animated_textures(_collect_used_texture_names(bsp))
+
+        if args.analyze:
+            report = {
+                "bsp": str(bsp_path),
+                "game_root": str(game_root),
+                "map_id": map_id,
+                "scale": float(args.scale),
+                "wad_names": wad_names,
+                "used_textures": sorted(used_textures),
+                "lightstyles": lightstyles,
+                "resources_detected": sorted(resources),
+                "copy_policy": {
+                    "skip_dirs": sorted(SKIP_RESOURCE_DIRS),
+                    "skip_exts": sorted(SKIP_RESOURCE_EXTS),
+                },
             }
+            print(json.dumps(report, indent=2, sort_keys=True))
+            return
+
+        # Copy resources into bundle under resources/<path>.
+        copied: list[str] = []
+        missing: list[str] = []
+        skipped: list[str] = []
+        if args.copy_resources:
+            for rel in sorted(resources):
+                if not should_copy_resource(rel):
+                    skipped.append(_norm_rel(rel))
+                    continue
+                # Normalize common roots; allow both "sound/..." etc and bare wad names.
+                src = find_case_insensitive(game_root, rel)
+                if src is None:
+                    # If this is a bare WAD name, try common subdirs.
+                    if rel.lower().endswith(".wad"):
+                        for sub in ("", "maps", "wads", "WAD", "gfx", "cstrike", "valve"):
+                            cand = find_case_insensitive(game_root / sub, rel)
+                            if cand is not None:
+                                src = cand
+                                break
+                if src is None or not src.exists():
+                    missing.append(rel)
+                    continue
+                dst = out_dir / "resources" / _norm_rel(rel)
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                copied.append(_norm_rel(rel))
+
+        # Extract textures embedded in the BSP and/or from referenced WADs into bundle materials/.
+        materials_dir = out_dir / "materials"
+        extracted_textures: int = 0
+        used_cf = {u.casefold() for u in used_textures}
+
+        # Skybox textures live outside WADs (gfx/env), so pull them explicitly.
+        extracted_textures += _try_extract_skybox_textures(
+            game_root=game_root,
+            materials_dir=materials_dir,
+            skyname=skyname,
         )
 
-        if not (render_model or collide_model):
-            continue
-
-        for face_idx in range(int(first_face), int(first_face + num_faces)):
-            try:
-                mesh = bsp.face_mesh(face_idx)
-            except Exception:
+        extracted_textures += _extract_embedded_textures(
+            bsp=bsp,
+            materials_dir=materials_dir,
+            used_textures_cf=used_cf,
+            extract_all=bool(args.extract_all_wad_textures),
+        )
+        for wad_name in wad_names:
+            wad_src = None
+            # WAD paths in worldspawn are often absolute; treat as filename.
+            wad_file = Path(wad_name).name
+            for sub in ("", "wads", "WAD", "maps"):
+                cand = find_case_insensitive(game_root / sub, wad_file)
+                if cand and cand.exists():
+                    wad_src = cand
+                    break
+            if wad_src is None:
                 continue
 
-            mat_name = mesh.material.name if getattr(mesh, "material", None) is not None else "unknown"
-            mat_name = str(mat_name).strip()
-            tri_renders = render_model and _should_render_texture(mat_name)
-
-            lm_meta = face_lm_meta.get(int(face_idx))
-            texinfo = None
-            if lm_meta is not None:
-                try:
-                    texinfo = bsp.TEXTURE_INFO[bsp.FACES[int(face_idx)].texture_info]
-                except Exception:
-                    texinfo = None
-
-            for poly in mesh.polygons:
-                if len(poly.vertices) < 3:
+            try:
+                wad = Wad3.load(wad_src)
+            except Exception:
+                continue
+            for tex in wad.iter_textures():
+                if not args.extract_all_wad_textures:
+                    # Only extract textures used by this BSP (keeps import fast and bundle small).
+                    if tex.name.casefold() not in used_cf:
+                        continue
+                    if not _should_render_texture(tex.name):
+                        continue
+                dst = materials_dir / f"{tex.name}.png"
+                if dst.exists():
                     continue
-                verts = poly.vertices
-                for i in range(1, len(verts) - 1):
-                    v0 = verts[0]
-                    v1 = verts[i]
-                    v2 = verts[i + 1]
+                try:
+                    _save_png(dst, width=tex.width, height=tex.height, rgba=tex.rgba)
+                    extracted_textures += 1
+                except Exception:
+                    continue
 
-                    # Same coordinate convention as Source conversion: flip Y.
-                    p0 = [
-                        float(v0.position.x) * args.scale,
-                        -float(v0.position.y) * args.scale,
-                        float(v0.position.z) * args.scale,
-                    ]
-                    p1 = [
-                        float(v1.position.x) * args.scale,
-                        -float(v1.position.y) * args.scale,
-                        float(v1.position.z) * args.scale,
-                    ]
-                    p2 = [
-                        float(v2.position.x) * args.scale,
-                        -float(v2.position.y) * args.scale,
-                        float(v2.position.z) * args.scale,
-                    ]
-                    pos9 = [*p0, *p1, *p2]
+        # Extract baked GoldSrc lightmaps (RGB) into bundle lightmaps/ and reference them from map.json.
+        if lighting is not None and face_lm_meta:
+            lightmaps_dir = out_dir / "lightmaps"
+            lightmaps_dir.mkdir(parents=True, exist_ok=True)
 
-                    if collide_model:
-                        collision_triangles.append(pos9)
+            for face_idx, meta in sorted(face_lm_meta.items(), key=lambda it: int(it[0])):
+                off = int(meta["offset"])
+                w = int(meta["w"])
+                h = int(meta["h"])
+                styles = [int(x) for x in meta["styles"]]
+                block_bytes = w * h * 3
 
-                    if tri_renders:
-                        n0 = [float(v0.normal.x), -float(v0.normal.y), float(v0.normal.z)]
-                        n1 = [float(v1.normal.x), -float(v1.normal.y), float(v1.normal.z)]
-                        n2 = [float(v2.normal.x), -float(v2.normal.y), float(v2.normal.z)]
+                # GoldSrc stores one block per non-255 style, in slot order.
+                paths: list[str | None] = [None, None, None, None]
+                style_slots: list[int | None] = [None, None, None, None]
+                block_idx = 0
+                for slot in range(4):
+                    style = int(styles[slot]) if slot < len(styles) else 255
+                    if style == 255:
+                        continue
+                    start = off + block_idx * block_bytes
+                    end = start + block_bytes
+                    raw = bytes(lighting[start:end])
+                    if len(raw) != block_bytes:
+                        break
+                    rgba = _decode_goldsrc_lightmap_rgb_to_rgba(raw)
+                    img = Image.frombytes("RGBA", (w, h), rgba)
+                    dst = lightmaps_dir / f"f{face_idx}_lm{slot}.png"
+                    try:
+                        img.save(dst)
+                    except Exception:
+                        break
+                    paths[slot] = str(Path("lightmaps") / dst.name).replace("\\", "/")
+                    style_slots[slot] = style
+                    block_idx += 1
 
-                        # Some GoldSrc branches may not provide UV pairs; treat as best-effort.
-                        try:
-                            # BSP UV convention is effectively upside-down compared to how Panda3D
-                            # samples images loaded from PNG. Flip V to match expected in-game orientation.
-                            uv0 = [float(v0.uv[0].x), -float(v0.uv[0].y)]
-                            uv1 = [float(v1.uv[0].x), -float(v1.uv[0].y)]
-                            uv2 = [float(v2.uv[0].x), -float(v2.uv[0].y)]
-                        except Exception:
-                            uv0 = [0.0, 0.0]
-                            uv1 = [0.0, 0.0]
-                            uv2 = [0.0, 0.0]
+                if any(p is not None for p in paths):
+                    face_lm_bundle[str(int(face_idx))] = {
+                        "styles": style_slots,
+                        "paths": paths,
+                        "w": int(w),
+                        "h": int(h),
+                    }
 
-                        # No baked vertex lighting for GoldSrc in this importer yet; keep white.
-                        c0 = [1.0, 1.0, 1.0, 1.0]
-                        c1 = [1.0, 1.0, 1.0, 1.0]
-                        c2 = [1.0, 1.0, 1.0, 1.0]
-
-                        # GoldSrc baked lighting lives in LIGHTING lump (RGB) and is mapped via texture vectors.
-                        if lm_meta is not None and texinfo is not None:
-                            w = float(lm_meta["w"])
-                            h = float(lm_meta["h"])
-                            mins_s = float(lm_meta["mins_s"])
-                            mins_t = float(lm_meta["mins_t"])
-                            scale = float(lm_meta["scale"])
-
-                            def lm_uv(pos) -> list[float]:
-                                s, t = _tex_s_t(texinfo=texinfo, pos=pos)
-                                u = (s / scale - mins_s + 0.5) / w
-                                v = (t / scale - mins_t + 0.5) / h
-                                # Panda's texture V origin differs from GoldSrc lightmap row order; flip V.
-                                return [float(u), float(1.0 - v)]
-
-                            lm0 = lm_uv(v0.position)
-                            lm1 = lm_uv(v1.position)
-                            lm2 = lm_uv(v2.position)
-                            lmi = int(face_idx)
-                        else:
-                            lm0 = [0.0, 0.0]
-                            lm1 = [0.0, 0.0]
-                            lm2 = [0.0, 0.0]
-                            lmi = None
-
-                        tri = {
-                            "m": mat_name,
-                            "lmi": lmi,
-                            "p": pos9,
-                            "n": [
-                                *n0,
-                                *n1,
-                                *n2,
-                            ],
-                            "uv": [*uv0, *uv1, *uv2],
-                            "lm": [*lm0, *lm1, *lm2],
-                            "c": [*c0, *c1, *c2],
-                        }
-                        render_triangles.append(tri)
-
-                    for j in range(0, 9, 3):
-                        px, py, pz = pos9[j], pos9[j + 1], pos9[j + 2]
-                        min_v[0] = min(min_v[0], px)
-                        min_v[1] = min(min_v[1], py)
-                        min_v[2] = min(min_v[2], pz)
-                        max_v[0] = max(max_v[0], px)
-                        max_v[1] = max(max_v[1], py)
-                        max_v[2] = max(max_v[2], pz)
-
-    # Resources: .res file + entity scan.
-    res_path = bsp_path.with_suffix(".res")
-    resources: set[str] = set()
-    if res_path.exists():
-        resources.update(parse_res_file(res_path))
-    resources.update(_scan_entities_for_resources(entities))
-
-    wad_names = _parse_wad_list(entities)
-    # Some maps omit the editor WAD list; fall back to scanning common WAD locations.
-    if not wad_names:
-        wad_names = [p.name for p in _discover_wad_files(game_root)]
-    for w in wad_names:
-        resources.add(_norm_rel(w))
-
-    # Used by the default texture extraction mode and useful for analysis output.
-    used_textures = _expand_animated_textures(_collect_used_texture_names(bsp))
-
-    if args.analyze:
-        report = {
-            "bsp": str(bsp_path),
-            "game_root": str(game_root),
+        payload = {
+            "format_version": 2,
             "map_id": map_id,
+            "source_bsp": str(bsp_path),
             "scale": float(args.scale),
-            "wad_names": wad_names,
-            "used_textures": sorted(used_textures),
-            "lightstyles": lightstyles,
-            "resources_detected": sorted(resources),
-            "copy_policy": {
-                "skip_dirs": sorted(SKIP_RESOURCE_DIRS),
-                "skip_exts": sorted(SKIP_RESOURCE_EXTS),
+            "triangle_count": len(render_triangles),
+            "collision_triangle_count": len(collision_triangles),
+            "bounds": {"min": min_v, "max": max_v},
+            "spawn": {"position": spawn_pos, "yaw": spawn_yaw},
+            "skyname": skyname,
+            "materials": {"root": None, "converted_root": "materials", "converted": extracted_textures},
+            "lightmaps": {
+                "scale": float(lightmap_scale),
+                "encoding": "goldsrc_rgb",
+                "faces": face_lm_bundle,
             },
+            "lightstyles": lightstyles,
+            "resources": {
+                "root": "resources",
+                "copied": copied,
+                "missing": missing,
+                "skipped": skipped,
+                "copied_enabled": bool(args.copy_resources),
+                "skip_policy": {"dirs": sorted(SKIP_RESOURCE_DIRS), "exts": sorted(SKIP_RESOURCE_EXTS)},
+            },
+            "collision_triangles": collision_triangles,
+            "triangles": render_triangles,
+            "brush_models": brush_model_report,
         }
-        print(json.dumps(report, indent=2, sort_keys=True))
-        return
-
-    # Copy resources into bundle under resources/<path>.
-    copied: list[str] = []
-    missing: list[str] = []
-    skipped: list[str] = []
-    if args.copy_resources:
-        for rel in sorted(resources):
-            if not should_copy_resource(rel):
-                skipped.append(_norm_rel(rel))
-                continue
-            # Normalize common roots; allow both "sound/..." etc and bare wad names.
-            src = find_case_insensitive(game_root, rel)
-            if src is None:
-                # If this is a bare WAD name, try common subdirs.
-                if rel.lower().endswith(".wad"):
-                    for sub in ("", "maps", "wads", "WAD", "gfx", "cstrike", "valve"):
-                        cand = find_case_insensitive(game_root / sub, rel)
-                        if cand is not None:
-                            src = cand
-                            break
-            if src is None or not src.exists():
-                missing.append(rel)
-                continue
-            dst = out_dir / "resources" / _norm_rel(rel)
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-            copied.append(_norm_rel(rel))
-
-    # Extract textures embedded in the BSP and/or from referenced WADs into bundle materials/.
-    materials_dir = out_dir / "materials"
-    extracted_textures: int = 0
-    used_cf = {u.casefold() for u in used_textures}
-
-    # Skybox textures live outside WADs (gfx/env), so pull them explicitly.
-    extracted_textures += _try_extract_skybox_textures(game_root=game_root, materials_dir=materials_dir, skyname=skyname)
-
-    extracted_textures += _extract_embedded_textures(
-        bsp=bsp,
-        materials_dir=materials_dir,
-        used_textures_cf=used_cf,
-        extract_all=bool(args.extract_all_wad_textures),
-    )
-    for wad_name in wad_names:
-        wad_src = None
-        # WAD paths in worldspawn are often absolute; treat as filename.
-        wad_file = Path(wad_name).name
-        for sub in ("", "wads", "WAD", "maps"):
-            cand = find_case_insensitive(game_root / sub, wad_file)
-            if cand and cand.exists():
-                wad_src = cand
-                break
-        if wad_src is None:
-            continue
-
-        try:
-            wad = Wad3.load(wad_src)
-        except Exception:
-            continue
-        for tex in wad.iter_textures():
-            if not args.extract_all_wad_textures:
-                # Only extract textures used by this BSP (keeps import fast and bundle small).
-                if tex.name.casefold() not in used_cf:
-                    continue
-                if not _should_render_texture(tex.name):
-                    continue
-            dst = materials_dir / f"{tex.name}.png"
-            if dst.exists():
-                continue
-            try:
-                _save_png(dst, width=tex.width, height=tex.height, rgba=tex.rgba)
-                extracted_textures += 1
-            except Exception:
-                continue
-
-    # Extract baked GoldSrc lightmaps (RGB) into bundle lightmaps/ and reference them from map.json.
-    if lighting is not None and face_lm_meta:
-        lightmaps_dir = out_dir / "lightmaps"
-        lightmaps_dir.mkdir(parents=True, exist_ok=True)
-
-        for face_idx, meta in sorted(face_lm_meta.items(), key=lambda it: int(it[0])):
-            off = int(meta["offset"])
-            w = int(meta["w"])
-            h = int(meta["h"])
-            styles = [int(x) for x in meta["styles"]]
-            block_bytes = w * h * 3
-
-            # GoldSrc stores one block per non-255 style, in slot order.
-            paths: list[str | None] = [None, None, None, None]
-            style_slots: list[int | None] = [None, None, None, None]
-            block_idx = 0
-            for slot in range(4):
-                style = int(styles[slot]) if slot < len(styles) else 255
-                if style == 255:
-                    continue
-                start = off + block_idx * block_bytes
-                end = start + block_bytes
-                raw = bytes(lighting[start:end])
-                if len(raw) != block_bytes:
-                    break
-                rgba = _decode_goldsrc_lightmap_rgb_to_rgba(raw)
-                img = Image.frombytes("RGBA", (w, h), rgba)
-                dst = lightmaps_dir / f"f{face_idx}_lm{slot}.png"
-                try:
-                    img.save(dst)
-                except Exception:
-                    break
-                paths[slot] = str(Path("lightmaps") / dst.name).replace("\\", "/")
-                style_slots[slot] = style
-                block_idx += 1
-
-            if any(p is not None for p in paths):
-                face_lm_bundle[str(int(face_idx))] = {
-                    "styles": style_slots,
-                    "paths": paths,
-                    "w": int(w),
-                    "h": int(h),
-                }
-
-    payload = {
-        "format_version": 2,
-        "map_id": map_id,
-        "source_bsp": str(bsp_path),
-        "scale": float(args.scale),
-        "triangle_count": len(render_triangles),
-        "collision_triangle_count": len(collision_triangles),
-        "bounds": {"min": min_v, "max": max_v},
-        "spawn": {"position": spawn_pos, "yaw": spawn_yaw},
-        "skyname": skyname,
-        "materials": {"root": None, "converted_root": "materials", "converted": extracted_textures},
-        "lightmaps": {
-            "scale": float(lightmap_scale),
-            "encoding": "goldsrc_rgb",
-            "faces": face_lm_bundle,
-        },
-        "lightstyles": lightstyles,
-        "resources": {
-            "root": "resources",
-            "copied": copied,
-            "missing": missing,
-            "skipped": skipped,
-            "copied_enabled": bool(args.copy_resources),
-            "skip_policy": {"dirs": sorted(SKIP_RESOURCE_DIRS), "exts": sorted(SKIP_RESOURCE_EXTS)},
-        },
-        "collision_triangles": collision_triangles,
-        "triangles": render_triangles,
-        "brush_models": brush_model_report,
-    }
-    map_json.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-    print(
-        f"Wrote {map_json} (render_tris={len(render_triangles)}, collision_tris={len(collision_triangles)}, "
-        f"textures={extracted_textures}, copied={len(copied)}, missing={len(missing)})"
-    )
+        map_json.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+        if packed_out is not None:
+            pack_bundle_dir_to_irunmap(bundle_dir=out_dir, out_path=packed_out, compresslevel=1)
+            print(
+                f"Wrote {packed_out} (render_tris={len(render_triangles)}, collision_tris={len(collision_triangles)}, "
+                f"textures={extracted_textures}, copied={len(copied)}, missing={len(missing)})"
+            )
+        else:
+            print(
+                f"Wrote {map_json} (render_tris={len(render_triangles)}, collision_tris={len(collision_triangles)}, "
+                f"textures={extracted_textures}, copied={len(copied)}, missing={len(missing)})"
+            )
+    finally:
+        if tmp_dir is not None:
+            tmp_dir.cleanup()
 
 
 if __name__ == "__main__":

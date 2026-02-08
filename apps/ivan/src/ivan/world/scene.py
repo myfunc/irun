@@ -27,6 +27,7 @@ from panda3d.core import (
 )
 
 from ivan.common.aabb import AABB
+from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, resolve_bundle_handle_path
 from ivan.paths import app_root as ivan_app_root
 
 
@@ -359,6 +360,7 @@ class WorldScene:
 
         Supported inputs:
         - absolute path to map.json
+        - absolute path to a packed bundle (.irunmap) containing map.json at the archive root
         - relative path to map.json (resolved from cwd, then from apps/ivan/assets/)
         - alias directory under apps/ivan/assets/, e.g. imported/halflife/valve/bounce (implies <alias>/map.json)
         """
@@ -377,12 +379,28 @@ class WorldScene:
         for c in candidates:
             expanded.append(c)
             # Allow passing a directory alias.
-            if c.suffix.lower() != ".json":
+            suf = c.suffix.lower()
+            if suf not in (".json", PACKED_BUNDLE_EXT):
                 expanded.append(c / "map.json")
+                # Allow suffix-less packed bundle refs, e.g. imported/.../bounce -> bounce.irunmap
+                try:
+                    expanded.append(c.with_suffix(PACKED_BUNDLE_EXT))
+                except Exception:
+                    pass
 
         for c in expanded:
-            if c.exists() and c.is_file():
-                return c
+            if not c.exists():
+                continue
+            # Directory bundle.
+            if c.is_dir():
+                h = resolve_bundle_handle_path(c)
+                if h is not None:
+                    return h.map_json
+                continue
+            if c.is_file():
+                h = resolve_bundle_handle_path(c)
+                if h is not None:
+                    return h.map_json
         return None
 
     def _attach_triangle_map_geometry(self, *, render, triangles: list[list[float]]) -> None:
