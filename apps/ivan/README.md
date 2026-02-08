@@ -198,6 +198,10 @@ Movement notes:
 - Step risers are filtered out for wall-contact detection to reduce jitter and accidental wall-state hits on stairs/steps.
 - Surf prototype uses GoldSrc-like air movement on steep ramps: wish direction is projected to ramp plane, then normal air acceleration + collision clipping drive surf movement.
 - On surf ramps, acceleration follows the ramp-plane wish direction (not world-up injection), allowing controlled horizontal-to-vertical momentum transfer.
+
+Lighting notes:
+- GoldSrc/Quake-style animated lightstyles are applied at `~10Hz` (server-like), not every render frame.
+- For performance on large maps, only surfaces that reference an actually-animated style pattern participate in lightstyle updates.
 - While surfing, horizontal momentum is redirected toward the ramp tangent each frame, enabling natural horizontal<->vertical speed exchange (inertia transfer) on slopes.
 - Surf steering against current momentum preserves carry: it redirects momentum along the ramp and limits per-tick scrub so speed is not hard-stopped.
 - Surf input acceleration contributes vertical velocity only for uphill redirection; downhill acceleration uses normal gravity.
