@@ -15,6 +15,7 @@
 - Checkpoints + respawn
 - Hazards + collectibles
 - Simple UI (timer/collect count)
+- UI kit: standardize procedural windows/panels/controls and theme tokens before wiring into runtime UI
 - Handcrafted, player-generated map workflow and validation tools
 - Packed map bundles for distribution and git-friendly imports (`.irunmap`)
 - Baker app: map viewer + import manager + lighting bake tool (presets, light rig overrides, WYSIWYG preview)

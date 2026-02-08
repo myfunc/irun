@@ -3,8 +3,20 @@
 ## Overview
 Game apps use **Panda3D** directly to keep iteration fast for movement-focused prototypes.
 
+## UI Kit (Experimental)
+We maintain an **experimental procedural UI kit** under `apps/ui_kit/` to standardize:
+- layout constants (padding/margins/gaps)
+- theme tokens (palette + typography)
+- reusable primitives (windows/panels/buttons/text inputs)
+
+The UI kit is designed to be iterated on outside the main runtime UI, then wired into Ivan once stable.
+
 ## Code Layout
 - Monorepo: apps are under `apps/`
+- `apps/baker/src/baker/__main__.py`: Baker entrypoint (`python -m baker`)
+- `apps/baker/src/baker/app.py`: Viewer wiring (Panda3D ShowBase), fly camera, tonemap hotkeys
+- `apps/baker/src/baker/render/tonemapping.py`: GLSL 120 post-process view transform (gamma-only/Reinhard/ACES approx)
+- `apps/ui_kit/src/irun_ui_kit/`: Experimental procedural UI kit (Panda3D DirectGUI), used for iterating on reusable windows/panels/controls and theme tokens outside the main runtime UI
 - `apps/ivan/src/ivan/__main__.py`: Ivan entrypoint (`python -m ivan`)
 - `apps/ivan/src/ivan/game.py`: App wiring (Panda3D ShowBase), input, camera, and frame update loop
 - `apps/ivan/src/ivan/maps/catalog.py`: runtime catalog helpers for shipped bundles and GoldSrc-like map discovery
@@ -37,6 +49,8 @@ Game apps use **Panda3D** directly to keep iteration fast for movement-focused p
   - Gameplay movement step supports optional noclip mode, optional autojump queueing, and surf behavior on configured slanted surfaces.
 
 ## Rendering Notes
+- Baker shares Ivan's scene builder (`ivan.world.scene.WorldScene`) to keep map preview WYSIWYG.
+- Baker adds a viewer-only post-process view transform (tonemap + gamma) toggled via `1`/`2`/`3`.
 - Texture sizing: IVAN disables Panda3D's default power-of-two rescaling for textures (`textures-power-2 none`).
   - Reason: imported GoldSrc maps commonly reference non-power-of-two textures; automatic rescaling breaks BSP UV mapping.
 - Imported BSP bundles render with baked lightmaps (Source/GoldSrc) and disable dynamic scene lights for map geometry.
