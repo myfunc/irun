@@ -38,10 +38,16 @@ def _app_dir(app: str) -> Path:
     return (APPS_DIR / app).resolve()
 
 
-def _python_for(app_dir: Path) -> str:
+def _python_for(app: str, app_dir: Path) -> str:
     venv_py = app_dir / ".venv" / "bin" / "python"
     if venv_py.exists() and os.access(venv_py, os.X_OK):
         return str(venv_py)
+    # Monorepo convenience: UI kit is a library and typically reuses Ivan's venv.
+    if app == "ui_kit":
+        # Do NOT resolve symlinks here: running the resolved interpreter path bypasses venv site-packages.
+        ivan_py = APPS_DIR / "ivan" / ".venv" / "bin" / "python"
+        if ivan_py.exists() and os.access(ivan_py, os.X_OK):
+            return str(ivan_py)
     return "python3"
 
 
@@ -169,7 +175,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         return 2
 
     module = module_override or _default_module_for_app(app)
-    py = _python_for(app_dir)
+    py = _python_for(app, app_dir)
     cmd = [py, "-m", module, *app_args]
 
     if print_cmd:
@@ -182,4 +188,3 @@ def main(argv: Iterable[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
