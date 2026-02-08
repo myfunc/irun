@@ -27,3 +27,6 @@ coverage.xml
 
 # Repo scratch
 .tmp/
+
+# Imported assets (kept locally to avoid bloating git history)
+apps/ivan/assets/imported/halflife/valve/pool_party/

@@ -16,3 +16,6 @@ class RunConfig:
     hl_root: str | None = None
     # Mod folder under hl_root to browse for maps (e.g. "valve", "cstrike").
     hl_mod: str = "valve"
+    # Optional lighting override for this run (e.g. picked from the main menu).
+    # If None, the map falls back to bundle run.json "lighting" (if present), then map.json defaults.
+    lighting: dict | None = None

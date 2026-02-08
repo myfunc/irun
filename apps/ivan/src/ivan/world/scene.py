@@ -49,6 +49,7 @@ class WorldScene:
         self._lightmap_faces: dict[int, dict] | None = None
         self._lightstyles: dict[int, str] = {}
         self._lightmap_nodes: list[tuple[object, list[int | None]]] = []
+        self._lightstyle_mode: str = "animate"  # animate | static
         self._map_id: str = "scene"
         self._course: dict | None = None
         self._skybox_np = None
@@ -67,6 +68,7 @@ class WorldScene:
         # 1) Explicit map (CLI/config)
         if getattr(cfg, "map_json", None):
             self.external_map_loaded = self._try_load_external_map(
+                cfg=cfg,
                 map_json=Path(str(cfg.map_json)),
                 loader=loader,
                 render=render,
@@ -90,6 +92,8 @@ class WorldScene:
         """
 
         if not self._lightmap_nodes:
+            return
+        if self._lightstyle_mode != "animate":
             return
         # Update at 10Hz like Quake/GoldSrc lightstyles.
         frame = int(float(now) * 10.0)
@@ -139,6 +143,73 @@ class WorldScene:
                 continue
             out[int(idx)] = v.strip()
         return out
+
+    @staticmethod
+    def _default_goldsrc_lightstyles() -> dict[int, str]:
+        # Common Quake/GoldSrc defaults used by many engines/servers.
+        # If the server doesn't send any patterns, style 0 still behaves as constant 1.0 ("m").
+        return {
+            0: "m",
+            1: "mmnmmommommnonmmonqnmmo",
+            2: "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba",
+            3: "mmmmmaaaaammmmmaaaaaabcdefgabcdefg",
+            4: "mamamamamama",
+            5: "jklmnopqrstuvwxyzyxwvutsrqponmlkjlk",
+            6: "nmonqnmomnmomomno",
+            7: "mmmaaaabcdefgmmmmaaaammmaamm",
+            8: "mmmaaammmaaammmabcdefaaaammmmabcdefmmmaaaa",
+            9: "aaaaaaaazzzzzzzz",
+            10: "mmamammmmammamamaaamammma",
+            11: "abcdefghijklmnopqrrqponmlkjihgfedcba",
+        }
+
+    @classmethod
+    def _resolve_lightstyles(cls, *, payload: dict, cfg: dict | None) -> tuple[dict[int, str], str]:
+        """
+        Decide which lightstyle patterns to use for this run.
+
+        Precedence:
+        - cfg.preset (picked from the menu or run.json):
+          - original: use map.json lightstyles (if any), fallback to defaults
+          - server_defaults: use engine/server defaults
+          - static: no animation (all active styles treated as 1.0)
+        - cfg.overrides: explicit style->pattern overrides
+        """
+
+        preset = "original"
+        overrides: dict[int, str] = {}
+        if isinstance(cfg, dict):
+            p = cfg.get("preset")
+            if isinstance(p, str) and p.strip():
+                preset = p.strip()
+            ov = cfg.get("overrides")
+            if isinstance(ov, dict):
+                for k, v in ov.items():
+                    try:
+                        si = int(k)
+                    except Exception:
+                        continue
+                    if isinstance(v, str) and v.strip():
+                        overrides[int(si)] = v.strip()
+
+        mode = "animate"
+        if preset == "static":
+            mode = "static"
+
+        defaults = cls._default_goldsrc_lightstyles()
+        from_map = cls._parse_lightstyles(payload=payload)
+
+        if preset == "server_defaults":
+            out = dict(defaults)
+        else:
+            # "original" (and unknown presets): trust map.json patterns if present.
+            out = dict(defaults)
+            out.update(from_map)
+
+        out.update(overrides)
+        if 0 not in out:
+            out[0] = "m"
+        return (out, mode)
 
     def _lightstyle_scale(self, *, style: int, frame: int) -> float:
         # GoldSrc/Quake convention:
@@ -196,7 +267,7 @@ class WorldScene:
         h = LVector3f(*half)
         self.aabbs.append(AABB(minimum=p - h, maximum=p + h))
 
-    def _try_load_external_map(self, *, map_json: Path, loader, render, camera) -> bool:
+    def _try_load_external_map(self, *, cfg, map_json: Path, loader, render, camera) -> bool:
         map_json = self._resolve_map_bundle_path(map_json)
         if not map_json:
             return False
@@ -244,7 +315,9 @@ class WorldScene:
         mm = payload.get("materials_meta")
         self._materials_meta = mm if isinstance(mm, dict) else None
         self._lightmap_faces = self._resolve_lightmaps(map_json=map_json, payload=payload)
-        self._lightstyles = self._parse_lightstyles(payload=payload)
+        self._lightstyles, self._lightstyle_mode = self._resolve_lightstyles(
+            payload=payload, cfg=getattr(cfg, "lighting", None)
+        )
         self._lightmap_nodes = []
 
         collision_override = payload.get("collision_triangles")
