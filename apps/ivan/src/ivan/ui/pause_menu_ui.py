@@ -23,6 +23,7 @@ class PauseMenuUI:
         on_map_selector,
         on_back_to_menu,
         on_quit,
+        on_open_replays,
         on_open_keybindings,
         on_rebind_noclip,
     ) -> None:
@@ -155,11 +156,21 @@ class PauseMenuUI:
             label="Key Bindings",
             on_click=_open_keys,
         )
-        self._btn_back_to_menu = Button.build(
+        self._btn_replays = Button.build(
             parent=self._tabs.page(0),
             theme=theme,
             x=btn_w / 2.0,
             y=y0 - (gap + btn_h) * 3,
+            w=btn_w,
+            h=btn_h,
+            label="Replays",
+            on_click=on_open_replays,
+        )
+        self._btn_back_to_menu = Button.build(
+            parent=self._tabs.page(0),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=y0 - (gap + btn_h) * 4,
             w=btn_w,
             h=btn_h,
             label="Back to Main Menu",
@@ -169,7 +180,7 @@ class PauseMenuUI:
             parent=self._tabs.page(0),
             theme=theme,
             x=btn_w / 2.0,
-            y=y0 - (gap + btn_h) * 4,
+            y=y0 - (gap + btn_h) * 5,
             w=btn_w,
             h=btn_h,
             label="Quit",

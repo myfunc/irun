@@ -37,15 +37,80 @@ from ivan.physics.collision_world import CollisionWorld
 from ivan.physics.player_controller import PlayerController
 from ivan.physics.tuning import PhysicsTuning
 from ivan.paths import app_root as ivan_app_root
+from ivan.replays import (
+    DemoFrame,
+    DemoRecording,
+    append_frame,
+    list_replays,
+    load_replay,
+    new_recording,
+    save_recording,
+)
 from ivan.state import IvanState, load_state, update_state
 from ivan.ui.debug_ui import DebugUI
 from ivan.ui.error_console_ui import ErrorConsoleUI
 from ivan.ui.input_debug_ui import InputDebugUI
 from ivan.ui.main_menu import ImportRequest, MainMenuController
 from ivan.ui.pause_menu_ui import PauseMenuUI
+from ivan.ui.replay_browser_ui import ReplayBrowserUI, ReplayListItem
 from ivan.world.scene import WorldScene
 from irun_ui_kit.renderer import UIRenderer
 from irun_ui_kit.theme import Theme
+
+
+class _InputCommand:
+    def __init__(
+        self,
+        *,
+        look_dx: int = 0,
+        look_dy: int = 0,
+        look_scale: int = 1,
+        move_forward: int = 0,
+        move_right: int = 0,
+        jump_pressed: bool = False,
+        jump_held: bool = False,
+        crouch_held: bool = False,
+        grapple_pressed: bool = False,
+        noclip_toggle_pressed: bool = False,
+    ) -> None:
+        self.look_dx = int(look_dx)
+        self.look_dy = int(look_dy)
+        self.look_scale = max(1, int(look_scale))
+        self.move_forward = int(move_forward)
+        self.move_right = int(move_right)
+        self.jump_pressed = bool(jump_pressed)
+        self.jump_held = bool(jump_held)
+        self.crouch_held = bool(crouch_held)
+        self.grapple_pressed = bool(grapple_pressed)
+        self.noclip_toggle_pressed = bool(noclip_toggle_pressed)
+
+    def to_demo_frame(self) -> DemoFrame:
+        return DemoFrame(
+            look_dx=self.look_dx,
+            look_dy=self.look_dy,
+            move_forward=self.move_forward,
+            move_right=self.move_right,
+            jump_pressed=self.jump_pressed,
+            jump_held=self.jump_held,
+            crouch_held=self.crouch_held,
+            grapple_pressed=self.grapple_pressed,
+            noclip_toggle_pressed=self.noclip_toggle_pressed,
+        )
+
+    @classmethod
+    def from_demo_frame(cls, frame: DemoFrame, *, look_scale: int) -> "_InputCommand":
+        return cls(
+            look_dx=frame.look_dx,
+            look_dy=frame.look_dy,
+            look_scale=look_scale,
+            move_forward=frame.move_forward,
+            move_right=frame.move_right,
+            jump_pressed=frame.jump_pressed,
+            jump_held=frame.jump_held,
+            crouch_held=frame.crouch_held,
+            grapple_pressed=frame.grapple_pressed,
+            noclip_toggle_pressed=frame.noclip_toggle_pressed,
+        )
 
 
 class RunnerDemo(ShowBase):
@@ -82,12 +147,38 @@ class RunnerDemo(ShowBase):
         self._pointer_locked = True
         self._pause_menu_open = False
         self._debug_menu_open = False
+        self._replay_browser_open = False
         self._mode: str = "boot"  # boot | menu | game
         self._last_mouse: tuple[float, float] | None = None
         self._input_debug_until: float = 0.0
         self._noclip_toggle_key: str = "v"
-        self._noclip_toggle_prev_down: bool = False
         self._awaiting_noclip_rebind: bool = False
+        self._demo_save_key: str = "f"
+        self._sim_tick_rate_hz: int = 60
+        self._sim_fixed_dt: float = 1.0 / float(self._sim_tick_rate_hz)
+        self._look_input_scale: int = 256
+        self._playback_look_scale: int = self._look_input_scale
+        self._sim_accumulator: float = 0.0
+        self._mouse_dx_accum: float = 0.0
+        self._mouse_dy_accum: float = 0.0
+        self._prev_jump_down: bool = False
+        self._prev_grapple_down: bool = False
+        self._prev_noclip_toggle_down: bool = False
+        self._prev_demo_save_down: bool = False
+        self._active_recording: DemoRecording | None = None
+        self._loaded_replay_path: Path | None = None
+        self._playback_frames: list[DemoFrame] | None = None
+        self._playback_index: int = 0
+        self._playback_active: bool = False
+        self._sim_prev_player_pos = LVector3f(0, 0, 0)
+        self._sim_curr_player_pos = LVector3f(0, 0, 0)
+        self._sim_prev_cam_pos = LVector3f(0, 0, 0)
+        self._sim_curr_cam_pos = LVector3f(0, 0, 0)
+        self._sim_prev_yaw: float = 0.0
+        self._sim_curr_yaw: float = 0.0
+        self._sim_prev_pitch: float = 0.0
+        self._sim_curr_pitch: float = 0.0
+        self._sim_state_ready: bool = False
         self._grapple_rope_node = GeomNode("grapple-rope")
         self._grapple_rope_np = self.render.attachNewNode(self._grapple_rope_node)
         self._grapple_rope_np.setTwoSided(True)
@@ -105,6 +196,7 @@ class RunnerDemo(ShowBase):
         self._game_mode: Any | None = None
         self._game_mode_ctx: ModeContext | None = None
         self._game_mode_events: list[str] = []
+        self._current_map_json: str | None = None
 
         self._menu: MainMenuController | None = None
         self._import_thread: threading.Thread | None = None
@@ -135,10 +227,17 @@ class RunnerDemo(ShowBase):
             on_map_selector=self._back_to_menu,
             on_back_to_menu=self._back_to_menu,
             on_quit=self.userExit,
+            on_open_replays=self._open_replay_browser,
             on_open_keybindings=self._open_keybindings_menu,
             on_rebind_noclip=self._start_rebind_noclip,
         )
         self.pause_ui.set_noclip_binding(self._noclip_toggle_key)
+        self.replay_browser_ui = ReplayBrowserUI(
+            aspect2d=self.aspect2d,
+            theme=self.ui_theme,
+            on_select=self._load_replay_from_path,
+            on_close=self._close_replay_browser,
+        )
         self.input_debug = InputDebugUI(aspect2d=self.aspect2d, theme=self.ui_theme)
         self._setup_input()
 
@@ -178,8 +277,6 @@ class RunnerDemo(ShowBase):
         self.accept("ascii`", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
         self.accept("grave", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
         self.accept("r", lambda: self._safe_call("input.respawn", lambda: self._do_respawn(from_mode=False)))
-        self.accept("space", lambda: self._safe_call("input.jump", self._queue_jump))
-        self.accept("mouse1", lambda: self._safe_call("input.grapple.primary.down", self._on_grapple_primary_down))
         self.accept("f2", self.input_debug.toggle)
         self.accept("f3", self.error_console.toggle)
         self.accept("shift-f3", lambda: self._safe_call("errors.clear", self._clear_errors))
@@ -435,8 +532,10 @@ class RunnerDemo(ShowBase):
             return
         self._pause_menu_open = False
         self._debug_menu_open = False
+        self._replay_browser_open = False
         self._awaiting_noclip_rebind = False
         self.pause_ui.hide()
+        self.replay_browser_ui.hide()
         self.ui.hide()
         self._set_pointer_lock(True)
 
@@ -445,25 +544,32 @@ class RunnerDemo(ShowBase):
             return
         self._pause_menu_open = True
         self._debug_menu_open = False
+        self._replay_browser_open = False
         self._awaiting_noclip_rebind = False
         self.pause_ui.show_main()
         self.pause_ui.set_keybind_status("")
         self.pause_ui.show()
+        self.replay_browser_ui.hide()
         self.ui.hide()
         self._set_pointer_lock(False)
 
     def _toggle_debug_menu(self) -> None:
         if self._mode != "game":
             return
+        if self._replay_browser_open:
+            self._close_replay_browser()
+            return
         self._debug_menu_open = not self._debug_menu_open
         if self._debug_menu_open:
             self._pause_menu_open = False
+            self._replay_browser_open = False
             self.pause_ui.hide()
+            self.replay_browser_ui.hide()
             self.ui.show()
             self._set_pointer_lock(False)
             return
         self.ui.hide()
-        if self._pause_menu_open:
+        if self._pause_menu_open or self._replay_browser_open:
             self.pause_ui.show()
             self._set_pointer_lock(False)
         else:
@@ -478,6 +584,9 @@ class RunnerDemo(ShowBase):
                 return
         if self._mode != "game":
             return
+        if self._replay_browser_open:
+            self._close_replay_browser()
+            return
         if self._debug_menu_open or self._pause_menu_open:
             self._close_all_game_menus()
             return
@@ -489,6 +598,82 @@ class RunnerDemo(ShowBase):
         self.pause_ui.show_keybindings()
         self.pause_ui.set_noclip_binding(self._noclip_toggle_key)
         self.pause_ui.set_keybind_status("")
+
+    def _open_replay_browser(self) -> None:
+        if self._mode != "game":
+            return
+        items: list[ReplayListItem] = []
+        for p in list_replays():
+            label = p.stem
+            items.append(ReplayListItem(label=label, path=p))
+        status = f"{len(items)} replay(s) found."
+        self.pause_ui.hide()
+        self.replay_browser_ui.show(items=items, status=status)
+        self._pause_menu_open = False
+        self._replay_browser_open = True
+        self._set_pointer_lock(False)
+
+    def _close_replay_browser(self) -> None:
+        if self._mode != "game":
+            return
+        self.replay_browser_ui.hide()
+        self._replay_browser_open = False
+        self._open_pause_menu()
+
+    def _load_replay_from_path(self, path: Path) -> None:
+        try:
+            rec = load_replay(path)
+        except Exception as e:
+            self.error_log.log_message(context="replay.load", message=str(e))
+            self.error_console.refresh(auto_reveal=True)
+            return
+
+        self._loaded_replay_path = Path(path)
+        if rec.metadata.tuning:
+            self._apply_profile_snapshot(dict(rec.metadata.tuning), persist=False)
+        self._playback_frames = list(rec.frames)
+        self._playback_index = 0
+        self._playback_active = True
+        self._playback_look_scale = max(1, int(rec.metadata.look_scale))
+        self._active_recording = None
+        self.replay_browser_ui.hide()
+        self._replay_browser_open = False
+        self.pause_ui.hide()
+        self._pause_menu_open = False
+        self._set_pointer_lock(True)
+
+        if self.scene is not None and rec.metadata.map_id != self.scene.map_id:
+            # If map differs and replay points to a known map path, reload the scene first.
+            if rec.metadata.map_json:
+                self._start_game(map_json=rec.metadata.map_json, lighting=None)
+                return
+        self._do_respawn(from_mode=True)
+
+    def _start_new_demo_recording(self) -> None:
+        if self.scene is None:
+            return
+        snapshot = {
+            field: self._to_persisted_value(getattr(self.tuning, field))
+            for field in PhysicsTuning.__annotations__.keys()
+        }
+        self._active_recording = new_recording(
+            tick_rate=self._sim_tick_rate_hz,
+            look_scale=self._look_input_scale,
+            map_id=str(self.scene.map_id),
+            map_json=self._current_map_json,
+            tuning=snapshot,
+        )
+        self.ui.set_status(f"Recording demo: {self._active_recording.metadata.demo_name}")
+
+    def _save_current_demo(self) -> None:
+        if self._active_recording is None:
+            self.ui.set_status("No active demo recording.")
+            return
+        if not self._active_recording.frames:
+            self.ui.set_status("Demo not saved (empty recording).")
+            return
+        out = save_recording(self._active_recording)
+        self.ui.set_status(f"Demo saved: {out.name} ({len(self._active_recording.frames)} ticks)")
 
     def _start_rebind_noclip(self) -> None:
         if self._mode != "game":
@@ -532,7 +717,12 @@ class RunnerDemo(ShowBase):
         self._menu_hold_dir = 0
         self._pause_menu_open = False
         self._debug_menu_open = False
+        self._replay_browser_open = False
         self._awaiting_noclip_rebind = False
+        self._active_recording = None
+        self._playback_active = False
+        self._playback_frames = None
+        self._playback_index = 0
         self._set_pointer_lock(False)
 
         # Hide in-game HUD while picking.
@@ -541,6 +731,7 @@ class RunnerDemo(ShowBase):
         self._grapple_rope_np.hide()
         self.ui.hide()
         self.pause_ui.hide()
+        self.replay_browser_ui.hide()
 
         self._menu = MainMenuController(
             aspect2d=self.aspect2d,
@@ -573,6 +764,9 @@ class RunnerDemo(ShowBase):
         self._grapple_rope_np.hide()
         self.ui.hide()
         self.pause_ui.hide()
+        self.replay_browser_ui.hide()
+        self._replay_browser_open = False
+        self._playback_active = False
 
         self._enter_main_menu()
 
@@ -581,6 +775,10 @@ class RunnerDemo(ShowBase):
             self._menu.toggle_search()
 
     def _menu_nav_press(self, dir01: int) -> None:
+        if self._mode == "game" and self._replay_browser_open:
+            d = -1 if dir01 < 0 else 1
+            self.replay_browser_ui.move(d)
+            return
         if self._mode != "menu" or self._menu is None or self._importing:
             return
         if self._menu.is_search_active():
@@ -599,6 +797,10 @@ class RunnerDemo(ShowBase):
             self._menu_hold_dir = 0
 
     def _menu_page(self, dir01: int) -> None:
+        if self._mode == "game" and self._replay_browser_open:
+            d = -1 if dir01 < 0 else 1
+            self.replay_browser_ui.move(d * 10)
+            return
         if self._mode != "menu" or self._menu is None or self._importing:
             return
         if self._menu.is_search_active():
@@ -614,6 +816,9 @@ class RunnerDemo(ShowBase):
         self._safe_call("menu.page", lambda: self._menu.move(d * jump))
 
     def _menu_select(self) -> None:
+        if self._mode == "game" and self._replay_browser_open:
+            self.replay_browser_ui.on_enter()
+            return
         if self._mode != "menu" or self._menu is None or self._importing:
             return
         self._safe_call("menu.enter", self._menu.on_enter)
@@ -732,6 +937,7 @@ class RunnerDemo(ShowBase):
             )
             self.scene = WorldScene()
             self.scene.build(cfg=cfg, loader=self.loader, render=self.world_root, camera=self.camera)
+            self._current_map_json = cfg_map_json
 
             # Optional spawn override stored next to the map (bundle run.json).
             self._apply_spawn_override(spawn=run_meta.spawn_override)
@@ -752,7 +958,20 @@ class RunnerDemo(ShowBase):
                 aabbs=self.scene.aabbs,
                 collision=self.collision,
             )
-            self.player_node.setPos(self.player.pos)
+            self._sim_state_ready = False
+            self._push_sim_snapshot()
+            self._render_interpolated_state(alpha=1.0)
+            self._sim_accumulator = 0.0
+            self._mouse_dx_accum = 0.0
+            self._mouse_dy_accum = 0.0
+            if not self._playback_active:
+                self._playback_look_scale = self._look_input_scale
+            self._prev_jump_down = False
+            self._prev_grapple_down = False
+            self._prev_noclip_toggle_down = False
+            self._prev_demo_save_down = False
+            if not self._playback_active:
+                self._start_new_demo_recording()
 
             # Install game mode after the world/player exist.
             mode = load_mode(mode=run_meta.mode, config=run_meta.mode_config)
@@ -844,8 +1063,9 @@ class RunnerDemo(ShowBase):
         y = self.win.getYSize() // 2
         self.win.movePointer(0, x, y)
 
-    def _update_look(self) -> None:
+    def _poll_mouse_look_delta(self) -> None:
         if self.cfg.smoke or not self._pointer_locked:
+            self._last_mouse = None
             return
 
         # Primary path: normalized mouse coords (works well with relative mouse mode).
@@ -861,11 +1081,8 @@ class RunnerDemo(ShowBase):
             dx_norm = mx - lmx
             # Keep non-inverted vertical look (mouse up -> look up).
             dy_norm = lmy - my
-            dx = dx_norm * (self.win.getXSize() * 0.5)
-            dy = dy_norm * (self.win.getYSize() * 0.5)
-
-            self._yaw -= dx * float(self.tuning.mouse_sensitivity)
-            self._pitch = max(-88.0, min(88.0, self._pitch - dy * float(self.tuning.mouse_sensitivity)))
+            self._mouse_dx_accum += dx_norm * (self.win.getXSize() * 0.5)
+            self._mouse_dy_accum += dy_norm * (self.win.getYSize() * 0.5)
             return
 
         # Fallback: pointer delta vs screen center (useful if hasMouse() stays false on some macOS setups).
@@ -877,28 +1094,98 @@ class RunnerDemo(ShowBase):
 
         if dx == 0.0 and dy == 0.0:
             return
-        self._yaw -= dx * float(self.tuning.mouse_sensitivity)
-        self._pitch = max(-88.0, min(88.0, self._pitch - dy * float(self.tuning.mouse_sensitivity)))
+        self._mouse_dx_accum += dx
+        self._mouse_dy_accum += dy
         self._center_mouse()
 
-    def _wish_direction(self) -> LVector3f:
-        if self.mouseWatcherNode is None:
-            return LVector3f(0, 0, 0)
+    def _consume_mouse_look_delta(self) -> tuple[int, int]:
+        s = float(self._look_input_scale)
+        dx = int(round(self._mouse_dx_accum * s))
+        dy = int(round(self._mouse_dy_accum * s))
+        self._mouse_dx_accum -= float(dx) / s
+        self._mouse_dy_accum -= float(dy) / s
+        return (dx, dy)
 
+    def _apply_look_delta(self, *, dx: int, dy: int, look_scale: int, allow_look: bool) -> None:
+        if not allow_look:
+            return
+        scale = max(1.0, float(look_scale))
+        self._yaw -= (float(dx) / scale) * float(self.tuning.mouse_sensitivity)
+        self._pitch = max(-88.0, min(88.0, self._pitch - (float(dy) / scale) * float(self.tuning.mouse_sensitivity)))
+
+    @staticmethod
+    def _lerp_vec(a: LVector3f, b: LVector3f, t: float) -> LVector3f:
+        tt = max(0.0, min(1.0, float(t)))
+        return LVector3f(
+            float(a.x) + (float(b.x) - float(a.x)) * tt,
+            float(a.y) + (float(b.y) - float(a.y)) * tt,
+            float(a.z) + (float(b.z) - float(a.z)) * tt,
+        )
+
+    @staticmethod
+    def _lerp_angle_deg(a: float, b: float, t: float) -> float:
+        tt = max(0.0, min(1.0, float(t)))
+        d = ((float(b) - float(a) + 180.0) % 360.0) - 180.0
+        return float(a) + d * tt
+
+    def _capture_sim_state(self) -> tuple[LVector3f, LVector3f, float, float]:
+        player_pos = LVector3f(0, 0, 0)
+        cam_pos = LVector3f(0, 0, 0)
+        if self.player is not None:
+            player_pos = LVector3f(self.player.pos)
+            eye_height = float(self.tuning.player_eye_height)
+            if self.player.crouched and bool(self.tuning.crouch_enabled):
+                eye_height = min(eye_height, float(self.tuning.crouch_eye_height))
+            cam_pos = LVector3f(player_pos.x, player_pos.y, player_pos.z + eye_height)
+        return (player_pos, cam_pos, float(self._yaw), float(self._pitch))
+
+    def _push_sim_snapshot(self) -> None:
+        p, c, y, pi = self._capture_sim_state()
+        if not self._sim_state_ready:
+            self._sim_prev_player_pos = LVector3f(p)
+            self._sim_curr_player_pos = LVector3f(p)
+            self._sim_prev_cam_pos = LVector3f(c)
+            self._sim_curr_cam_pos = LVector3f(c)
+            self._sim_prev_yaw = float(y)
+            self._sim_curr_yaw = float(y)
+            self._sim_prev_pitch = float(pi)
+            self._sim_curr_pitch = float(pi)
+            self._sim_state_ready = True
+            return
+        self._sim_prev_player_pos = LVector3f(self._sim_curr_player_pos)
+        self._sim_prev_cam_pos = LVector3f(self._sim_curr_cam_pos)
+        self._sim_prev_yaw = float(self._sim_curr_yaw)
+        self._sim_prev_pitch = float(self._sim_curr_pitch)
+        self._sim_curr_player_pos = LVector3f(p)
+        self._sim_curr_cam_pos = LVector3f(c)
+        self._sim_curr_yaw = float(y)
+        self._sim_curr_pitch = float(pi)
+
+    def _render_interpolated_state(self, *, alpha: float) -> None:
+        if not self._sim_state_ready:
+            return
+        a = max(0.0, min(1.0, float(alpha)))
+        p = self._lerp_vec(self._sim_prev_player_pos, self._sim_curr_player_pos, a)
+        c = self._lerp_vec(self._sim_prev_cam_pos, self._sim_curr_cam_pos, a)
+        y = self._lerp_angle_deg(self._sim_prev_yaw, self._sim_curr_yaw, a)
+        pi = self._lerp_angle_deg(self._sim_prev_pitch, self._sim_curr_pitch, a)
+        self.player_node.setPos(p)
+        self.camera.setPos(c)
+        self.camera.setHpr(y, pi, 0)
+
+    def _wish_direction_from_axes(self, *, move_forward: int, move_right: int) -> LVector3f:
         h_rad = math.radians(self._yaw)
         forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0)
         right = LVector3f(forward.y, -forward.x, 0)
 
         move = LVector3f(0, 0, 0)
-        # Support non-US keyboard layouts by checking Cyrillic equivalents of WASD (RU):
-        # W/A/S/D -> Ц/Ф/Ы/В. Arrow keys are also supported as a fallback.
-        if self._is_key_down("w") or self._is_key_down("ц") or self.mouseWatcherNode.isButtonDown(KeyboardButton.up()):
+        if move_forward > 0:
             move += forward
-        if self._is_key_down("s") or self._is_key_down("ы") or self.mouseWatcherNode.isButtonDown(KeyboardButton.down()):
+        if move_forward < 0:
             move -= forward
-        if self._is_key_down("d") or self._is_key_down("в") or self.mouseWatcherNode.isButtonDown(KeyboardButton.right()):
+        if move_right > 0:
             move += right
-        if self._is_key_down("a") or self._is_key_down("ф") or self.mouseWatcherNode.isButtonDown(KeyboardButton.left()):
+        if move_right < 0:
             move -= right
 
         if move.lengthSquared() > 0:
@@ -921,6 +1208,113 @@ class RunnerDemo(ShowBase):
         if k in {"tab", "enter", "escape", "shift", "control", "alt"}:
             return bool(self.mouseWatcherNode.isButtonDown(ButtonHandle(k)))
         return bool(self.mouseWatcherNode.isButtonDown(ButtonHandle(k)))
+
+    def _move_axes_from_keyboard(self) -> tuple[int, int]:
+        if self.mouseWatcherNode is None:
+            return (0, 0)
+        fwd = 0
+        right = 0
+        # Support non-US keyboard layouts by checking Cyrillic equivalents of WASD (RU):
+        # W/A/S/D -> Ц/Ф/Ы/В. Arrow keys are also supported as a fallback.
+        if self._is_key_down("w") or self._is_key_down("ц") or self.mouseWatcherNode.isButtonDown(KeyboardButton.up()):
+            fwd += 1
+        if self._is_key_down("s") or self._is_key_down("ы") or self.mouseWatcherNode.isButtonDown(KeyboardButton.down()):
+            fwd -= 1
+        if self._is_key_down("d") or self._is_key_down("в") or self.mouseWatcherNode.isButtonDown(KeyboardButton.right()):
+            right += 1
+        if self._is_key_down("a") or self._is_key_down("ф") or self.mouseWatcherNode.isButtonDown(KeyboardButton.left()):
+            right -= 1
+        return (max(-1, min(1, fwd)), max(-1, min(1, right)))
+
+    def _sample_live_input_command(self, *, menu_open: bool) -> _InputCommand:
+        look_dx, look_dy = (0, 0) if menu_open else self._consume_mouse_look_delta()
+        move_forward = 0
+        move_right = 0
+        jump_held = False
+        crouch_held = False
+        grapple_down = False
+        noclip_toggle_down = False
+        demo_save_down = False
+        if not menu_open:
+            move_forward, move_right = self._move_axes_from_keyboard()
+            jump_held = self._is_key_down("space")
+            crouch_held = self._is_crouching()
+            grapple_down = self._is_key_down("mouse1")
+            noclip_toggle_down = self._is_key_down(self._noclip_toggle_key)
+            demo_save_down = self._is_key_down(self._demo_save_key)
+
+        cmd = _InputCommand(
+            look_dx=look_dx,
+            look_dy=look_dy,
+            look_scale=self._look_input_scale,
+            move_forward=move_forward,
+            move_right=move_right,
+            jump_pressed=(not menu_open) and jump_held and (not self._prev_jump_down),
+            jump_held=(not menu_open) and jump_held,
+            crouch_held=(not menu_open) and crouch_held,
+            grapple_pressed=(not menu_open) and grapple_down and (not self._prev_grapple_down),
+            noclip_toggle_pressed=(not menu_open) and noclip_toggle_down and (not self._prev_noclip_toggle_down),
+        )
+
+        self._prev_jump_down = (not menu_open) and jump_held
+        self._prev_grapple_down = (not menu_open) and grapple_down
+        self._prev_noclip_toggle_down = (not menu_open) and noclip_toggle_down
+
+        # Save is sampled here so it can be edge-triggered alongside the fixed tick input.
+        save_pressed = (not menu_open) and demo_save_down and (not self._prev_demo_save_down)
+        self._prev_demo_save_down = (not menu_open) and demo_save_down
+        if save_pressed:
+            self._save_current_demo()
+        return cmd
+
+    def _sample_replay_input_command(self) -> _InputCommand:
+        if not self._playback_frames or self._playback_index >= len(self._playback_frames):
+            self._playback_active = False
+            self.ui.set_status("Replay finished.")
+            return _InputCommand()
+        frame = self._playback_frames[self._playback_index]
+        self._playback_index += 1
+        return _InputCommand.from_demo_frame(frame, look_scale=self._playback_look_scale)
+
+    def _simulate_input_tick(self, *, cmd: _InputCommand, menu_open: bool) -> None:
+        if self.player is None or self.scene is None:
+            return
+
+        self._apply_look_delta(
+            dx=cmd.look_dx,
+            dy=cmd.look_dy,
+            look_scale=cmd.look_scale,
+            allow_look=(not menu_open),
+        )
+
+        if cmd.noclip_toggle_pressed:
+            self._toggle_noclip()
+        if cmd.grapple_pressed:
+            self._on_grapple_primary_down()
+        if cmd.jump_pressed:
+            self.player.queue_jump()
+
+        wish = self._wish_direction_from_axes(move_forward=cmd.move_forward, move_right=cmd.move_right)
+        crouching = bool(cmd.crouch_held)
+
+        if self.tuning.autojump_enabled and cmd.jump_held and self.player.grounded:
+            # Autojump is for chained grounded hops; don't feed airborne wall-jump retries.
+            self.player.queue_jump()
+
+        if self.tuning.noclip_enabled:
+            self._step_noclip(dt=self._sim_fixed_dt, wish_dir=wish, jump_held=bool(cmd.jump_held), crouching=crouching)
+        else:
+            if not bool(self.tuning.grapple_enabled):
+                self.player.detach_grapple()
+            self.player.step(dt=self._sim_fixed_dt, wish_dir=wish, yaw_deg=self._yaw, crouching=crouching)
+
+        if self.scene is not None and self.player.pos.z < float(self.scene.kill_z):
+            self._do_respawn(from_mode=True)
+
+        self._push_sim_snapshot()
+
+        if self._active_recording is not None and not self._playback_active:
+            append_frame(self._active_recording, cmd.to_demo_frame())
 
     def _queue_jump(self) -> None:
         if self.player is not None and self._mode == "game" and not self._pause_menu_open and not self._debug_menu_open:
@@ -1071,15 +1465,20 @@ class RunnerDemo(ShowBase):
         self.player.respawn()
         self._yaw = float(self.scene.spawn_yaw)
         self._pitch = 0.0
-        self.player_node.setPos(self.player.pos)
+        self._sim_state_ready = False
+        self._push_sim_snapshot()
+        self._render_interpolated_state(alpha=1.0)
+        # Recording starts from each spawn/respawn window.
+        if not self._playback_active:
+            self._start_new_demo_recording()
 
     def _toggle_noclip(self) -> None:
         self.tuning.noclip_enabled = not bool(self.tuning.noclip_enabled)
 
-    def _step_noclip(self, *, dt: float, wish_dir: LVector3f, crouching: bool) -> None:
+    def _step_noclip(self, *, dt: float, wish_dir: LVector3f, jump_held: bool, crouching: bool) -> None:
         if self.player is None:
             return
-        up = 1.0 if self._is_key_down("space") else 0.0
+        up = 1.0 if jump_held else 0.0
         down = 1.0 if crouching else 0.0
         move = LVector3f(wish_dir.x, wish_dir.y, up - down)
         if move.lengthSquared() > 1e-12:
@@ -1109,21 +1508,21 @@ class RunnerDemo(ShowBase):
             if self._mode != "game" or self.player is None:
                 return Task.cont
 
-            dt = min(globalClock.getDt(), 1.0 / 30.0)
+            frame_dt = min(globalClock.getDt(), 0.25)
             now = float(globalClock.getFrameTime())
+            self._poll_mouse_look_delta()
 
             if self.scene is not None:
                 self.scene.tick(now=now)
+            if self._replay_browser_open:
+                self.replay_browser_ui.tick(now)
 
-            menu_open = self._pause_menu_open or self._debug_menu_open
+            menu_open = self._pause_menu_open or self._debug_menu_open or self._replay_browser_open
             self.ui.set_crosshair_visible(not menu_open)
 
-            # Precompute wish so debug overlay can show it even if movement seems dead.
-            wish = LVector3f(0, 0, 0) if menu_open else self._wish_direction()
-            noclip_toggle_down = False if menu_open else self._is_key_down(self._noclip_toggle_key)
-            if not menu_open and noclip_toggle_down and not self._noclip_toggle_prev_down:
-                self._toggle_noclip()
-            self._noclip_toggle_prev_down = noclip_toggle_down
+            # Precompute wish from keyboard so debug overlay can show it even if movement seems dead.
+            fwd_axis, right_axis = self._move_axes_from_keyboard()
+            wish_dbg = self._wish_direction_from_axes(move_forward=fwd_axis, move_right=right_axis)
 
             if self.mouseWatcherNode is not None:
                 has_mouse = self.mouseWatcherNode.hasMouse()
@@ -1142,54 +1541,32 @@ class RunnerDemo(ShowBase):
                 grounded = bool(self.player.grounded) if self.player is not None else False
                 self.input_debug.set_text(
                     "input debug (F2)\n"
-                    f"mode={self._mode} lock={self._pointer_locked} dt={dt:.3f} hasMouse={has_mouse} mouse=({mx:+.2f},{my:+.2f})\n"
+                    f"mode={self._mode} lock={self._pointer_locked} dt={frame_dt:.3f} hasMouse={has_mouse} mouse=({mx:+.2f},{my:+.2f})\n"
                     f"raw WASD={int(raw_w)}{int(raw_a)}{int(raw_s)}{int(raw_d)} ascii WASD={int(asc_w)}{int(asc_a)}{int(asc_s)}{int(asc_d)}\n"
-                    f"wish=({wish.x:+.2f},{wish.y:+.2f}) pos=({pos.x:+.2f},{pos.y:+.2f},{pos.z:+.2f}) vel=({vel.x:+.2f},{vel.y:+.2f},{vel.z:+.2f}) grounded={int(grounded)}"
+                    f"wish=({wish_dbg.x:+.2f},{wish_dbg.y:+.2f}) pos=({pos.x:+.2f},{pos.y:+.2f},{pos.z:+.2f}) vel=({vel.x:+.2f},{vel.y:+.2f},{vel.z:+.2f}) grounded={int(grounded)}"
                 )
             if self._input_debug_until and globalClock.getFrameTime() >= self._input_debug_until:
                 self._input_debug_until = 0.0
                 self.input_debug.hide()
 
-            if not menu_open:
-                self._update_look()
-            crouching = False if menu_open else self._is_crouching()
-
-            if (
-                not menu_open
-                and self.tuning.autojump_enabled
-                and self._is_key_down("space")
-                and self.player.grounded
-            ):
-                # Autojump is for chained grounded hops; don't feed airborne wall-jump retries.
-                self.player.queue_jump()
-
-            if self.tuning.noclip_enabled:
-                self._step_noclip(dt=dt, wish_dir=wish, crouching=crouching)
-            else:
-                if not bool(self.tuning.grapple_enabled):
-                    self.player.detach_grapple()
-                self.player.step(dt=dt, wish_dir=wish, yaw_deg=self._yaw, crouching=crouching)
-
-            if self.scene is not None and self.player.pos.z < float(self.scene.kill_z):
-                self._respawn()
-
-            self.player_node.setPos(self.player.pos)
-            eye_height = float(self.tuning.player_eye_height)
-            if self.player.crouched and bool(self.tuning.crouch_enabled):
-                eye_height = min(eye_height, float(self.tuning.crouch_eye_height))
-            self.camera.setPos(
-                self.player.pos.x,
-                self.player.pos.y,
-                self.player.pos.z + eye_height,
-            )
-            self.camera.setHpr(self._yaw, self._pitch, 0)
+            self._sim_accumulator = min(0.25, self._sim_accumulator + frame_dt)
+            while self._sim_accumulator >= self._sim_fixed_dt:
+                cmd = (
+                    self._sample_replay_input_command()
+                    if self._playback_active
+                    else self._sample_live_input_command(menu_open=menu_open)
+                )
+                self._simulate_input_tick(cmd=cmd, menu_open=menu_open)
+                self._sim_accumulator -= self._sim_fixed_dt
+            alpha = self._sim_accumulator / self._sim_fixed_dt if self._sim_fixed_dt > 0.0 else 1.0
+            self._render_interpolated_state(alpha=alpha)
 
             hspeed = math.sqrt(self.player.vel.x * self.player.vel.x + self.player.vel.y * self.player.vel.y)
             self.ui.set_speed(hspeed)
             self.ui.set_status(
                 f"speed: {hspeed:.2f} | z-vel: {self.player.vel.z:.2f} | grounded: {self.player.grounded} | "
                 f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()} | "
-                f"grapple: {self.player.is_grapple_attached()}"
+                f"grapple: {self.player.is_grapple_attached()} | rec: {self._active_recording is not None} | replay: {self._playback_active}"
             )
 
             if self._game_mode is not None:

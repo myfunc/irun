@@ -66,7 +66,9 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 - `Space`: jump
 - `R`: reset to spawn
 - `Esc`: opens the in-game menu (Resume / Map Selector / Key Bindings / Back to Main Menu / Quit); in the main menu it acts as back/quit
+- `Esc -> Replays`: open replay browser and load an input-demo file
 - `` ` `` (tilde/backtick): opens the debug/admin tuning menu
+- `F`: save current demo recording (recording window starts on respawn and ends when saved)
 - `F4`: restart run (time trial mode)
 - `F5`: set Start marker at current position (time trial mode dev helper)
 - `F6`: set Finish marker at current position (time trial mode dev helper)
@@ -83,6 +85,7 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 Menu/input behavior:
 - When `Esc` menu or debug menu is open, gameplay input (mouse look / movement keys) is ignored.
 - The world simulation continues running (no hard pause), so physics/time still progress.
+- Core movement simulation uses a fixed `60 Hz` tick for deterministic input replay.
 
 ## Main Menu
 Booting without `--map` starts in the main menu:
@@ -106,6 +109,13 @@ Notes:
 - A classic Half-Life/CS-style center crosshair is shown during active gameplay (hidden in pause/debug/menu).
 - Detailed movement status (`speed/z-vel/grounded/wall`) is shown in the bottom-left corner during gameplay and hidden while the debug/admin panel is open.
 - Input debug (F2) and the error console (F3) are shown as boxed overlays that avoid overlapping the HUD bars.
+
+## Demos (Input Replay)
+- Ivan records input demos automatically from each spawn/respawn window.
+- A demo contains only per-tick input commands (look deltas, movement axes, action presses), not player positions.
+- Press `F` to save the current demo to `apps/ivan/replays/` in this repository.
+- Replays can be loaded in-game from `Esc -> Replays`.
+- Replay playback re-simulates movement through the normal engine/controller path at fixed `60 Hz`.
 
 ## Debug/Admin Menu
 Panel layout:
