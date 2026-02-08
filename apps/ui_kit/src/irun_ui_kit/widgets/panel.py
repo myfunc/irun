@@ -14,6 +14,7 @@ class Panel:
     node: DirectFrame
     w: float
     h: float
+    title: DirectLabel | None = None
 
     @staticmethod
     def build(
@@ -62,6 +63,7 @@ class Panel:
             relief=DGG.FLAT,
         )
 
+        title_lbl: DirectLabel | None = None
         if header:
             DirectFrame(
                 parent=inner,
@@ -70,7 +72,7 @@ class Panel:
                 relief=DGG.FLAT,
             )
             if title:
-                DirectLabel(
+                title_lbl = DirectLabel(
                     parent=inner,
                     text=str(title).upper(),
                     text_scale=theme.title_scale,
@@ -80,4 +82,4 @@ class Panel:
                     pos=(theme.outline_w + theme.pad, 0, h - theme.outline_w - (theme.header_h * 0.70)),
                 )
 
-        return Panel(node=inner, w=w, h=h)
+        return Panel(node=inner, w=w, h=h, title=title_lbl)
