@@ -17,7 +17,7 @@ Game apps use **Panda3D** directly to keep iteration fast for movement-focused p
 - `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (sliders, entries, toggles, HUD labels)
 - `apps/ivan/src/ivan/ui/main_menu.py`: main menu controller (bundle list + import flow)
 - `apps/ivan/src/ivan/ui/retro_menu_ui.py`: retro-styled menu widgets (procedural background)
-- `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game system panel (Resume/Back to Menu/Quit) shown with debug UI on ESC
+- `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game ESC menu (Resume/Map Selector/Key Bindings/Back/Quit) and keybinding controls
 - `apps/ivan/src/ivan/common/error_log.py`: small in-memory error feed used to prevent hard crashes and surface unhandled exceptions in-game
 - `apps/ivan/src/ivan/ui/error_console_ui.py`: bottom-screen error console (toggle with `F3`)
 - `apps/ivan/src/ivan/common/aabb.py`: Shared AABB type used for graybox fallback
@@ -29,6 +29,10 @@ Game apps use **Panda3D** directly to keep iteration fast for movement-focused p
 ## Runtime
 - Start: `python -m ivan` (from `apps/ivan`)
 - The game loop is driven by Panda3D's task manager.
+- In-game UI/input split:
+  - `Esc` opens gameplay menu and unlocks cursor.
+  - `` ` `` opens debug/admin tuning menu and unlocks cursor.
+  - Gameplay movement step supports optional noclip mode and optional autojump queueing.
 
 ## Rendering Notes
 - Texture sizing: IVAN disables Panda3D's default power-of-two rescaling for textures (`textures-power-2 none`).
