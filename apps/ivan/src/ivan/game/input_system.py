@@ -29,6 +29,9 @@ class _InputCommand:
         arrow_right_held: bool = False,
         mouse_left_held: bool = False,
         mouse_right_held: bool = False,
+        raw_wasd_available: bool = False,
+        raw_arrows_available: bool = False,
+        raw_mouse_buttons_available: bool = False,
     ) -> None:
         self.look_dx = int(look_dx)
         self.look_dy = int(look_dy)
@@ -50,6 +53,9 @@ class _InputCommand:
         self.arrow_right_held = bool(arrow_right_held)
         self.mouse_left_held = bool(mouse_left_held)
         self.mouse_right_held = bool(mouse_right_held)
+        self.raw_wasd_available = bool(raw_wasd_available)
+        self.raw_arrows_available = bool(raw_arrows_available)
+        self.raw_mouse_buttons_available = bool(raw_mouse_buttons_available)
 
     def to_demo_frame(self) -> DemoFrame:
         return self.to_demo_frame_with_telemetry(telemetry=None)
@@ -75,6 +81,9 @@ class _InputCommand:
             arrow_right_held=self.arrow_right_held,
             mouse_left_held=self.mouse_left_held,
             mouse_right_held=self.mouse_right_held,
+            raw_wasd_available=self.raw_wasd_available,
+            raw_arrows_available=self.raw_arrows_available,
+            raw_mouse_buttons_available=self.raw_mouse_buttons_available,
             telemetry=(dict(telemetry) if isinstance(telemetry, dict) else None),
         )
 
@@ -101,6 +110,9 @@ class _InputCommand:
             arrow_right_held=frame.arrow_right_held,
             mouse_left_held=frame.mouse_left_held,
             mouse_right_held=frame.mouse_right_held,
+            raw_wasd_available=frame.raw_wasd_available,
+            raw_arrows_available=frame.raw_arrows_available,
+            raw_mouse_buttons_available=frame.raw_mouse_buttons_available,
         )
 
 
@@ -227,6 +239,9 @@ def sample_live_input_command(host, *, menu_open: bool) -> _InputCommand:
         arrow_right_held=(not menu_open) and arrow_right_held,
         mouse_left_held=(not menu_open) and grapple_down,
         mouse_right_held=(not menu_open) and mouse_right_down,
+        raw_wasd_available=(not menu_open),
+        raw_arrows_available=(not menu_open),
+        raw_mouse_buttons_available=(not menu_open),
     )
 
     host._prev_jump_down = (not menu_open) and jump_held

@@ -43,9 +43,10 @@ def test_input_command_roundtrip_preserves_raw_held_states() -> None:
     assert replay_cmd.arrow_right_held is True
     assert replay_cmd.mouse_left_held is True
     assert replay_cmd.mouse_right_held is True
+    assert replay_cmd.raw_wasd_available is False
 
 
-def test_from_demo_frame_legacy_fallback_derives_wasd_from_axes() -> None:
+def test_from_demo_frame_without_raw_flags_marks_wasd_unavailable() -> None:
     legacy_frame = DemoFrame(
         look_dx=0,
         look_dy=0,
@@ -64,3 +65,4 @@ def test_from_demo_frame_legacy_fallback_derives_wasd_from_axes() -> None:
     assert cmd.key_s_held is False
     assert cmd.key_a_held is False
     assert cmd.key_d_held is False
+    assert cmd.raw_wasd_available is False

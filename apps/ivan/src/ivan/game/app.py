@@ -1276,6 +1276,9 @@ class RunnerDemo(ShowBase):
                 arrow_right_held=bool(cmd.arrow_right_held),
                 mouse_left_held=bool(cmd.mouse_left_held),
                 mouse_right_held=bool(cmd.mouse_right_held),
+                raw_wasd_available=bool(cmd.raw_wasd_available),
+                raw_arrows_available=bool(cmd.raw_arrows_available),
+                raw_mouse_buttons_available=bool(cmd.raw_mouse_buttons_available),
             )
 
         self._apply_look_delta(
