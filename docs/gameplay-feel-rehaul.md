@@ -63,6 +63,8 @@ Deliverables:
   - per-run CSV tick dump
   - per-run JSON summary metrics
   - latest-replay export trigger (CLI + in-game console command)
+  - latest-vs-previous comparator utility with metric and tuning deltas
+  - in-game Feel Session panel for export/compare/feedback actions
 
 Acceptance:
 - Metrics update during normal gameplay.
@@ -151,6 +153,7 @@ Acceptance:
 - [x] Create this plan document.
 - [x] Implement Phase 0 feel metrics aggregator.
 - [x] Surface metrics in F2 overlay.
+- [x] Add replay telemetry export + comparator tooling.
 - [ ] Capture initial baseline run metrics for Route A/B/C.
 - [ ] Open follow-up tasks for Phase 1 and Phase 2 implementation slices.
 
@@ -161,13 +164,23 @@ Completed now:
   - During replay, only `R` exits playback and returns to normal respawned play.
   - Replay stop path resets playback and input accumulators consistently.
 - Replay observability pass:
-  - Demo frame format upgraded (`format_version=2`) with backward-compatible loading of v1 demos.
+  - Demo frame format upgraded (`format_version=3`) with backward-compatible loading of v1/v2 demos.
   - Each recorded tick now stores telemetry useful for feel analysis:
     - position/eye height
     - velocity and horizontal/total speed
     - camera yaw/pitch
     - grounded/crouched/grapple/noclip state
-    - per-tick command snapshot (jump/crouch/grapple/noclip/move/look)
+    - per-tick command snapshot (jump/crouch/grapple/noclip/move/look/raw held keys)
+  - Replay telemetry summary now includes:
+    - landing speed loss/retention metrics
+    - camera linear/angular jerk metrics
+    - recorded tuning snapshot in exported summary payload
+- Replay analytics workflow pass:
+  - Added replay comparator utility (auto-export latest+previous and emit delta JSON).
+  - Added in-game Feel Session tab (ESC menu) to:
+    - export latest replay telemetry
+    - compare latest vs previous run
+    - apply free-text feedback driven tuning adjustments
 - Replay UX pass:
   - Added replay-only input HUD (UI kit based) showing:
     - movement cluster (left/right + forward/back)
@@ -176,7 +189,7 @@ Completed now:
     - dedicated mouse-direction section (+ raw dx/dy)
 
 Validation completed:
-- Replay format tests pass (`test_replay_demo.py`).
+- Replay format/telemetry/comparison tests pass (`test_replay_demo.py`, `test_replay_telemetry_export.py`, `test_replay_compare.py`).
 - Runtime smoke runs pass in menu boot and map boot paths.
 
 ## Why This Helps Future Phases
@@ -193,11 +206,13 @@ Validation completed:
 - Overall status: `Phase 0 active`, `Phase 1 ready-to-start after baselines`.
 - What is complete:
   - feel-metrics overlay in gameplay (`F2`)
-  - replay data expansion (v2 frames with movement/camera/state telemetry)
+  - replay data expansion (v3 frames with movement/camera/state telemetry + raw held inputs)
   - replay input lock + deterministic playback safety improvements
   - replay input HUD for visual command verification during playback
+  - replay telemetry export summaries with landing/camera metrics
+  - replay comparator utility (latest vs previous deltas)
+  - in-game Feel Session export/compare/feedback loop
 - What is next:
-  - telemetry export utility (per-run summaries + route comparators)
   - baseline capture pack for Route A/B/C (3 runs each)
   - camera smoothing/FOV response slice with measurable before/after
 - Why this sequence matters:

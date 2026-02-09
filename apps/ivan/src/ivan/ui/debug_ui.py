@@ -144,6 +144,8 @@ class DebugUI:
                 "player_radius",
                 "player_half_height",
                 "player_eye_height",
+                "course_marker_half_extent_xy",
+                "course_marker_half_extent_z",
                 "crouch_speed_multiplier",
                 "crouch_half_height",
                 "crouch_eye_height",

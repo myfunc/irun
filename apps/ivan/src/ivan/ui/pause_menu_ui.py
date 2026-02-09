@@ -26,11 +26,15 @@ class PauseMenuUI:
         on_back_to_menu,
         on_quit,
         on_open_replays,
+        on_open_feel_session,
         on_open_keybindings,
         on_rebind_noclip,
         on_toggle_open_network,
         on_connect_server,
         on_disconnect_server,
+        on_feel_export_latest,
+        on_feel_compare_latest,
+        on_feel_apply_feedback,
     ) -> None:
         aspect_ratio = 16.0 / 9.0
         if getattr(ShowBaseGlobal, "base", None) is not None:
@@ -96,7 +100,7 @@ class PauseMenuUI:
             w=content_w,
             tab_h=tab_h,
             page_h=page_h,
-            labels=["Menu", "Key Bindings", "Multiplayer"],
+            labels=["Menu", "Key Bindings", "Multiplayer", "Feel Session"],
             active=0,
         )
 
@@ -121,6 +125,16 @@ class PauseMenuUI:
         )
         self._multiplayer_status = DirectLabel(
             parent=self._tabs.page(2),
+            text="",
+            text_scale=theme.small_scale,
+            text_align=TextNode.ALeft,
+            text_fg=theme.text,
+            frameColor=(0, 0, 0, 0),
+            pos=(0.0, 0, theme.pad),
+            text_wordwrap=22,
+        )
+        self._feel_status = DirectLabel(
+            parent=self._tabs.page(3),
             text="",
             text_scale=theme.small_scale,
             text_align=TextNode.ALeft,
@@ -191,11 +205,21 @@ class PauseMenuUI:
             label="Multiplayer",
             on_click=self.show_multiplayer,
         )
-        self._btn_back_to_menu = Button.build(
+        self._btn_feel = Button.build(
             parent=self._tabs.page(0),
             theme=theme,
             x=btn_w / 2.0,
             y=y0 - (gap + btn_h) * 5,
+            w=btn_w,
+            h=btn_h,
+            label="Feel Session",
+            on_click=lambda: (on_open_feel_session(), self.show_feel_session()),
+        )
+        self._btn_back_to_menu = Button.build(
+            parent=self._tabs.page(0),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=y0 - (gap + btn_h) * 6,
             w=btn_w,
             h=btn_h,
             label="Back to Main Menu",
@@ -205,7 +229,7 @@ class PauseMenuUI:
             parent=self._tabs.page(0),
             theme=theme,
             x=btn_w / 2.0,
-            y=y0 - (gap + btn_h) * 6,
+            y=y0 - (gap + btn_h) * 7,
             w=btn_w,
             h=btn_h,
             label="Quit",
@@ -215,7 +239,7 @@ class PauseMenuUI:
             parent=self._tabs.page(0),
             theme=theme,
             x=btn_w / 2.0,
-            y=max(theme.pad + 0.06, y0 - (gap + btn_h) * 6.7),
+            y=max(theme.pad + 0.06, y0 - (gap + btn_h) * 7.7),
             w=btn_w,
             h=btn_h * 0.55,
             label="Open To Network",
@@ -321,6 +345,91 @@ class PauseMenuUI:
             on_click=self.show_main,
         )
 
+        # Feel Session page.
+        feel_label_y0 = page_h - theme.pad - theme.small_scale * 1.0
+        self._feel_route_label = DirectLabel(
+            parent=self._tabs.page(3),
+            text="Route tag (A/B/C)",
+            text_scale=theme.small_scale,
+            text_align=TextNode.ALeft,
+            text_fg=theme.text,
+            frameColor=(0, 0, 0, 0),
+            pos=(0.0, 0, feel_label_y0),
+        )
+        self._feel_route_input = TextInput.build(
+            parent=self._tabs.page(3),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=feel_label_y0 - input_h * 0.8,
+            w=btn_w,
+            h=input_h,
+            initial="A",
+            on_submit=lambda _text: None,
+            frame_color=theme.panel2,
+            text_fg=theme.text,
+        )
+        self._feel_feedback_label = DirectLabel(
+            parent=self._tabs.page(3),
+            text="Feedback",
+            text_scale=theme.small_scale,
+            text_align=TextNode.ALeft,
+            text_fg=theme.text,
+            frameColor=(0, 0, 0, 0),
+            pos=(0.0, 0, feel_label_y0 - input_h * 1.9),
+        )
+        self._feel_feedback_input = TextInput.build(
+            parent=self._tabs.page(3),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=feel_label_y0 - input_h * 2.7,
+            w=btn_w,
+            h=input_h,
+            initial="",
+            on_submit=lambda _text: None,
+            frame_color=theme.panel2,
+            text_fg=theme.text,
+        )
+        self._feel_export_button = Button.build(
+            parent=self._tabs.page(3),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=feel_label_y0 - input_h * 4.2,
+            w=btn_w,
+            h=btn_h,
+            label="Export Latest Replay",
+            on_click=lambda: on_feel_export_latest(self.feel_route_tag),
+        )
+        self._feel_compare_button = Button.build(
+            parent=self._tabs.page(3),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=feel_label_y0 - input_h * 5.45,
+            w=btn_w,
+            h=btn_h,
+            label="Compare Latest vs Previous",
+            on_click=lambda: on_feel_compare_latest(self.feel_route_tag),
+        )
+        self._feel_apply_feedback_button = Button.build(
+            parent=self._tabs.page(3),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=feel_label_y0 - input_h * 6.7,
+            w=btn_w,
+            h=btn_h,
+            label="Apply Feedback Tuning",
+            on_click=lambda: on_feel_apply_feedback(self.feel_route_tag, self.feel_feedback_text),
+        )
+        self._feel_back_button = Button.build(
+            parent=self._tabs.page(3),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=theme.pad + btn_h / 2.0,
+            w=btn_w,
+            h=btn_h,
+            label="Back",
+            on_click=self.show_main,
+        )
+
         self.show_main()
         self.root.hide()
 
@@ -372,6 +481,15 @@ class PauseMenuUI:
             inactive_text_fg=self._theme.text_muted,
         )
 
+    def show_feel_session(self) -> None:
+        self._tabs.select(
+            3,
+            active_color=self._theme.panel2,
+            inactive_color=self._theme.panel,
+            active_text_fg=self._theme.text,
+            inactive_text_fg=self._theme.text_muted,
+        )
+
     def set_noclip_binding(self, key_name: str) -> None:
         self._noclip_bind_label["text"] = f"Current noclip key: {str(key_name).upper()}"
 
@@ -407,3 +525,20 @@ class PauseMenuUI:
 
     def set_multiplayer_status(self, text: str) -> None:
         self._multiplayer_status["text"] = str(text)
+
+    def set_feel_status(self, text: str) -> None:
+        self._feel_status["text"] = str(text)
+
+    @property
+    def feel_route_tag(self) -> str:
+        try:
+            return str(self._feel_route_input.entry.get()).strip()
+        except Exception:
+            return ""
+
+    @property
+    def feel_feedback_text(self) -> str:
+        try:
+            return str(self._feel_feedback_input.entry.get()).strip()
+        except Exception:
+            return ""

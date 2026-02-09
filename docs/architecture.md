@@ -43,10 +43,13 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (CS-style grouped boxes, collapsible sections, scrollable content, normalized sliders, profile dropdown/save)
 - `apps/ivan/src/ivan/ui/main_menu.py`: main menu controller (bundle list + import flow + video settings)
 - `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game ESC menu (Resume/Map Selector/Key Bindings/Back/Quit) and keybinding controls
+  - Includes a Feel Session tab for replay export/compare and feedback-driven tuning tweaks.
 - `apps/ivan/src/ivan/ui/replay_browser_ui.py`: in-game replay browser overlay (UI kit list menu)
 - `apps/ivan/src/ivan/ui/replay_input_ui.py`: in-game replay input HUD (UI kit panel) for recorded command visualization
 - `apps/ivan/src/ivan/replays/demo.py`: input-demo storage (record/save/load/list) using repository-local storage under `apps/ivan/replays/`
 - `apps/ivan/src/ivan/replays/telemetry.py`: replay telemetry export pipeline (CSV tick dump + JSON summary metrics)
+- `apps/ivan/src/ivan/replays/compare.py`: replay comparison pipeline (auto-export latest+previous and produce metric/tuning deltas)
+- `apps/ivan/src/ivan/game/feel_feedback.py`: rule-based free-text feedback interpreter for tuning suggestions
 - `apps/ivan/src/ivan/net/server.py`: authoritative multiplayer server loop (TCP bootstrap + UDP input/snapshots)
 - `apps/ivan/src/ivan/net/client.py`: multiplayer client transport for handshake/input send/snapshot poll
 - `apps/ivan/src/ivan/net/protocol.py`: multiplayer packet/message schema and payload codecs
@@ -100,9 +103,12 @@ See: `docs/ui-kit.md`.
   - Replay telemetry export commands are available in the client console:
     - `replay_export_latest [out_dir]`
     - `replay_export <replay_path> [out_dir]`
+    - `replay_compare_latest [out_dir] [route_tag]`
+    - `feel_feedback "<text>" [route_tag]`
   - `ivan-mcp` runs an MCP stdio server (Python 3.9, no deps) that exposes a single tool: `console_exec`.
 - CLI telemetry export:
   - `python -m ivan --export-latest-replay-telemetry [--replay-telemetry-out <dir>]` exports latest replay metrics and exits.
+  - `python -m ivan --compare-latest-replays [--replay-telemetry-out <dir>] [--replay-route-tag A]` auto-exports latest+previous and writes comparison JSON.
 - Display/window:
   - Default: windowed 1280x720 on all platforms (Windows + macOS). Window is user-resizable.
   - Display settings (fullscreen, resolution) persist in `~/.irun/ivan/state.json` and are applied on startup.
@@ -112,6 +118,7 @@ See: `docs/ui-kit.md`.
   - `` ` `` opens debug/admin tuning menu and unlocks cursor.
   - While either menu is open, gameplay input is blocked but simulation continues.
   - `Esc` menu can open a replay browser (`Replays`) to load saved input demos.
+  - `Esc` menu Feel Session tab can export latest replay telemetry, compare latest vs previous, and apply feedback-based tuning changes.
   - Replay playback shows a dedicated replay input HUD and keeps gameplay/menu inputs locked until exit (`R`).
   - Replay input HUD prefers explicitly recorded held states (`WASD`, arrows, mouse buttons) over derived movement axes.
   - `F2` input debug overlay includes rolling gameplay-feel telemetry (for movement/camera tuning passes).

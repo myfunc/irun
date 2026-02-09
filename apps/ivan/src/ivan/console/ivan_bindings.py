@@ -6,6 +6,7 @@ from typing import Any
 
 from ivan.console.core import CommandContext, Console
 from ivan.physics.tuning import PhysicsTuning
+from ivan.replays.compare import compare_latest_replays
 from ivan.replays.telemetry import export_latest_replay_telemetry, export_replay_telemetry
 
 
@@ -107,6 +108,34 @@ def build_client_console(runner: Any) -> Console:
             f"summary: {result.summary_path}",
             f"ticks: {result.tick_count} (telemetry: {result.telemetry_tick_count})",
         ]
+
+    def _cmd_replay_compare_latest(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        out_dir = Path(str(argv[0])) if argv else None
+        route_tag = str(argv[1]).strip() if len(argv) >= 2 else None
+        try:
+            result = compare_latest_replays(out_dir=out_dir, route_tag=route_tag)
+        except Exception as e:
+            return [f"error: {e}"]
+        return [
+            f"latest: {result.latest_export.source_demo}",
+            f"reference: {result.reference_export.source_demo}",
+            f"comparison: {result.comparison_path}",
+            f"result: +{result.improved_count} / -{result.regressed_count} / ={result.equal_count}",
+        ]
+
+    def _cmd_feel_feedback(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        if not argv:
+            return ["usage: feel_feedback <text> [route_tag]"]
+        text = str(argv[0])
+        route_tag = str(argv[1]).strip() if len(argv) >= 2 else ""
+        fn = getattr(runner, "_feel_apply_feedback", None)
+        if not callable(fn):
+            return ["error: feel feedback is unavailable in this runtime"]
+        try:
+            fn(route_tag, text)
+        except Exception as e:
+            return [f"error: {e}"]
+        return [f'feel_feedback applied for route="{route_tag or "none"}"']
 
     def _registry() -> dict[str, Any]:
         # Treat these as "entities" for now. We'll extend once map v3 entities exist.
@@ -271,6 +300,16 @@ def build_client_console(runner: Any) -> Console:
         name="replay_export",
         help="Export telemetry (CSV + JSON summary) for a replay path.",
         handler=_cmd_replay_export,
+    )
+    con.register_command(
+        name="replay_compare_latest",
+        help="Auto-export latest+previous replay telemetry and write a comparison summary.",
+        handler=_cmd_replay_compare_latest,
+    )
+    con.register_command(
+        name="feel_feedback",
+        help="Apply rule-based tuning tweaks from feedback text + latest replay metrics.",
+        handler=_cmd_feel_feedback,
     )
     con.register_command(name="ent_list", help="List registered entities/objects.", handler=_cmd_ent_list)
     con.register_command(name="ent_get", help="Get a property by path (dot-separated).", handler=_cmd_ent_get)

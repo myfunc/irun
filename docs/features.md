@@ -58,8 +58,14 @@
   - replay telemetry export tooling:
     - `replay_export_latest` (in-game console command) exports latest replay to CSV + JSON summary
     - `replay_export <path> [out_dir]` exports a selected replay to CSV + JSON summary
+    - summary now includes Phase 0 feel metrics: landing speed loss/retention and camera jerk (avg/max)
+    - `replay_compare_latest [out_dir] [route_tag]` auto-exports latest+previous runs and writes a metric/tuning delta comparison JSON
     - `python -m ivan --export-latest-replay-telemetry [--replay-telemetry-out <dir>]` exports without launching gameplay
+    - `python -m ivan --compare-latest-replays [--replay-telemetry-out <dir>] [--replay-route-tag A]` compares latest vs previous without launching gameplay
   - while replay is active, gameplay/menu input is locked; `R` exits replay and respawns to normal play
+- Ivan: in-game Feel Session tab (ESC menu)
+  - route tagging (`A/B/C`), export latest replay, compare latest vs previous
+  - free-text feedback action applies rule-based tuning adjustments using latest replay metrics
 - Ivan: multiplayer foundation (authoritative server + connected clients)
   - dedicated server mode with TCP bootstrap + UDP gameplay packets
   - normal client sessions are offline by default; ESC menu `Open To Network` starts/stops embedded host mode for LAN joinability while keeping the local player in-session
@@ -92,6 +98,7 @@
 - Ivan: surf steering preserves inertia (momentum can redirect on ramps without single-frame horizontal direction flips)
 - Ivan: surf vertical input redirection applies uphill only; downhill acceleration remains gravity-driven
 - Ivan: surf-specific acceleration/gravity modifiers stop immediately after contact is lost (no post-leave surf boost)
+- Ivan: debug/admin tuning UI now explicitly includes course marker extents (`course_marker_half_extent_xy/z`) in grouped controls
 - Game modes: maps can declare how they should run via bundle metadata (`run.json`)
   - `free_run`: default "just run around"
   - `time_trial`: local time trial with restart and local PB/leaderboard (per `map_id`)

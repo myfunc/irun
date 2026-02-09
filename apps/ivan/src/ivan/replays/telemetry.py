@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -59,6 +60,15 @@ def _mean(values: list[float]) -> float:
     return float(sum(values) / float(len(values)))
 
 
+def _angle_delta_deg(a: float, b: float) -> float:
+    d = float(b) - float(a)
+    while d > 180.0:
+        d -= 360.0
+    while d < -180.0:
+        d += 360.0
+    return d
+
+
 def _compute_jump_success(grounded: list[bool], jump_pressed: list[bool], lookahead: int = 6) -> dict[str, float | int]:
     attempts = 0
     success = 0
@@ -85,9 +95,108 @@ def _compute_ground_flicker(grounded: list[bool]) -> int:
     return int(flips)
 
 
+def _compute_landing_loss(tm_frames: list[dict[str, Any]]) -> dict[str, float | int]:
+    losses: list[float] = []
+    retentions: list[float] = []
+    prev_g: bool | None = None
+    prev_hs: float | None = None
+    for tm in tm_frames:
+        if "grounded" not in tm:
+            continue
+        cur_g = bool(tm.get("grounded"))
+        cur_hs = float(tm.get("hs")) if isinstance(tm.get("hs"), (int, float)) else None
+        if prev_g is False and cur_g is True and prev_hs is not None and cur_hs is not None:
+            loss = max(0.0, float(prev_hs) - float(cur_hs))
+            losses.append(float(loss))
+            if float(prev_hs) > 1e-6:
+                retentions.append(float(cur_hs) / float(prev_hs))
+        prev_g = cur_g
+        prev_hs = cur_hs
+    return {
+        "count": int(len(losses)),
+        "loss_avg": float(_mean(losses)),
+        "loss_max": float(max(losses) if losses else 0.0),
+        "retention_avg": float(_mean(retentions)),
+    }
+
+
+def _compute_camera_jerk(tm_frames: list[dict[str, Any]], *, tick_rate: int) -> dict[str, float | int]:
+    last_pos: tuple[float, float, float] | None = None
+    last_vel: tuple[float, float, float] | None = None
+    last_yaw: float | None = None
+    last_pitch: float | None = None
+    last_yaw_rate: float | None = None
+    last_pitch_rate: float | None = None
+    last_t: float | None = None
+
+    lin_samples: list[float] = []
+    ang_samples: list[float] = []
+    fallback_dt = 1.0 / float(max(1, int(tick_rate)))
+
+    for i, tm in enumerate(tm_frames):
+        if not all(isinstance(tm.get(k), (int, float)) for k in ("x", "y", "z", "yaw", "pitch")):
+            continue
+        x = float(tm["x"])
+        y = float(tm["y"])
+        z = float(tm["z"])
+        yaw = float(tm["yaw"])
+        pitch = float(tm["pitch"])
+
+        t_val: float | None = float(tm["t"]) if isinstance(tm.get("t"), (int, float)) else None
+        if last_pos is None:
+            last_pos = (x, y, z)
+            last_yaw = yaw
+            last_pitch = pitch
+            last_t = t_val
+            continue
+
+        dt = fallback_dt
+        if t_val is not None and last_t is not None:
+            dt = max(1e-6, float(t_val) - float(last_t))
+
+        vel = (
+            (x - float(last_pos[0])) / dt,
+            (y - float(last_pos[1])) / dt,
+            (z - float(last_pos[2])) / dt,
+        )
+        yaw_rate = _angle_delta_deg(float(last_yaw), float(yaw)) / dt if last_yaw is not None else 0.0
+        pitch_rate = _angle_delta_deg(float(last_pitch), float(pitch)) / dt if last_pitch is not None else 0.0
+
+        if last_vel is not None:
+            lin_jerk = math.sqrt(
+                ((float(vel[0]) - float(last_vel[0])) / dt) ** 2
+                + ((float(vel[1]) - float(last_vel[1])) / dt) ** 2
+                + ((float(vel[2]) - float(last_vel[2])) / dt) ** 2
+            )
+            lin_samples.append(float(lin_jerk))
+
+            if last_yaw_rate is not None and last_pitch_rate is not None:
+                ang_jerk = math.sqrt(
+                    ((float(yaw_rate) - float(last_yaw_rate)) / dt) ** 2
+                    + ((float(pitch_rate) - float(last_pitch_rate)) / dt) ** 2
+                )
+                ang_samples.append(float(ang_jerk))
+
+        last_pos = (x, y, z)
+        last_vel = vel
+        last_yaw = yaw
+        last_pitch = pitch
+        last_yaw_rate = yaw_rate
+        last_pitch_rate = pitch_rate
+        last_t = t_val
+
+    return {
+        "samples": int(max(len(lin_samples), len(ang_samples))),
+        "lin_avg": float(_mean(lin_samples)),
+        "lin_max": float(max(lin_samples) if lin_samples else 0.0),
+        "ang_avg": float(_mean(ang_samples)),
+        "ang_max": float(max(ang_samples) if ang_samples else 0.0),
+    }
+
+
 def _summary(rec: DemoRecording) -> dict[str, Any]:
     frames = list(rec.frames)
-    tm_frames = [f.telemetry for f in frames if isinstance(f.telemetry, dict)]
+    tm_frames = [dict(f.telemetry) for f in frames if isinstance(f.telemetry, dict)]
     tick_rate = max(1, int(rec.metadata.tick_rate))
     duration_s = float(len(frames)) / float(tick_rate)
 
@@ -127,6 +236,8 @@ def _summary(rec: DemoRecording) -> dict[str, Any]:
 
     jump_success = _compute_jump_success(grounded_values, jump_pressed_values)
     ground_flicker = _compute_ground_flicker(grounded_values)
+    landing_loss = _compute_landing_loss(tm_frames)
+    camera_jerk = _compute_camera_jerk(tm_frames, tick_rate=tick_rate)
     return {
         "format_version": 1,
         "demo": {
@@ -136,6 +247,7 @@ def _summary(rec: DemoRecording) -> dict[str, Any]:
             "look_scale": int(rec.metadata.look_scale),
             "source_created_at_unix": float(rec.metadata.created_at_unix),
             "map_json": rec.metadata.map_json,
+            "tuning": dict(rec.metadata.tuning),
         },
         "ticks": {
             "total": int(len(frames)),
@@ -151,6 +263,15 @@ def _summary(rec: DemoRecording) -> dict[str, Any]:
             "grounded_ratio": float(_mean([1.0 if g else 0.0 for g in grounded_values])),
             "ground_flicker_count": int(ground_flicker),
             "ground_flicker_per_min": float((ground_flicker / max(duration_s, 1e-6)) * 60.0),
+            "landing_count": int(landing_loss["count"]),
+            "landing_speed_loss_avg": float(landing_loss["loss_avg"]),
+            "landing_speed_loss_max": float(landing_loss["loss_max"]),
+            "landing_speed_retention_avg": float(landing_loss["retention_avg"]),
+            "camera_lin_jerk_avg": float(camera_jerk["lin_avg"]),
+            "camera_lin_jerk_max": float(camera_jerk["lin_max"]),
+            "camera_ang_jerk_avg": float(camera_jerk["ang_avg"]),
+            "camera_ang_jerk_max": float(camera_jerk["ang_max"]),
+            "camera_jerk_samples": int(camera_jerk["samples"]),
             "jump_takeoff": jump_success,
         },
         "input_counts": input_counts,

@@ -93,6 +93,9 @@ def test_export_replay_telemetry_writes_csv_and_summary(tmp_path: Path) -> None:
     assert summary["input_counts"]["key_w_held_ticks"] == 2
     assert summary["metrics"]["horizontal_speed_max"] == 140.0
     assert summary["metrics"]["jump_takeoff"]["attempts"] == 1
+    assert "tuning" in summary["demo"]
+    assert "landing_speed_loss_avg" in summary["metrics"]
+    assert "camera_lin_jerk_avg" in summary["metrics"]
 
     rec = load_replay(replay_path)
     assert rec.frames[1].key_d_held is True

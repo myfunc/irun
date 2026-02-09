@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ivan.game import run
 from ivan.net import run_server
+from ivan.replays.compare import compare_latest_replays
 from ivan.replays.telemetry import export_latest_replay_telemetry
 
 
@@ -80,6 +81,16 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Optional output directory for replay telemetry exports.",
     )
+    parser.add_argument(
+        "--compare-latest-replays",
+        action="store_true",
+        help="Auto-export latest+previous replay telemetry and write a comparison summary, then exit.",
+    )
+    parser.add_argument(
+        "--replay-route-tag",
+        default=None,
+        help="Optional route tag (A/B/C) attached to replay compare output.",
+    )
     args = parser.parse_args(argv)
 
     if args.export_latest_replay_telemetry:
@@ -89,6 +100,15 @@ def main(argv: list[str] | None = None) -> None:
         print(f"csv: {result.csv_path}")
         print(f"summary: {result.summary_path}")
         print(f"ticks: {result.tick_count} (telemetry: {result.telemetry_tick_count})")
+        return
+
+    if args.compare_latest_replays:
+        out_dir = Path(args.replay_telemetry_out) if args.replay_telemetry_out else None
+        result = compare_latest_replays(out_dir=out_dir, route_tag=args.replay_route_tag)
+        print(f"latest: {result.latest_export.source_demo}")
+        print(f"reference: {result.reference_export.source_demo}")
+        print(f"comparison: {result.comparison_path}")
+        print(f"result: +{result.improved_count} / -{result.regressed_count} / ={result.equal_count}")
         return
 
     if args.server:
