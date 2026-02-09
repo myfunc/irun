@@ -59,6 +59,10 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
         self._vault_assist_vel = LVector3f(0, 0, 0)
         self._vault_assist_queue: list[tuple[LVector3f, float]] = []
         self._vault_exit_airborne_pending = False
+        self._vault_collision_pause_timer = 0.0
+        self._vault_collision_ignore_timer = 0.0
+        self._vault_collision_ignore_normal = LVector3f(0, 0, 0)
+        self._vault_collision_ignore_point = LVector3f(0, 0, 0)
         self._vault_debug = "idle"
         self._vault_debug_timer = 0.0
         self._ground_normal = LVector3f(0, 0, 1)
@@ -101,6 +105,10 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
         self._vault_assist_vel = LVector3f(0, 0, 0)
         self._vault_assist_queue = []
         self._vault_exit_airborne_pending = False
+        self._vault_collision_pause_timer = 0.0
+        self._vault_collision_ignore_timer = 0.0
+        self._vault_collision_ignore_normal = LVector3f(0, 0, 0)
+        self._vault_collision_ignore_point = LVector3f(0, 0, 0)
         self._vault_debug = "idle"
         self._vault_debug_timer = 0.0
         self.detach_grapple()
@@ -231,6 +239,66 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
             self._vault_assist_timer = max(0.0, float(self._vault_assist_timer) - step_dt)
             left_dt -= step_dt
 
+    def _is_vault_collision_paused(self) -> bool:
+        return (
+            float(self._vault_collision_pause_timer) > 0.0
+            or float(self._vault_assist_timer) > 0.0
+            or bool(self._vault_assist_queue)
+        )
+
+    def _is_vault_ignored_hit(self, *, normal: LVector3f, hit_pos: LVector3f) -> bool:
+        if float(self._vault_collision_ignore_timer) <= 0.0:
+            return False
+        ref = LVector3f(self._vault_collision_ignore_normal.x, self._vault_collision_ignore_normal.y, 0.0)
+        if ref.lengthSquared() <= 1e-12:
+            return False
+        n = LVector3f(normal.x, normal.y, 0.0)
+        if n.lengthSquared() <= 1e-12:
+            return False
+        ref.normalize()
+        n.normalize()
+        if float(n.dot(ref)) < 0.78:
+            return False
+        delta = LVector3f(hit_pos) - LVector3f(self._vault_collision_ignore_point)
+        along = abs(float(delta.dot(ref)))
+        same_plane_tol = max(0.32, float(self.player_half.x) * 1.15)
+        return along <= same_plane_tol
+
+    def _vault_pause_translate(self, delta: LVector3f) -> None:
+        if delta.lengthSquared() <= 1e-12:
+            return
+        if self.collision is None:
+            self.pos += delta
+            return
+        hit = self._bullet_sweep_closest(self.pos, self.pos + delta)
+        if not hit.hasHit():
+            self.pos += delta
+            return
+        hit_pos = LVector3f(self.pos + delta * max(0.0, min(1.0, float(hit.getHitFraction()))))
+        if hasattr(hit, "getHitPos"):
+            hit_pos = LVector3f(hit.getHitPos())
+        n = LVector3f(hit.getHitNormal())
+        if n.lengthSquared() > 1e-12:
+            n.normalize()
+        if self._is_vault_ignored_hit(normal=n, hit_pos=hit_pos):
+            self.pos += delta
+            return
+
+        frac = max(0.0, min(1.0, float(hit.getHitFraction()) - 1e-4))
+        self.pos += delta * frac
+        self._vault_collision_pause_timer = 0.0
+        self._vault_collision_ignore_timer = 0.0
+        self._vault_assist_timer = 0.0
+        self._vault_assist_vel = LVector3f(0, 0, 0)
+        self._vault_assist_queue = []
+        clip_n = self._choose_clip_normal(n)
+        if float(self.vel.dot(clip_n)) < 0.0:
+            self._set_velocity(
+                self._clip_velocity(self.vel, clip_n),
+                source=MotionWriteSource.COLLISION,
+                reason="vault.pause.clip",
+            )
+
     def _start_next_vault_assist_segment(self) -> None:
         while self._vault_assist_queue:
             delta, duration = self._vault_assist_queue.pop(0)
@@ -245,7 +313,7 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
         self._vault_assist_vel = LVector3f(0, 0, 0)
         if self._vault_exit_airborne_pending:
             # Ensure vault exits with a small pop so successful mantle chains can continue in-air.
-            exit_up = max(0.8, min(2.2, self._jump_up_speed() * 0.20))
+            exit_up = max(0.22, min(0.75, self._jump_up_speed() * 0.08))
             if float(self.vel.z) < exit_up:
                 self._set_vertical_velocity(
                     exit_up,
@@ -293,12 +361,17 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
         self._vault_camera_timer = max(0.0, self._vault_camera_timer - dt)
         self._vault_debug_timer = max(0.0, self._vault_debug_timer - dt)
         self._jump_buffer_timer = max(0.0, self._jump_buffer_timer - dt)
+        self._vault_collision_pause_timer = max(0.0, float(self._vault_collision_pause_timer) - dt)
+        self._vault_collision_ignore_timer = max(0.0, float(self._vault_collision_ignore_timer) - dt)
         self._apply_vault_assist(dt=dt)
-        self._refresh_wall_contact_from_probe()
+        if not self._is_vault_collision_paused():
+            self._refresh_wall_contact_from_probe()
 
         # Determine grounded state before applying friction/accel.
-        if self.collision is not None:
+        if self.collision is not None and not self._is_vault_collision_paused():
             self._bullet_ground_trace()
+        elif self._is_vault_collision_paused():
+            self.grounded = False
         if self.grounded:
             self._coyote_timer = float(self._motion_solver.coyote_time(horizontal_speed=self._horizontal_speed()))
         else:
@@ -397,11 +470,15 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
 
         # Movement + collision resolution.
         if self.collision is not None:
-            self._bullet_step_slide_move(self.vel * dt)
-            self._bullet_ground_snap()
-            # Update grounded state after movement (e.g. walking off a ledge).
-            self._bullet_ground_trace()
-            self._refresh_wall_contact_from_probe()
+            if self._is_vault_collision_paused():
+                self._vault_pause_translate(self.vel * dt)
+                self.grounded = False
+            else:
+                self._bullet_step_slide_move(self.vel * dt)
+                self._bullet_ground_snap()
+                # Update grounded state after movement (e.g. walking off a ledge).
+                self._bullet_ground_trace()
+                self._refresh_wall_contact_from_probe()
         else:
             self._move_and_collide(self.vel * dt)
 

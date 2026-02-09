@@ -20,10 +20,17 @@ def _make_controller(tuning: PhysicsTuning) -> PlayerController:
 
 
 class _FakeHit:
-    def __init__(self, has_hit: bool, normal: LVector3f, hit_pos: LVector3f | None = None) -> None:
+    def __init__(
+        self,
+        has_hit: bool,
+        normal: LVector3f,
+        hit_pos: LVector3f | None = None,
+        hit_fraction: float = 0.5,
+    ) -> None:
         self._has_hit = has_hit
         self._normal = LVector3f(normal)
         self._hit_pos = LVector3f(hit_pos) if hit_pos is not None else None
+        self._hit_fraction = float(hit_fraction)
 
     def hasHit(self) -> bool:
         return self._has_hit
@@ -32,7 +39,7 @@ class _FakeHit:
         return LVector3f(self._normal)
 
     def getHitFraction(self) -> float:
-        return 0.5
+        return float(self._hit_fraction)
 
     def getHitPos(self) -> LVector3f:
         if self._hit_pos is None:
@@ -66,6 +73,19 @@ class _FakeRayCollision:
     def ray_closest(self, from_pos: LVector3f, to_pos: LVector3f):
         _ = from_pos, to_pos
         return _FakeHit(True, self._normal, self._hit_pos)
+
+
+class _FrontWallCollision:
+    def update_player_sweep_shape(self, *, player_radius: float, player_half_height: float) -> None:
+        _ = player_radius, player_half_height
+
+    def sweep_closest(self, from_pos: LVector3f, to_pos: LVector3f):
+        d = LVector3f(to_pos - from_pos)
+        if float(d.y) > 0.001:
+            frac = 0.18
+            hit_pos = LVector3f(float(from_pos.x), float(from_pos.y + d.y * frac), float(from_pos.z))
+            return _FakeHit(True, LVector3f(0.0, -1.0, 0.0), hit_pos, frac)
+        return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
 
 
 def test_all_numeric_debug_controls_exist_have_tooltips_and_are_wired() -> None:
@@ -274,6 +294,7 @@ def test_wallrun_jump_biases_to_camera_forward_direction() -> None:
 
     assert ctrl.vel.z > 0.0
     assert ctrl.vel.y > abs(ctrl.vel.x)
+    assert ctrl.vel.x > float(tuning.wall_jump_boost) * 0.30
 
 
 def test_wallrun_sink_t90_controls_descent_response() -> None:
@@ -395,6 +416,100 @@ def test_apply_vault_adds_up_and_forward_clearance() -> None:
     assert ctrl.pos.z > start_pos.z
     assert ctrl.vel.y > 0.0
     assert ctrl.vel.z > 0.0
+
+
+def test_vault_preserves_carried_horizontal_speed_with_small_gain() -> None:
+    ctrl = _make_controller(
+        PhysicsTuning(
+            vault_enabled=True,
+            vault_forward_boost=0.9,
+            max_ground_speed=6.0,
+            air_speed_mult=1.0,
+        )
+    )
+    ctrl.vel = LVector3f(0.0, 18.0, 0.0)
+    pre = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y))
+    ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
+
+    ctrl._apply_vault(yaw_deg=0.0)
+    post = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y))
+    assert post >= pre * 0.98
+
+
+def test_vault_vertical_impulse_is_moderate_relative_to_jump_speed() -> None:
+    ctrl = _make_controller(
+        PhysicsTuning(
+            vault_enabled=True,
+            jump_height=1.5,
+            jump_apex_time=0.35,
+            vault_jump_multiplier=1.25,
+        )
+    )
+    ctrl.vel = LVector3f(0.0, 0.0, -1.0)
+    ctrl._apply_vault(yaw_deg=0.0)
+    assert ctrl.vel.z > 0.0
+    assert ctrl.vel.z < ctrl._jump_up_speed() * 0.90
+
+
+def test_vault_height_boost_slider_increases_vertical_component() -> None:
+    low = _make_controller(
+        PhysicsTuning(
+            vault_enabled=True,
+            vault_height_boost=0.0,
+        )
+    )
+    high = _make_controller(
+        PhysicsTuning(
+            vault_enabled=True,
+            vault_height_boost=0.9,
+        )
+    )
+    for ctrl in (low, high):
+        ctrl.vel = LVector3f(0.0, 0.0, -1.0)
+        ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
+
+    low._apply_vault(yaw_deg=0.0)
+    high._apply_vault(yaw_deg=0.0)
+
+    assert high.vel.z > low.vel.z
+
+
+def test_vault_temporarily_disables_collision_resolution_to_preserve_momentum() -> None:
+    ctrl = PlayerController(
+        tuning=PhysicsTuning(vault_enabled=True, vault_forward_boost=0.8),
+        spawn_point=LVector3f(0, 0, 3),
+        aabbs=[],
+        collision=_FakeCollision(),
+    )
+    ctrl.vel = LVector3f(0.0, 10.0, 0.0)
+    ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
+    start_pos = LVector3f(ctrl.pos)
+
+    ctrl._apply_vault(yaw_deg=0.0)
+    assert ctrl._is_vault_collision_paused()
+    ctrl.step(dt=0.06, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+
+    assert ctrl.pos.y > start_pos.y + 0.20
+    assert ctrl.contact_count() == 0
+
+
+def test_vault_collision_pause_still_blocks_non_vault_front_wall() -> None:
+    ctrl = PlayerController(
+        tuning=PhysicsTuning(vault_enabled=True),
+        spawn_point=LVector3f(0, 0, 3),
+        aabbs=[],
+        collision=_FrontWallCollision(),
+    )
+    ctrl._vault_collision_pause_timer = 0.20
+    ctrl._vault_collision_ignore_timer = 0.20
+    ctrl._vault_collision_ignore_normal = LVector3f(-1.0, 0.0, 0.0)
+    ctrl._vault_collision_ignore_point = LVector3f(0.0, 0.0, 3.0)
+    start = LVector3f(ctrl.pos)
+
+    ctrl._vault_pause_translate(LVector3f(0.0, 1.0, 0.0))
+
+    assert ctrl.pos.y < start.y + 0.35
+    assert ctrl._is_vault_collision_paused() is False
 
 
 def test_vault_height_cap_allows_taller_obstacles_than_previous_limit() -> None:

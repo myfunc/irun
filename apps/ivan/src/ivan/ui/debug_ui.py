@@ -42,6 +42,8 @@ class DebugUI:
     FIELD_LABELS: dict[str, str] = UI_FIELD_LABELS
     # Tooltips (tests rely on Lower/Higher guidance strings).
     FIELD_HELP: dict[str, str] = UI_FIELD_HELP
+    # UI-only inversion for fields where "move right = stronger effect" is more intuitive.
+    _INVERTED_UI_NUMERIC_FIELDS: set[str] = {"wallrun_sink_t90"}
 
     def __init__(
         self,
@@ -296,7 +298,7 @@ class DebugUI:
     def sync_from_tuning(self) -> None:
         for g in self._groups.values():
             for field, ctrl in g.numeric.items():
-                value = float(getattr(self._tuning, field))
+                value = self._to_ui_numeric(field, float(getattr(self._tuning, field)))
                 ctrl.set_value(value, emit=False)
             for field, cb in g.toggles.items():
                 cb.set_checked(bool(getattr(self._tuning, field)))
@@ -340,10 +342,10 @@ class DebugUI:
                 y=y_cursor,
                 w=row_w,
                 label=self._label_for_field(field),
-                value=float(getattr(self._tuning, field)),
+                value=self._to_ui_numeric(field, float(getattr(self._tuning, field))),
                 minimum=low,
                 maximum=high,
-                on_change=lambda val, f=field: self._set_tuning(f, float(val)),
+                on_change=lambda val, f=field: self._set_tuning_from_ui(f, float(val)),
                 normalized_slider=True,
                 normalized_entry=True,
                 precision=3 if high <= 3.0 else 2,
@@ -446,6 +448,19 @@ class DebugUI:
     def _set_tuning(self, field: str, value: float) -> None:
         setattr(self._tuning, field, float(value))
         self._on_tuning_change(field)
+
+    def _set_tuning_from_ui(self, field: str, value: float) -> None:
+        self._set_tuning(field, self._from_ui_numeric(field, value))
+
+    def _to_ui_numeric(self, field: str, value: float) -> float:
+        if field not in self._INVERTED_UI_NUMERIC_FIELDS:
+            return float(value)
+        low, high = self._numeric_ranges.get(field, (0.0, 1.0))
+        return float(low + high - float(value))
+
+    def _from_ui_numeric(self, field: str, value: float) -> float:
+        # Reflection around [low, high] midpoint is its own inverse.
+        return self._to_ui_numeric(field, value)
 
     def _set_bool_field(self, field: str, checked: bool) -> None:
         setattr(self._tuning, field, bool(checked))
