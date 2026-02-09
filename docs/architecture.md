@@ -43,7 +43,7 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (CS-style grouped boxes, collapsible sections, scrollable content, normalized sliders, profile dropdown/save)
 - `apps/ivan/src/ivan/ui/main_menu.py`: main menu controller (bundle list + import flow + video settings)
 - `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game ESC menu (Resume/Map Selector/Key Bindings/Back/Quit) and keybinding controls
-  - Includes a Feel Session tab for replay export/compare and feedback-driven tuning tweaks.
+  - Includes a Feel Session tab with route radio options (`A/B/C`), replay export, and feedback-driven tuning tweaks.
 - `apps/ivan/src/ivan/ui/replay_browser_ui.py`: in-game replay browser overlay (UI kit list menu)
 - `apps/ivan/src/ivan/ui/replay_input_ui.py`: in-game replay input HUD (UI kit panel) for recorded command visualization
 - `apps/ivan/src/ivan/replays/demo.py`: input-demo storage (record/save/load/list) using repository-local storage under `apps/ivan/replays/`
@@ -118,7 +118,8 @@ See: `docs/ui-kit.md`.
   - `` ` `` opens debug/admin tuning menu and unlocks cursor.
   - While either menu is open, gameplay input is blocked but simulation continues.
   - `Esc` menu can open a replay browser (`Replays`) to load saved input demos.
-  - `Esc` menu Feel Session tab can export latest replay telemetry, compare latest vs previous, and apply feedback-based tuning changes.
+  - `Esc` menu Feel Session tab can export latest replay telemetry and apply feedback-based tuning changes.
+  - Apply-feedback flow auto-runs latest-vs-previous replay comparison in the background and reports deltas.
   - Replay playback shows a dedicated replay input HUD and keeps gameplay/menu inputs locked until exit (`R`).
   - Replay input HUD prefers explicitly recorded held states (`WASD`, arrows, mouse buttons) over derived movement axes.
   - `F2` input debug overlay includes rolling gameplay-feel telemetry (for movement/camera tuning passes).
