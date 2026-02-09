@@ -78,6 +78,7 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 - `Esc`: opens the in-game menu (Resume / Map Selector / Key Bindings / Back to Main Menu / Quit); in the main menu it acts as back/quit
 - `Esc -> Replays`: open replay browser and load an input-demo file
   - while replay playback is active, input is locked; press `R` to exit replay and respawn
+  - replay playback shows an input HUD (movement/jump/crouch/mouse directions)
 - `` ` `` (tilde/backtick): opens the debug/admin tuning menu
 - `F`: save current demo recording (recording window starts on respawn and ends when saved)
 - `F4`: toggle the in-game console

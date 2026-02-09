@@ -52,6 +52,7 @@
   - saved demos are stored in-repo under `apps/ivan/replays/`
   - replay browser available from `Esc -> Replays`
   - playback re-simulates recorded per-tick input at fixed `60 Hz`
+  - replay mode includes a compact input HUD visualizer (movement/jump/crouch/mouse direction)
   - per-tick replay frames now also include telemetry for feel tuning (position/velocity/speeds/camera angles/state/buttons)
   - while replay is active, gameplay/menu input is locked; `R` exits replay and respawns to normal play
 - Ivan: multiplayer foundation (authoritative server + connected clients)

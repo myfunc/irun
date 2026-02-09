@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import inspect
 from pathlib import Path
 import shutil
 
@@ -50,12 +51,21 @@ class MainMenuController:
 
         self._app_root = ivan_app_root()
         self._state = state or load_state()
+        menu_kwargs = {
+            "aspect2d": aspect2d,
+            "theme": theme,
+            "title": "IVAN",
+            "hint": "Click or Enter: choose | Scroll: navigate | Esc: back/quit",
+        }
+        # Keep compatibility with older installed irun_ui_kit builds that don't
+        # expose ListMenu(on_click=...).
+        try:
+            if "on_click" in inspect.signature(ListMenu.__init__).parameters:
+                menu_kwargs["on_click"] = self.on_enter
+        except Exception:
+            pass
         self._ui = ListMenu(
-            aspect2d=aspect2d,
-            theme=theme,
-            title="IVAN",
-            hint="Click or Enter: choose | Scroll: navigate | Esc: back/quit",
-            on_click=self.on_enter,
+            **menu_kwargs,
         )
 
         self._screen: str = "main"  # main | bundles | mods | maps | video
