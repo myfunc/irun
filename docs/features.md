@@ -15,7 +15,7 @@
 - Ivan: input debug overlay (`F2`) for keyboard/mouse troubleshooting
 - Ivan: gameplay feel telemetry in `F2` overlay (rolling jump success, landing speed loss, ground flicker, camera jerk proxies)
 - Ivan: staged invariant-motion refactor foundation
-  - added invariant fields for run/stop/jump/air/slide/wallrun timing windows (`run_t90`, `ground_stop_t90`, `jump_apex_time`, `air_speed_mult`, `air_gain_t90`, `wallrun_sink_t90`, `slide_stop_t90`, `coyote_time`)
+  - added invariant fields for run/stop/jump/air/slide/wallrun timing windows (`run_t90`, `ground_stop_t90`, `jump_apex_time`, `air_speed_mult`, `air_gain_t90`, `wallrun_sink_t90`, `slide_stop_t90`, `grace_period`)
   - added `physics.motion` package with single config object (`MotionConfig`: invariants + derived constants)
   - `PlayerController` now consumes `MotionSolver` for derived run response, ground damping, gravity, and jump takeoff speed
   - gameplay/client/server simulation now routes through `MotionIntent` (`step_with_intent`) for unified movement command ingestion
@@ -37,11 +37,14 @@
     - coyote/buffer leniency on/off
 - Ivan: expanded runtime feel diagnostics
   - `F2` now includes FPS + frame p95, sim steps, state, accel, contacts, normals, leniency timers, and rolling determinism hash summary
+  - `F2` + gameplay status line now include vault diagnostics (`ok` or explicit reject reason) for ledge-vault iteration
   - `F10` dumps rolling diagnostics buffer to JSON for offline jank analysis
   - `F11` dumps rolling determinism trace hash buffer for replay/harness checks
 - Ivan: debug tuning surface reduced to invariant-first controls
   - removed most legacy/direct scalar sliders from the runtime debug menu
-  - kept compact controls for `Vmax`, run response timing, ground stop timing, air speed/gain, wallrun sink timing, jump height/apex timing, slide stop timing, and leniency windows
+  - kept compact controls for `Vmax`, run response timing, ground stop timing, air speed/gain, wallrun sink timing, jump height/apex timing, slide stop timing, leniency windows, and vault iteration (`vault_max_ledge_height`, `vault_forward_boost`)
+  - added character-height iteration slider (`player_half_height`) with automatic eye-height proportional update
+  - added optional character scale lock toggle to auto-derive `player_radius` + `step_height` from `player_half_height` without touching core feel invariants
   - restored `autojump_enabled` in compact toggles for bhop-chain validation
   - restored `wallrun_enabled` toggle for wallrun iteration
   - surf section is now isolation-only toggle (`surf_enabled`) with no surf-specific scalar sliders in the debug surface
@@ -56,6 +59,21 @@
     - strafe left/right -> subtle roll
     - backpedal -> subtle pitch
   - all tilt is camera-only and does not write gameplay motion/velocity
+- Ivan: read-only camera height smoothing pass
+  - slide and vault eye-height transitions are smoothed through a dedicated `CameraHeightObserver`
+  - camera observer state resets on map start/respawn/network reconcile paths to avoid stale offset snaps
+- Ivan: vault leniency and trigger criteria refactor
+  - vault is enabled by default for movement iteration
+  - vault timing now uses the same `grace_period` invariant used by jump buffering and coyote windows
+  - grace windows are now distance-derived at runtime (`grace_distance = grace_period * Vmax`) and stay backward-safe (never less forgiving than base period)
+  - vault requires a front-facing, non-stepable obstacle and uses a raised runtime max-height cap (`3x` previous cap)
+  - airborne vault attempts are now allowed (not gated to grounded coyote-only paths)
+  - grounded-only stepable rejection keeps low obstacles on normal step-up while preserving in-air vault flow
+  - successful vault mantle assist now runs in phased clearance (up first, then forward) to avoid "vault ok but still blocked" outcomes
+  - ledge-top probing now samples dual origins and near/outside wall offsets to reduce false `no ledge top` rejects
+  - vault max obstacle slider range increased to `7.5` and runtime cap raised to `3x` previous height limit
+  - vault camera dip now uses a smooth dip/recover curve; vault exit enforces slight airborne pop so successful vault chains continue in air
+  - if jump is buffered shortly before wall contact while airborne, vault can now still trigger on contact
 - Ivan: controller module split for ownership clarity and reviewability
   - `player_controller.py`: orchestration + authority loop
   - `player_controller_actions.py`: jump/vault/grapple/slide-hull/friction
@@ -145,7 +163,7 @@
   - health system with grapple damage (`20` per hit) and corner HP HUD
 - Ivan: autojump toggle (hold jump to continue hopping)
 - Ivan: grapple hook traversal (attach/detach on LMB, one-shot attach boost, rope swing constraint)
-- Ivan: vault is disabled by default (runtime toggle in debug menu)
+- Ivan: vault is enabled by default (runtime toggle in debug menu)
 - Ivan: surf prototype on slanted surfaces (strafe-held surf with live tuning controls)
 - Ivan: legacy-style surf preset (`surf_sky2_server`) approximating public surf_ski_2/surf_sky_2 server cvars
 - Ivan: surf steering preserves inertia (momentum can redirect on ramps without single-frame horizontal direction flips)

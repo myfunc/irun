@@ -11,12 +11,14 @@ class PhysicsTuning:
     ground_stop_t90: float = 0.220
     jump_apex_time: float = 0.351
     slide_stop_t90: float = 3.000
-    coyote_time: float = 0.100
+    # Shared leniency window used by both jump buffer and coyote logic.
+    grace_period: float = 0.120
     coyote_buffer_enabled: bool = True
     custom_friction_enabled: bool = True
     slide_enabled: bool = True
     harness_camera_smoothing_enabled: bool = True
     harness_animation_root_motion_enabled: bool = False
+    character_scale_lock_enabled: bool = False
 
     jump_height: float = 1.48
     max_ground_speed: float = 6.643
@@ -36,19 +38,17 @@ class PhysicsTuning:
     surf_min_normal_z: float = 0.05
     surf_max_normal_z: float = 0.72
     vault_jump_multiplier: float = 1.25
-    vault_forward_boost: float = 2.0
+    vault_forward_boost: float = 0.85
     vault_min_ledge_height: float = 0.20
-    vault_max_ledge_height: float = 1.40
+    vault_max_ledge_height: float = 2.10
     vault_cooldown: float = 0.30
-    jump_buffer_time: float = 0.14
-    enable_jump_buffer: bool = True
     autojump_enabled: bool = False
     noclip_enabled: bool = False
     noclip_speed: float = 9.0
     surf_enabled: bool = True
     walljump_enabled: bool = True
     wallrun_enabled: bool = False
-    vault_enabled: bool = False
+    vault_enabled: bool = True
     grapple_enabled: bool = False
     grapple_fire_range: float = 180.0
     grapple_attach_boost: float = 8.0

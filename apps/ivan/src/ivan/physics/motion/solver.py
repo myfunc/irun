@@ -31,11 +31,30 @@ class MotionSolver:
     def gravity(self) -> float:
         return float(self._config.derived.gravity)
 
-    def input_buffer_time(self) -> float:
-        return float(self._config.invariants.jump_buffer_time)
+    def input_buffer_time(self, *, horizontal_speed: float | None = None) -> float:
+        return self.grace_time_for_speed(horizontal_speed=horizontal_speed)
 
-    def coyote_time(self) -> float:
-        return float(self._config.invariants.coyote_time)
+    def coyote_time(self, *, horizontal_speed: float | None = None) -> float:
+        return self.grace_time_for_speed(horizontal_speed=horizontal_speed)
+
+    def grace_time_for_speed(self, *, horizontal_speed: float | None = None) -> float:
+        """
+        Distance-based leniency window used by jump-buffer/coyote/vault grace checks.
+
+        Backward-safe behavior: window never drops below configured grace_period.
+        """
+
+        base_t = max(0.0, float(self._config.invariants.grace_period))
+        if base_t <= 0.0:
+            return 0.0
+        grace_dist = max(0.0, float(self._config.invariants.grace_distance))
+        vmax = max(0.01, float(self._config.invariants.vmax))
+        speed = abs(float(horizontal_speed)) if horizontal_speed is not None else vmax
+        # Avoid exploding time at near-zero speed while preserving distance-derived behavior.
+        speed = max(0.35 * vmax, speed)
+        dist_t = grace_dist / speed if speed > 1e-9 else base_t
+        # Never less forgiving than old fixed-time behavior; cap max expansion for stability.
+        return max(base_t, min(base_t * 2.20, float(dist_t)))
 
     def slide_stop_t90(self) -> float:
         return float(self._config.invariants.slide_stop_t90)

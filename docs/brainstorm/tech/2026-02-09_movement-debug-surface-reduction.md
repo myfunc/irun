@@ -17,15 +17,19 @@ Kept controls:
 - `wallrun_sink_t90`
 - `jump_height`
 - `jump_apex_time`
-- `jump_buffer_time`
-- `coyote_time`
+- `grace_period` (shared jump-buffer + coyote + vault leniency)
 - `slide_stop_t90`
+- `vault_max_ledge_height` (vault iteration)
+- `vault_forward_boost` (vault iteration)
+- `player_half_height` (character scale iteration; eye height follows proportionally)
+- `character_scale_lock_enabled` (optional auto-derive of radius/step from height)
 
 Kept toggles:
 - `autojump_enabled`
 - `coyote_buffer_enabled`
 - `custom_friction_enabled`
 - `slide_enabled`
+- `vault_enabled`
 - `wallrun_enabled`
 - `surf_enabled`
 - `harness_camera_smoothing_enabled`
@@ -47,6 +51,13 @@ Not exposed anymore in debug UI:
 - Slide must preserve carried horizontal speed on engage (no artificial entry boost).
 - Slide deceleration is controlled only by `slide_stop_t90` so it stays independent from normal ground stop tuning.
 - Slide steering should be camera-yaw driven; keyboard strafe should not directly steer slide.
+
+## Vault reliability addendum
+- Vault trigger should be available while airborne, not only from grounded/coyote-like windows.
+- "Stepable" rejection is only meaningful on grounded attempts; in-air attempts should prefer flow and try vault first.
+- Vault mantle clearance should be phased (`up` then `forward`) so successful triggers clear the hull over the ledge instead of diagonal snagging.
+- Keep vault tuning compact: obstacle-height cap (`vault_max_ledge_height`) + forward carry (`vault_forward_boost`) + shared `grace_period`.
+- Grace logic should remain compact too: keep one slider (`grace_period`) but derive runtime leniency from distance (`grace_distance = grace_period * Vmax`) so jump-buffer/coyote/vault stay coupled and predictable.
 
 ## Risks
 - hidden advanced settings still exist in profile/state payloads; accidental edits outside debug UI can still affect behavior.

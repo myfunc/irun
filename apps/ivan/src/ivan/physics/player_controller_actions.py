@@ -87,54 +87,235 @@ class PlayerControllerActionsMixin:
 
     def _try_vault(self, *, yaw_deg: float) -> bool:
         if self.collision is None:
+            self._set_vault_debug("vault fail: no collision")
             return False
         if self._vault_cooldown_timer < float(self.tuning.vault_cooldown):
+            self._set_vault_debug("vault fail: cooldown")
             return False
-        if self._wall_contact_timer > 0.30 or self._wall_normal.lengthSquared() <= 0.01:
+        if self._wall_normal.lengthSquared() <= 0.01 or self._wall_contact_timer > 0.40:
+            self._prime_vault_wall_contact(yaw_deg=yaw_deg)
+        hspeed = math.sqrt(float(self.vel.x) * float(self.vel.x) + float(self.vel.y) * float(self.vel.y))
+        grace = max(0.06, float(self._motion_solver.coyote_time(horizontal_speed=hspeed)), 0.24)
+        if self._wall_contact_timer > grace or self._wall_normal.lengthSquared() <= 0.01:
+            self._set_vault_debug("vault fail: no wall/grace")
+            return False
+        if not self._is_vault_wall_in_front(yaw_deg=yaw_deg):
+            self._set_vault_debug("vault fail: not facing wall")
             return False
 
-        edge_z = self._find_vault_edge_height()
+        edge_z = self._find_vault_edge_height(yaw_deg=yaw_deg)
         if edge_z is None:
+            self._set_vault_debug("vault fail: no ledge top")
             return False
 
         feet_z = self.pos.z - self.player_half.z
         ledge_delta = edge_z - feet_z
-        if ledge_delta < float(self.tuning.vault_min_ledge_height):
+        min_vault = max(0.06, float(self.tuning.vault_min_ledge_height))
+        # Keep a hard safety cap while allowing 3x larger vault windows than before.
+        max_vault = min(float(self.tuning.vault_max_ledge_height), float(self._standing_half_height) * 6.0)
+        # In-air vaulting should not be rejected by "stepable" thresholds that are intended
+        # for grounded movement where regular step-up already handles low obstacles.
+        if self.grounded and ledge_delta < min_vault:
+            self._set_vault_debug(f"vault fail: stepable (h={ledge_delta:.2f} min={min_vault:.2f})")
             return False
-        if ledge_delta > float(self.tuning.vault_max_ledge_height):
+        if self.grounded and self._is_obstacle_stepable(yaw_deg=yaw_deg, edge_z=float(edge_z)):
+            step_h = max(0.0, float(self.tuning.step_height))
+            self._set_vault_debug(f"vault fail: stepable (h={ledge_delta:.2f} step={step_h:.2f})")
+            return False
+        if ledge_delta > max_vault:
+            self._set_vault_debug("vault fail: too high")
             return False
         if feet_z >= edge_z - 0.02:
+            self._set_vault_debug("vault fail: already above")
             return False
 
-        self._apply_vault(yaw_deg=yaw_deg)
+        self._apply_vault(yaw_deg=yaw_deg, edge_z=float(edge_z))
+        self._set_vault_debug(f"vault ok: h={ledge_delta:.2f}", hold=0.55)
         return True
 
-    def _find_vault_edge_height(self) -> float | None:
+    def _prime_vault_wall_contact(self, *, yaw_deg: float) -> None:
+        if self.collision is None:
+            return
+        h_rad = math.radians(float(yaw_deg))
+        forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0.0)
+        if forward.lengthSquared() <= 1e-12:
+            return
+        forward.normalize()
+        walkable_z = self._walkable_threshold_z(float(self.tuning.max_ground_slope_deg))
+
+        probe_dist = max(0.14, float(self.player_half.x) + 0.28)
+        z_offsets = (
+            -max(0.05, float(self.player_half.z) * 0.12),
+            max(0.20, float(self.player_half.z) * 0.22),
+        )
+        for z_off in z_offsets:
+            start = LVector3f(float(self.pos.x), float(self.pos.y), float(self.pos.z + z_off))
+            end = LVector3f(start + forward * probe_dist)
+            hit = self._bullet_sweep_closest(start, end)
+            if not hit.hasHit():
+                continue
+            n = LVector3f(hit.getHitNormal())
+            if n.lengthSquared() > 1e-12:
+                n.normalize()
+            if abs(float(n.z)) >= max(0.65, walkable_z):
+                continue
+            hit_pos = start
+            if hasattr(hit, "getHitPos"):
+                hit_pos = LVector3f(hit.getHitPos())
+            if not self._is_valid_wall_contact(point=hit_pos):
+                continue
+            self._set_wall_contact(LVector3f(float(n.x), float(n.y), 0.0), hit_pos)
+            return
+
+    def _is_vault_wall_in_front(self, *, yaw_deg: float) -> bool:
+        if self._wall_normal.lengthSquared() <= 1e-12:
+            return False
+        h_rad = math.radians(float(yaw_deg))
+        forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0.0)
+        if forward.lengthSquared() <= 1e-12:
+            return False
+        forward.normalize()
+        wall_n = LVector3f(self._wall_normal.x, self._wall_normal.y, 0.0)
+        if wall_n.lengthSquared() <= 1e-12:
+            return False
+        wall_n.normalize()
+        # Facing into the wall means forward is opposite wall normal.
+        return float(forward.dot(wall_n)) <= -0.20
+
+    def _find_vault_edge_height(self, *, yaw_deg: float) -> float | None:
         if self.collision is None:
             return None
         wall_n = LVector3f(self._wall_normal)
         if wall_n.lengthSquared() <= 1e-12:
             return None
         wall_n.normalize()
+        wall_in = LVector3f(-wall_n.x, -wall_n.y, 0.0)
+        if wall_in.lengthSquared() > 1e-12:
+            wall_in.normalize()
+        h_rad = math.radians(float(yaw_deg))
+        cam_forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0.0)
+        if cam_forward.lengthSquared() > 1e-12:
+            cam_forward.normalize()
+        approach = wall_in if wall_in.lengthSquared() > 1e-12 else LVector3f(cam_forward)
+        if approach.lengthSquared() <= 1e-12:
+            approach = LVector3f(wall_in if wall_in.lengthSquared() > 1e-12 else cam_forward)
+        if approach.lengthSquared() <= 1e-12:
+            return None
+        approach.normalize()
+        right = LVector3f(approach.y, -approach.x, 0.0)
+        if right.lengthSquared() > 1e-12:
+            right.normalize()
 
         feet_z = self.pos.z - self.player_half.z
-        probe_xy = self.pos - wall_n * (self.player_half.x + 0.18)
         scan_top = feet_z + float(self.tuning.vault_max_ledge_height) + 0.35
         scan_bottom = feet_z - 0.25
-        start = LVector3f(probe_xy.x, probe_xy.y, scan_top)
-        end = LVector3f(probe_xy.x, probe_xy.y, scan_bottom)
-        hit = self._bullet_sweep_closest(start, end)
-        if not hit.hasHit():
-            return None
-
-        n = LVector3f(hit.getHitNormal())
-        if n.lengthSquared() > 1e-12:
-            n.normalize()
         walkable_z = self._walkable_threshold_z(float(self.tuning.max_ground_slope_deg))
-        if n.z <= walkable_z:
-            return None
+        best_z: float | None = None
 
-        return self._hit_z(hit=hit, start=start, end=end)
+        # Probe a small fan of columns above/behind the contacted wall face and look for walkable top surfaces.
+        # Ray tests are used here (instead of capsule sweep) to avoid side-wall false hits.
+        base_xy = LVector3f(float(self._wall_contact_point.x), float(self._wall_contact_point.y), 0.0)
+        if base_xy.lengthSquared() <= 1e-12:
+            base_xy = LVector3f(float(self.pos.x), float(self.pos.y), 0.0)
+        alt_xy = LVector3f(float(self.pos.x), float(self.pos.y), 0.0)
+        origins = (base_xy, alt_xy)
+        probe_dists = (
+            -max(0.06, float(self.player_half.x) * 0.25),
+            0.0,
+            0.06,
+            max(0.12, float(self.player_half.x) * 0.60),
+            max(0.22, float(self.player_half.x) * 1.00),
+            max(0.38, float(self.player_half.x) * 1.50),
+            max(0.58, float(self.player_half.x) * 2.10),
+        )
+        side_span = max(0.08, float(self.player_half.x) * 0.45)
+        side_offsets = (0.0,) if right.lengthSquared() <= 1e-12 else (-side_span, 0.0, side_span)
+        for origin in origins:
+            for dist in probe_dists:
+                for side in side_offsets:
+                    probe_xy = LVector3f(origin.x, origin.y, 0.0) + approach * dist + right * side
+                    start = LVector3f(probe_xy.x, probe_xy.y, scan_top)
+                    end = LVector3f(probe_xy.x, probe_xy.y, scan_bottom)
+                    if hasattr(self.collision, "ray_closest"):
+                        hit = self.collision.ray_closest(start, end)
+                    else:
+                        hit = self._bullet_sweep_closest(start, end)
+                    if not hit.hasHit():
+                        continue
+
+                    n = LVector3f(hit.getHitNormal())
+                    if n.lengthSquared() > 1e-12:
+                        n.normalize()
+                    if n.z <= walkable_z:
+                        continue
+
+                    hit_z = self._hit_z(hit=hit, start=start, end=end)
+                    # Ignore near-floor hits; keep true ledge tops even when player is already elevated.
+                    if hit_z <= (feet_z + 0.03):
+                        continue
+                    if best_z is None or hit_z > best_z:
+                        best_z = float(hit_z)
+
+        return best_z
+
+    def _is_obstacle_stepable(self, *, yaw_deg: float, edge_z: float) -> bool:
+        step_h = max(0.0, float(self.tuning.step_height))
+        feet_z = float(self.pos.z - self.player_half.z)
+        ledge_delta = float(edge_z) - feet_z
+        if ledge_delta > (step_h + 0.08):
+            return False
+        if self.collision is None:
+            return ledge_delta <= (step_h + 0.05)
+
+        walkable_z = self._walkable_threshold_z(float(self.tuning.max_ground_slope_deg))
+        wall_in = LVector3f(-self._wall_normal.x, -self._wall_normal.y, 0.0)
+        if wall_in.lengthSquared() > 1e-12:
+            wall_in.normalize()
+        h_rad = math.radians(float(yaw_deg))
+        cam_forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0.0)
+        if cam_forward.lengthSquared() > 1e-12:
+            cam_forward.normalize()
+        approach = wall_in * 0.75 + cam_forward * 0.25
+        if approach.lengthSquared() <= 1e-12:
+            approach = LVector3f(wall_in if wall_in.lengthSquared() > 1e-12 else cam_forward)
+        if approach.lengthSquared() <= 1e-12:
+            return ledge_delta <= (step_h + 0.05)
+        approach.normalize()
+        right = LVector3f(approach.y, -approach.x, 0.0)
+        if right.lengthSquared() > 1e-12:
+            right.normalize()
+
+        side_span = max(0.0, float(self.player_half.x) * 0.35)
+        side_offsets = (0.0,) if right.lengthSquared() <= 1e-12 else (-side_span, 0.0, side_span)
+        step_forward = max(0.06, float(self.player_half.x) * 0.95)
+
+        for side in side_offsets:
+            base = self.pos + right * side
+            up_to = LVector3f(base.x, base.y, base.z + step_h + 0.02)
+            hit_up = self._bullet_sweep_closest(base, up_to)
+            if hit_up.hasHit() and float(hit_up.getHitFraction()) < 0.995:
+                continue
+
+            fwd_to = LVector3f(up_to + approach * step_forward)
+            hit_fwd = self._bullet_sweep_closest(up_to, fwd_to)
+            if hit_fwd.hasHit() and float(hit_fwd.getHitFraction()) < 0.995:
+                continue
+
+            down_end = LVector3f(fwd_to.x, fwd_to.y, fwd_to.z - step_h - 0.40)
+            hit_down = self._bullet_sweep_closest(fwd_to, down_end)
+            if not hit_down.hasHit():
+                continue
+
+            n = LVector3f(hit_down.getHitNormal())
+            if n.lengthSquared() > 1e-12:
+                n.normalize()
+            if n.z <= walkable_z:
+                continue
+
+            hit_z = self._hit_z(hit=hit_down, start=fwd_to, end=down_end)
+            if float(hit_z) <= (feet_z + step_h + 0.06):
+                return True
+        return False
 
     @staticmethod
     def _hit_z(*, hit, start: LVector3f, end: LVector3f) -> float:
@@ -143,11 +324,23 @@ class PlayerControllerActionsMixin:
         frac = max(0.0, min(1.0, float(hit.getHitFraction())))
         return float((start + (end - start) * frac).z)
 
-    def _apply_vault(self, *, yaw_deg: float) -> None:
+    def _apply_vault(self, *, yaw_deg: float, edge_z: float | None = None) -> None:
         h_rad = math.radians(float(yaw_deg))
-        forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0)
-        if forward.lengthSquared() > 1e-12:
-            forward.normalize()
+        cam_forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0)
+        if cam_forward.lengthSquared() > 1e-12:
+            cam_forward.normalize()
+        wall_in = LVector3f(-self._wall_normal.x, -self._wall_normal.y, 0.0)
+        if wall_in.lengthSquared() > 1e-12:
+            wall_in.normalize()
+
+        forward = LVector3f(cam_forward)
+        if wall_in.lengthSquared() > 1e-12:
+            blended = wall_in * 0.65 + cam_forward * 0.35
+            if blended.lengthSquared() > 1e-12:
+                blended.normalize()
+                forward = blended
+            else:
+                forward = LVector3f(wall_in)
 
         self._set_vertical_velocity(
             max(float(self.vel.z), self._jump_up_speed() * float(self.tuning.vault_jump_multiplier)),
@@ -159,6 +352,16 @@ class PlayerControllerActionsMixin:
             source=MotionWriteSource.IMPULSE,
             reason="vault.forward_boost",
         )
+        # Queue a short mantle assist so vault clears the edge smoothly instead of teleporting.
+        if edge_z is not None:
+            pop_z = max(0.14, min(0.42, float(self.tuning.jump_height) * 0.20))
+            target_center_z = float(edge_z) + float(self.player_half.z) + 0.03 + pop_z
+            dz = max(0.0, target_center_z - float(self.pos.z))
+        else:
+            dz = max(0.0, float(self.player_half.z) * 0.10)
+        mantle_forward = LVector3f(forward.x, forward.y, 0.0) * max(0.28, float(self.player_half.x) * 1.95)
+        mantle_delta = LVector3f(0.0, 0.0, max(0.0, float(dz))) + LVector3f(mantle_forward)
+        self._queue_vault_assist(delta=mantle_delta, duration=0.24, vertical_first=True)
 
         max_vault_hspeed = float(self._motion_solver.air_speed(speed_scale=1.0)) * 1.6
         hspeed = math.sqrt(self.vel.x * self.vel.x + self.vel.y * self.vel.y)
@@ -172,9 +375,63 @@ class PlayerControllerActionsMixin:
             )
 
         self._vault_cooldown_timer = 0.0
+        self._vault_camera_timer = self._vault_camera_duration()
+        self._vault_exit_airborne_pending = True
+        self.grounded = False
         self._wall_contact_timer = 999.0
         self._wall_normal = LVector3f(0, 0, 0)
+        self._coyote_timer = 0.0
         self._jump_buffer_timer = 0.0
+        self._slide_active = False
+
+    def _safe_translate(self, delta: LVector3f) -> None:
+        if delta.lengthSquared() <= 1e-12:
+            return
+        if self.collision is None:
+            self.pos += delta
+            return
+        hit = self._bullet_sweep_closest(self.pos, self.pos + delta)
+        if hit.hasHit():
+            frac = max(0.0, min(1.0, float(hit.getHitFraction()) - 1e-3))
+            self.pos += delta * frac
+            return
+        self.pos += delta
+
+    def _queue_vault_assist(self, *, delta: LVector3f, duration: float, vertical_first: bool = False) -> None:
+        total = LVector3f(delta)
+        self._vault_assist_queue = []
+        if total.lengthSquared() <= 1e-12:
+            self._vault_assist_timer = 0.0
+            self._vault_assist_vel = LVector3f(0, 0, 0)
+            return
+        dur = max(1e-3, float(duration))
+        # Apply a tiny immediate nudge for responsiveness, then smooth the rest.
+        instant = total * 0.06
+        self._safe_translate(instant)
+        remain = total - instant
+        if remain.lengthSquared() <= 1e-12:
+            self._vault_assist_timer = 0.0
+            self._vault_assist_vel = LVector3f(0, 0, 0)
+            return
+
+        if vertical_first:
+            up = LVector3f(0.0, 0.0, max(0.0, float(remain.z)))
+            planar = LVector3f(float(remain.x), float(remain.y), min(0.0, float(remain.z)))
+            up_len = float(up.length())
+            planar_len = float(planar.length())
+            if up_len > 1e-6 and planar_len > 1e-6:
+                self._vault_assist_queue.append((up, dur * 0.60))
+                self._vault_assist_queue.append((planar, dur * 0.40))
+            elif up_len > 1e-6:
+                self._vault_assist_queue.append((up, dur))
+            elif planar_len > 1e-6:
+                self._vault_assist_queue.append((planar, dur))
+        else:
+            self._vault_assist_queue.append((remain, dur))
+
+        self._vault_assist_timer = 0.0
+        self._vault_assist_vel = LVector3f(0, 0, 0)
+        self._start_next_vault_assist_segment()
 
     def _apply_friction(self, dt: float) -> None:
         if not bool(self.tuning.custom_friction_enabled):

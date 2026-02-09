@@ -54,6 +54,13 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
         self._surf_normal = LVector3f(0, 0, 0)
         self._wall_jump_lock_timer = 999.0
         self._vault_cooldown_timer = 999.0
+        self._vault_camera_timer = 0.0
+        self._vault_assist_timer = 0.0
+        self._vault_assist_vel = LVector3f(0, 0, 0)
+        self._vault_assist_queue: list[tuple[LVector3f, float]] = []
+        self._vault_exit_airborne_pending = False
+        self._vault_debug = "idle"
+        self._vault_debug_timer = 0.0
         self._ground_normal = LVector3f(0, 0, 1)
         self._hitstop_active = False
         self._knockback_active = False
@@ -89,13 +96,20 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
         self._slide_dir = LVector3f(0, 0, 0)
         self._contact_count = 0
         self._wallrun_active = False
+        self._vault_camera_timer = 0.0
+        self._vault_assist_timer = 0.0
+        self._vault_assist_vel = LVector3f(0, 0, 0)
+        self._vault_assist_queue = []
+        self._vault_exit_airborne_pending = False
+        self._vault_debug = "idle"
+        self._vault_debug_timer = 0.0
         self.detach_grapple()
         self.apply_hull_settings()
 
     def queue_jump(self) -> None:
         self._motion_solver.sync_from_tuning(tuning=self.tuning)
-        if self.tuning.enable_jump_buffer and bool(self.tuning.coyote_buffer_enabled):
-            self._jump_buffer_timer = float(self._motion_solver.input_buffer_time())
+        if bool(self.tuning.coyote_buffer_enabled):
+            self._jump_buffer_timer = float(self._motion_solver.input_buffer_time(horizontal_speed=self._horizontal_speed()))
             return
         self._jump_pressed = True
 
@@ -122,6 +136,9 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
 
     def coyote_left(self) -> float:
         return float(self._coyote_timer)
+
+    def _horizontal_speed(self) -> float:
+        return math.sqrt(float(self.vel.x) * float(self.vel.x) + float(self.vel.y) * float(self.vel.y))
 
     def ground_normal(self) -> LVector3f:
         return LVector3f(self._ground_normal)
@@ -176,6 +193,68 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
         # Slight side roll away from the wall to indicate active wallrun.
         return math.copysign(6.0, side)
 
+    def vault_camera_pitch_deg(self) -> float:
+        if self._vault_camera_timer <= 0.0:
+            return 0.0
+        duration = self._vault_camera_duration()
+        # Smooth dip-and-recover curve (0 -> peak -> 0) to avoid one-frame snap.
+        progress = max(0.0, min(1.0, 1.0 - float(self._vault_camera_timer) / duration))
+        envelope = math.sin(math.pi * progress)
+        return -1.9 * envelope
+
+    @staticmethod
+    def _vault_camera_duration() -> float:
+        return 0.24
+
+    def vault_debug_status(self) -> str:
+        if self._vault_debug_timer <= 0.0:
+            return "idle"
+        return str(self._vault_debug)
+
+    def _set_vault_debug(self, text: str, *, hold: float = 0.85) -> None:
+        self._vault_debug = str(text)
+        self._vault_debug_timer = max(0.0, float(hold))
+
+    def _apply_vault_assist(self, *, dt: float) -> None:
+        left_dt = max(0.0, float(dt))
+        if left_dt <= 0.0:
+            return
+        while left_dt > 1e-9:
+            if self._vault_assist_timer <= 0.0:
+                self._start_next_vault_assist_segment()
+                if self._vault_assist_timer <= 0.0:
+                    break
+            step_dt = min(left_dt, float(self._vault_assist_timer))
+            if step_dt <= 0.0:
+                break
+            self._safe_translate(LVector3f(self._vault_assist_vel) * step_dt)
+            self._vault_assist_timer = max(0.0, float(self._vault_assist_timer) - step_dt)
+            left_dt -= step_dt
+
+    def _start_next_vault_assist_segment(self) -> None:
+        while self._vault_assist_queue:
+            delta, duration = self._vault_assist_queue.pop(0)
+            seg_delta = LVector3f(delta)
+            seg_dur = max(1e-3, float(duration))
+            if seg_delta.lengthSquared() <= 1e-12:
+                continue
+            self._vault_assist_vel = seg_delta / seg_dur
+            self._vault_assist_timer = seg_dur
+            return
+        self._vault_assist_timer = 0.0
+        self._vault_assist_vel = LVector3f(0, 0, 0)
+        if self._vault_exit_airborne_pending:
+            # Ensure vault exits with a small pop so successful mantle chains can continue in-air.
+            exit_up = max(0.8, min(2.2, self._jump_up_speed() * 0.20))
+            if float(self.vel.z) < exit_up:
+                self._set_vertical_velocity(
+                    exit_up,
+                    source=MotionWriteSource.IMPULSE,
+                    reason="vault.exit_airborne",
+                )
+            self.grounded = False
+            self._vault_exit_airborne_pending = False
+
     def _has_wallrun_contact(self) -> bool:
         if not bool(self.tuning.wallrun_enabled):
             return False
@@ -211,14 +290,17 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
         self._surf_contact_timer += dt
         self._wall_jump_lock_timer += dt
         self._vault_cooldown_timer += dt
+        self._vault_camera_timer = max(0.0, self._vault_camera_timer - dt)
+        self._vault_debug_timer = max(0.0, self._vault_debug_timer - dt)
         self._jump_buffer_timer = max(0.0, self._jump_buffer_timer - dt)
+        self._apply_vault_assist(dt=dt)
         self._refresh_wall_contact_from_probe()
 
         # Determine grounded state before applying friction/accel.
         if self.collision is not None:
             self._bullet_ground_trace()
         if self.grounded:
-            self._coyote_timer = float(self._motion_solver.coyote_time())
+            self._coyote_timer = float(self._motion_solver.coyote_time(horizontal_speed=self._horizontal_speed()))
         else:
             self._coyote_timer = max(0.0, float(self._coyote_timer) - dt)
             # Slide is a grounded state. Drop it immediately if we leave the floor.
@@ -250,8 +332,11 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
         elif self.grounded:
             ground_jump_requested = self._consume_jump_request() and self.can_ground_jump()
             if ground_jump_requested:
-                # Preserve carried horizontal speed on successful hop timing frames.
-                self._apply_jump()
+                if bool(self.tuning.vault_enabled) and self._try_vault(yaw_deg=yaw_deg):
+                    pass
+                else:
+                    # Preserve carried horizontal speed on successful hop timing frames.
+                    self._apply_jump()
             else:
                 # Keep Vmax authoritative while input is held; friction should primarily damp coasting.
                 if not has_move_input:
@@ -297,10 +382,10 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
                 self._motion_solver.apply_wallrun_sink(vel=self.vel, dt=dt)
 
             if self._consume_jump_request():
-                if self._can_coyote_jump():
-                    self._apply_jump()
-                elif self.tuning.vault_enabled and self._try_vault(yaw_deg=yaw_deg):
+                if bool(self.tuning.vault_enabled) and self._try_vault(yaw_deg=yaw_deg):
                     pass
+                elif self._can_coyote_jump():
+                    self._apply_jump()
                 elif self.tuning.walljump_enabled and self.has_wall_for_jump():
                     self._apply_wall_jump(
                         yaw_deg=yaw_deg,
@@ -324,7 +409,7 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
 
         if self.grounded:
             self._wall_jump_lock_timer = 999.0
-            self._coyote_timer = float(self._motion_solver.coyote_time())
+            self._coyote_timer = float(self._motion_solver.coyote_time(horizontal_speed=self._horizontal_speed()))
             self._wallrun_active = False
 
         self._update_slide_hull_state(self.is_sliding())
@@ -407,6 +492,8 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
         self._motion_solver.apply_gravity(vel=self.vel, dt=dt, gravity_scale=1.0)
 
         if self._consume_jump_request() and self._can_coyote_jump():
+            if bool(self.tuning.vault_enabled) and self._try_vault(yaw_deg=yaw_deg):
+                return
             self._apply_jump()
 
     def _apply_jump(self) -> None:

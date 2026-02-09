@@ -24,9 +24,13 @@ def test_debug_ui_exposes_curated_invariant_first_controls() -> None:
     assert "jump_height" in covered
     assert "jump_apex_time" in covered
     assert "slide_stop_t90" in covered
-    assert "coyote_time" in covered
-    assert "jump_buffer_time" in covered
+    assert "grace_period" in covered
+    assert "vault_max_ledge_height" in covered
+    assert "vault_forward_boost" in covered
+    assert "player_half_height" in covered
     assert "slide_enabled" in covered
+    assert "vault_enabled" in covered
+    assert "character_scale_lock_enabled" in covered
     assert "autojump_enabled" in covered
     assert "wallrun_enabled" in covered
     assert "surf_enabled" in covered

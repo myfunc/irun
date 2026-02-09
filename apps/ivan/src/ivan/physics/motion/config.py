@@ -19,8 +19,8 @@ class MotionInvariants:
     air_gain_t90: float
     wallrun_sink_t90: float
     slide_stop_t90: float
-    jump_buffer_time: float
-    coyote_time: float
+    grace_period: float
+    grace_distance: float
 
 
 @dataclass(frozen=True)
@@ -73,6 +73,9 @@ def derive_motion_config(*, tuning: PhysicsTuning) -> MotionConfig:
     slide_stop_t90 = max(1e-4, float(tuning.slide_stop_t90))
     slide_damp_k = math.log(10.0) / slide_stop_t90
 
+    grace_period = max(0.0, float(tuning.grace_period))
+    grace_distance = grace_period * vmax
+
     invariants = MotionInvariants(
         vmax=vmax,
         run_t90=run_t90,
@@ -83,8 +86,8 @@ def derive_motion_config(*, tuning: PhysicsTuning) -> MotionConfig:
         air_gain_t90=air_gain_t90,
         wallrun_sink_t90=wallrun_sink_t90,
         slide_stop_t90=slide_stop_t90,
-        jump_buffer_time=max(0.0, float(tuning.jump_buffer_time)),
-        coyote_time=max(0.0, float(tuning.coyote_time)),
+        grace_period=grace_period,
+        grace_distance=grace_distance,
     )
     derived = MotionDerived(
         gravity=max(0.001, float(gravity)),
