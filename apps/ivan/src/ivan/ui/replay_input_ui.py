@@ -26,7 +26,7 @@ class ReplayInputUI:
                 pass
 
         w = min(1.45, (aspect_ratio * 2.0) - 0.16)
-        h = 0.50
+        h = 0.58
         x = -w / 2.0
         y = -0.97
 
@@ -47,7 +47,7 @@ class ReplayInputUI:
         # Content local coordinates: origin at panel bottom-left.
         # Place a "diamond-like" cluster left, and vertical status sections right.
         self._move_origin_x = 0.07
-        self._move_origin_y = 0.10
+        self._move_origin_y = 0.12
         self._move_w = 0.78
         self._move_h = 0.30
 
@@ -118,6 +118,14 @@ class ReplayInputUI:
         )
         self._label(x=sx, y=self._move_origin_y + self._move_h + 0.03, text="Actions", scale=theme.small_scale, fg=theme.text_muted)
 
+        ax = self._move_origin_x
+        ay = 0.04
+        self._arrow_u = self._box(x=ax + 0.30, y=ay + 0.10, w=0.18, h=0.08, color=self._inactive, text="UP", text_scale=theme.small_scale)
+        self._arrow_l = self._box(x=ax, y=ay, w=0.28, h=0.10, color=self._inactive, text="LEFT", text_scale=theme.small_scale)
+        self._arrow_d = self._box(x=ax + 0.30, y=ay, w=0.18, h=0.10, color=self._inactive, text="DOWN", text_scale=theme.small_scale)
+        self._arrow_r = self._box(x=ax + 0.50, y=ay, w=0.28, h=0.10, color=self._inactive, text="RIGHT", text_scale=theme.small_scale)
+        self._label(x=ax, y=ay + 0.21, text="Arrows", scale=theme.small_scale, fg=theme.text_muted)
+
         mx = sx + 0.28
         my = self._move_origin_y + 0.05
         self._mouse_u = self._box(x=mx + 0.06, y=my + 0.16, w=0.10, h=0.08, color=self._inactive, text="U", text_scale=theme.small_scale)
@@ -125,6 +133,8 @@ class ReplayInputUI:
         self._mouse_r = self._box(x=mx + 0.12, y=my + 0.08, w=0.10, h=0.08, color=self._inactive, text="R", text_scale=theme.small_scale)
         self._mouse_d = self._box(x=mx + 0.06, y=my, w=0.10, h=0.08, color=self._inactive, text="D", text_scale=theme.small_scale)
         self._mouse_delta = self._label(x=mx, y=my - 0.03, text="dx 0 | dy 0", scale=theme.small_scale * 0.92, fg=theme.text_muted)
+        self._mouse_lmb = self._box(x=mx, y=my - 0.14, w=0.10, h=0.08, color=self._inactive, text="M1", text_scale=theme.small_scale)
+        self._mouse_rmb = self._box(x=mx + 0.12, y=my - 0.14, w=0.10, h=0.08, color=self._inactive, text="M2", text_scale=theme.small_scale)
         self._label(x=mx, y=self._move_origin_y + self._move_h + 0.03, text="Mouse", scale=theme.small_scale, fg=theme.text_muted)
 
         self._root.hide()
@@ -199,21 +209,44 @@ class ReplayInputUI:
         crouch_held: bool,
         look_dx: int,
         look_dy: int,
+        key_w_held: bool = False,
+        key_a_held: bool = False,
+        key_s_held: bool = False,
+        key_d_held: bool = False,
+        arrow_up_held: bool = False,
+        arrow_down_held: bool = False,
+        arrow_left_held: bool = False,
+        arrow_right_held: bool = False,
+        mouse_left_held: bool = False,
+        mouse_right_held: bool = False,
     ) -> None:
-        # Movement cluster.
-        self._move_left["frameColor"] = self._active_lr if int(move_right) < 0 else self._inactive
-        self._move_right["frameColor"] = self._active_lr if int(move_right) > 0 else self._inactive
-        self._move_center_top["frameColor"] = self._active_fwd if int(move_forward) > 0 else self._inactive
-        self._move_center_bottom["frameColor"] = self._active_back if int(move_forward) < 0 else self._inactive
+        # Movement cluster (prefer recorded held states; fallback to axis values for old demos).
+        has_raw_wasd = bool(key_w_held or key_a_held or key_s_held or key_d_held)
+        left_on = bool(key_a_held) if has_raw_wasd else int(move_right) < 0
+        right_on = bool(key_d_held) if has_raw_wasd else int(move_right) > 0
+        up_on = bool(key_w_held) if has_raw_wasd else int(move_forward) > 0
+        down_on = bool(key_s_held) if has_raw_wasd else int(move_forward) < 0
+        self._move_left["frameColor"] = self._active_lr if left_on else self._inactive
+        self._move_right["frameColor"] = self._active_lr if right_on else self._inactive
+        self._move_center_top["frameColor"] = self._active_fwd if up_on else self._inactive
+        self._move_center_bottom["frameColor"] = self._active_back if down_on else self._inactive
 
         # Action sections.
         jump_on = bool(jump_pressed) or bool(jump_held)
         self._jump_box["frameColor"] = self._active_fwd if jump_on else self._inactive
         self._crouch_box["frameColor"] = self._active_back if bool(crouch_held) else self._inactive
 
+        # Arrow keys.
+        self._arrow_u["frameColor"] = self._active_fwd if bool(arrow_up_held) else self._inactive
+        self._arrow_d["frameColor"] = self._active_back if bool(arrow_down_held) else self._inactive
+        self._arrow_l["frameColor"] = self._active_lr if bool(arrow_left_held) else self._inactive
+        self._arrow_r["frameColor"] = self._active_lr if bool(arrow_right_held) else self._inactive
+
         # Mouse direction section.
         self._mouse_l["frameColor"] = self._active_lr if int(look_dx) < 0 else self._inactive
         self._mouse_r["frameColor"] = self._active_lr if int(look_dx) > 0 else self._inactive
         self._mouse_u["frameColor"] = self._active_fwd if int(look_dy) < 0 else self._inactive
         self._mouse_d["frameColor"] = self._active_back if int(look_dy) > 0 else self._inactive
+        self._mouse_lmb["frameColor"] = self._active_fwd if bool(mouse_left_held) else self._inactive
+        self._mouse_rmb["frameColor"] = self._active_back if bool(mouse_right_held) else self._inactive
         self._mouse_delta["text"] = f"dx {int(look_dx)} | dy {int(look_dy)}"

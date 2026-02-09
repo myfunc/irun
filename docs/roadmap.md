@@ -29,6 +29,7 @@ Items temporarily on hold pending further analysis:
 
 ## Milestone 3: Gameplay Feel Rehaul
 - Phase 0: instrumentation and baseline capture (jump success, landing loss, ground flicker, camera jerk)
+  - Baseline tooling now includes replay telemetry export (CSV + JSON summary) and checklist doc (`docs/gameplay-baseline-checklist.md`)
 - Phase 1: camera pipeline smoothing and readability pass
 - Phase 2: movement transition stability pass (stairs/slope/ground-air handoff)
 - Phase 3: acceleration/friction polish + profile packaging
