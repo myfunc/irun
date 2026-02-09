@@ -71,6 +71,7 @@ from . import menu_flow as _menu
 from . import netcode as _net
 from . import tuning_profiles as _profiles
 from .animation_observer import AnimationObserver
+from .camera_feedback_observer import CameraFeedbackObserver
 from .camera_height_observer import CameraHeightObserver
 from .camera_observer import CameraObserver
 from .camera_tilt_observer import CameraTiltObserver, motion_tilt_targets
@@ -181,6 +182,7 @@ class RunnerDemo(ShowBase):
         self._camera_observer = CameraObserver()
         self._camera_tilt_observer = CameraTiltObserver()
         self._camera_height_observer = CameraHeightObserver()
+        self._camera_feedback_observer = CameraFeedbackObserver()
         self._animation_observer = AnimationObserver()
         self._feel_metrics = FeelMetrics()
         self._feel_diag = RollingFeelDiagnostics(tick_rate_hz=self._sim_tick_rate_hz)
@@ -189,6 +191,14 @@ class RunnerDemo(ShowBase):
         self._playback_last_frame: DemoFrame | None = None
         self._playback_det_checked: int = 0
         self._playback_det_mismatch: int = 0
+        self._cam_dbg_fov: float = float(self.tuning.camera_base_fov)
+        self._cam_dbg_target_fov: float = float(self.tuning.camera_base_fov)
+        self._cam_dbg_speed_ratio: float = 0.0
+        self._cam_dbg_speed_t: float = 0.0
+        self._cam_dbg_event_name: str = "none"
+        self._cam_dbg_event_quality: float = 0.0
+        self._cam_dbg_event_amp: float = 0.0
+        self._cam_dbg_event_blocked: str = "none"
         self._feel_perf_text: str = "feel | collecting..."
         self._physics_steps_this_frame: int = 0
         self._last_sim_vel = LVector3f(0, 0, 0)
@@ -336,7 +346,7 @@ class RunnerDemo(ShowBase):
             props.setFullscreen(False)
             props.setSize(win_w, win_h)
         self.win.requestProperties(props)
-        self.camLens.setFov(96)
+        self.camLens.setFov(float(self.tuning.camera_base_fov))
         # Reduce near-plane clipping when hugging walls in first-person.
         self.camLens.setNearFar(0.03, 5000.0)
         if self._pointer_locked:
@@ -980,6 +990,7 @@ class RunnerDemo(ShowBase):
             self._local_hp = 100
             self._camera_tilt_observer.reset()
             self._camera_height_observer.reset()
+            self._camera_feedback_observer.reset()
             self._sim_state_ready = False
             self._push_sim_snapshot()
             self._render_interpolated_state(alpha=1.0)
@@ -1204,8 +1215,9 @@ class RunnerDemo(ShowBase):
             # Keep wallrun indication dominant; movement tilt remains subtle while on-wall.
             move_roll *= 0.35
             move_pitch *= 0.50
-        target_roll = float(wallrun_roll + move_roll)
-        target_pitch = float(move_pitch + vault_pitch)
+        tilt_gain = max(0.0, float(self.tuning.camera_tilt_gain))
+        target_roll = float((wallrun_roll + move_roll) * tilt_gain)
+        target_pitch = float((move_pitch + vault_pitch) * tilt_gain)
         tilt_pose = self._camera_tilt_observer.observe(
             dt=float(frame_dt),
             target_roll=float(target_roll),
@@ -1240,6 +1252,29 @@ class RunnerDemo(ShowBase):
         hspeed = 0.0
         if self.player is not None:
             hspeed = math.sqrt(float(self.player.vel.x) ** 2 + float(self.player.vel.y) ** 2)
+        feedback_pose = self._camera_feedback_observer.observe(
+            dt=float(frame_dt),
+            horizontal_speed=float(hspeed),
+            max_ground_speed=max(0.1, float(self.tuning.max_ground_speed)),
+            enabled=bool(self.tuning.camera_feedback_enabled),
+            base_fov_deg=float(self.tuning.camera_base_fov),
+            speed_fov_max_add_deg=float(self.tuning.camera_speed_fov_max_add),
+            event_gain=float(self.tuning.camera_event_gain),
+        )
+        self._cam_dbg_fov = float(feedback_pose.fov_deg)
+        self._cam_dbg_target_fov = float(feedback_pose.target_fov_deg)
+        self._cam_dbg_speed_ratio = float(feedback_pose.speed_ratio)
+        self._cam_dbg_speed_t = float(feedback_pose.speed_t)
+        self._cam_dbg_event_name = str(feedback_pose.event_name)
+        self._cam_dbg_event_quality = float(feedback_pose.event_quality)
+        self._cam_dbg_event_amp = float(feedback_pose.event_applied_amp)
+        self._cam_dbg_event_blocked = str(feedback_pose.event_blocked_reason)
+        cam_pitch += float(feedback_pose.pitch_deg)
+        cam_roll += float(feedback_pose.roll_deg)
+        try:
+            self.camLens.setFov(float(feedback_pose.fov_deg))
+        except Exception:
+            pass
         cam_pos.z += self._animation_observer.camera_bob_offset_z(
             enabled=bool(self.tuning.harness_animation_root_motion_enabled),
             time_s=float(globalClock.getFrameTime()),
@@ -1313,6 +1348,7 @@ class RunnerDemo(ShowBase):
             self._camera_observer.reset()
             self._camera_tilt_observer.reset()
             self._camera_height_observer.reset()
+            self._camera_feedback_observer.reset()
             self._net_cfg_apply_pending_version = 0
             self._net_cfg_apply_sent_at = 0.0
             self._net_perf.reset()
@@ -1536,6 +1572,20 @@ class RunnerDemo(ShowBase):
 
         if self.scene is not None and self.player.pos.z < float(self.scene.kill_z):
             self._do_respawn(from_mode=True)
+
+        if not bool(self.tuning.noclip_enabled):
+            self._camera_feedback_observer.record_sim_tick(
+                now=float(globalClock.getFrameTime()),
+                jump_pressed=bool(cmd.jump_pressed),
+                jump_held=bool(cmd.jump_held),
+                autojump_enabled=bool(self.tuning.autojump_enabled),
+                grace_period=float(self.tuning.grace_period),
+                max_ground_speed=float(self.tuning.max_ground_speed),
+                pre_grounded=bool(pre_grounded),
+                post_grounded=bool(self.player.grounded),
+                pre_vel=LVector3f(pre_vel),
+                post_vel=LVector3f(self.player.vel),
+            )
 
         self._feel_metrics.record_tick(
             now=float(globalClock.getFrameTime()),
@@ -1810,6 +1860,7 @@ class RunnerDemo(ShowBase):
         self._camera_observer.reset()
         self._camera_tilt_observer.reset()
         self._camera_height_observer.reset()
+        self._camera_feedback_observer.reset()
         self._det_trace.reset()
         self._det_trace_hash = "0" * 16
         self._last_sim_vel = LVector3f(0, 0, 0)
@@ -1971,6 +2022,8 @@ class RunnerDemo(ShowBase):
                     f"state={state_name} wish=({wish_dbg.x:+.2f},{wish_dbg.y:+.2f}) pos=({pos.x:+.2f},{pos.y:+.2f},{pos.z:+.2f})\n"
                     f"vel=({vel.x:+.2f},{vel.y:+.2f},{vel.z:+.2f}) accel=({accel.x:+.2f},{accel.y:+.2f},{accel.z:+.2f}) grounded={int(grounded)} contacts={contacts}\n"
                     f"floor_n=({floor_n.x:+.2f},{floor_n.y:+.2f},{floor_n.z:+.2f}) wall_n=({wall_n.x:+.2f},{wall_n.y:+.2f},{wall_n.z:+.2f})\n"
+                    f"cam_fov={self._cam_dbg_fov:.2f} cam_tgt={self._cam_dbg_target_fov:.2f} cam_speed_r={self._cam_dbg_speed_ratio:.2f} cam_speed_t={self._cam_dbg_speed_t:.2f}\n"
+                    f"cam_event={self._cam_dbg_event_name} quality={self._cam_dbg_event_quality:.2f} applied_amp={self._cam_dbg_event_amp:.2f} blocked_reason={self._cam_dbg_event_blocked}\n"
                     f"last_input_age={last_input_age:.3f}s jump_buf={jump_buf:.3f}s coyote={coyote:.3f}s vault={vault_dbg}\n"
                     f"{self._net_perf_text if self._net_perf_text else 'net perf | waiting for samples...'}\n"
                     f"{self._feel_perf_text}"

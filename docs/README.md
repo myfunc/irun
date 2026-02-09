@@ -17,3 +17,4 @@
 
 ## Skills
 - `docs/skills/map-conversion/SKILL.md`: Source BSP to IVAN runtime conversion (geometry, materials, skybox)
+- `docs/skills/feel-rehaul/SKILL.md`: Invariant-first movement/camera feel rehaul workflow and guardrails
