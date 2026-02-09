@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from typing import Callable
+
 from direct.gui import DirectGuiGlobals as DGG
-from direct.gui.DirectGui import DirectFrame, DirectLabel
+from direct.gui.DirectGui import DirectButton, DirectFrame, DirectLabel
 from direct.showbase import ShowBaseGlobal
 from panda3d.core import TextNode
 
@@ -25,9 +27,18 @@ class ListMenu:
     This is a generic replacement for game-specific "retro menu" screens.
     """
 
-    def __init__(self, *, aspect2d, theme: Theme, title: str, hint: str) -> None:
+    def __init__(
+        self,
+        *,
+        aspect2d,
+        theme: Theme,
+        title: str,
+        hint: str,
+        on_click: Callable[[], None] | None = None,
+    ) -> None:
         self._aspect2d = aspect2d
         self._theme = theme
+        self._on_click = on_click
 
         aspect_ratio = 16.0 / 9.0
         if getattr(ShowBaseGlobal, "base", None) is not None:
@@ -109,20 +120,31 @@ class ListMenu:
             pos=(0.0, 0.0, rows_top),
         )
 
-        self._row_nodes: list[DirectLabel] = []
+        self._scroll_start: int = 0
+        hover_color = (theme.panel2[0], theme.panel2[1], theme.panel2[2], 0.35)
+        self._row_nodes: list[DirectButton] = []
         for i in range(self._visible_rows):
             yy = rows_top - i * row_h
-            self._row_nodes.append(
-                DirectLabel(
-                    parent=self._content,
-                    text="",
-                    text_scale=theme.label_scale,
-                    text_align=TextNode.ALeft,
-                    text_fg=theme.text_muted,
-                    frameColor=(0, 0, 0, 0),
-                    pos=(0.0, 0, yy),
-                )
+            btn = DirectButton(
+                parent=self._content,
+                text="",
+                text_scale=theme.label_scale,
+                text_align=TextNode.ALeft,
+                text_fg=theme.text_muted,
+                frameColor=(
+                    (0, 0, 0, 0),       # normal
+                    (0, 0, 0, 0),       # pressed
+                    hover_color,         # hover
+                    (0, 0, 0, 0),       # disabled
+                ),
+                relief=DGG.FLAT,
+                frameSize=(-0.01, self._content_w + 0.01, -row_h * 0.55, row_h * 0.55),
+                pos=(0.0, 0, yy),
+                command=self._on_row_click,
+                extraArgs=[i],
+                pressEffect=0,
             )
+            self._row_nodes.append(btn)
 
         self._loader_base_status: str | None = None
         self._loader_started_at: float = 0.0
@@ -251,6 +273,16 @@ class ListMenu:
         self._search_label = None
         self._search_last_text = ""
 
+    def _on_row_click(self, visible_idx: int) -> None:
+        """Handle mouse click on a visible row."""
+        actual_idx = self._scroll_start + visible_idx
+        if actual_idx < 0 or actual_idx >= len(self._items):
+            return
+        self._selected = actual_idx
+        self._redraw()
+        if self._on_click is not None:
+            self._on_click()
+
     def _apply_search(self, text: str) -> None:
         q = (text or "").strip().casefold()
         if not q or not self._items:
@@ -278,6 +310,7 @@ class ListMenu:
                 self._sel_bg.hide()
             for r in self._row_nodes:
                 r["text"] = ""
+                r["state"] = DGG.DISABLED
             self._status["text"] = "No entries."
             return
 
@@ -285,12 +318,15 @@ class ListMenu:
             self._sel_bg.show()
         half = self._visible_rows // 2
         start = max(0, min(len(self._items) - self._visible_rows, self._selected - half))
+        self._scroll_start = start
         window = self._items[start : start + self._visible_rows]
 
         for i, r in enumerate(self._row_nodes):
             if i >= len(window):
                 r["text"] = ""
+                r["state"] = DGG.DISABLED
                 continue
+            r["state"] = DGG.NORMAL
             idx = start + i
             item = window[i]
             prefix = "> " if idx == self._selected else "  "

@@ -38,17 +38,28 @@ def _app_dir(app: str) -> Path:
     return (APPS_DIR / app).resolve()
 
 
+def _venv_python(venv_dir: Path) -> Path | None:
+    """Return the python executable inside a venv, platform-aware."""
+    if sys.platform == "win32":
+        candidate = venv_dir / "Scripts" / "python.exe"
+    else:
+        candidate = venv_dir / "bin" / "python"
+    if candidate.exists() and (sys.platform == "win32" or os.access(candidate, os.X_OK)):
+        return candidate
+    return None
+
+
 def _python_for(app: str, app_dir: Path) -> str:
-    venv_py = app_dir / ".venv" / "bin" / "python"
-    if venv_py.exists() and os.access(venv_py, os.X_OK):
+    venv_py = _venv_python(app_dir / ".venv")
+    if venv_py is not None:
         return str(venv_py)
     # Monorepo convenience: UI kit is a library and typically reuses Ivan's venv.
     if app == "ui_kit":
         # Do NOT resolve symlinks here: running the resolved interpreter path bypasses venv site-packages.
-        ivan_py = APPS_DIR / "ivan" / ".venv" / "bin" / "python"
-        if ivan_py.exists() and os.access(ivan_py, os.X_OK):
+        ivan_py = _venv_python(APPS_DIR / "ivan" / ".venv")
+        if ivan_py is not None:
             return str(ivan_py)
-    return "python3"
+    return "python" if sys.platform == "win32" else "python3"
 
 
 def _default_module_for_app(app: str) -> str:

@@ -1,0 +1,4 @@
+# Incoming BSP/WAD files are large binaries used for one-time import.
+# They should not be committed to git.
+*
+!.gitignore
