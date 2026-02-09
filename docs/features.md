@@ -15,23 +15,25 @@
 - Ivan: input debug overlay (`F2`) for keyboard/mouse troubleshooting
 - Ivan: gameplay feel telemetry in `F2` overlay (rolling jump success, landing speed loss, ground flicker, camera jerk proxies)
 - Ivan: staged invariant-motion refactor foundation
-  - added invariant fields for run/stop/jump/air/dash/wallrun timing windows (`run_t90`, `ground_stop_t90`, `jump_apex_time`, `air_speed_mult`, `air_gain_t90`, `wallrun_sink_t90`, `dash_distance`, `dash_duration`, `coyote_time`)
+  - added invariant fields for run/stop/jump/air/slide/wallrun timing windows (`run_t90`, `ground_stop_t90`, `jump_apex_time`, `air_speed_mult`, `air_gain_t90`, `wallrun_sink_t90`, `slide_stop_t90`, `coyote_time`)
   - added `physics.motion` package with single config object (`MotionConfig`: invariants + derived constants)
   - `PlayerController` now consumes `MotionSolver` for derived run response, ground damping, gravity, and jump takeoff speed
   - gameplay/client/server simulation now routes through `MotionIntent` (`step_with_intent`) for unified movement command ingestion
   - legacy run/gravity direct movement fields were removed from active tuning and migrated into invariant timing fields
   - legacy air gain scalars (`max_air_speed`, `jump_accel`, `air_control`, `air_counter_strafe_brake`) are migrated for compatibility and removed from active tuning schema
-- Ivan: dash prototype now integrated into input + movement pipeline
-  - dash trigger: `Shift` (edge-triggered input command)
-  - dash parameters are invariant-driven (`dash_distance`, `dash_duration` -> derived dash speed)
-  - high-speed collision path supports sweep/cast (`dash_sweep_enabled`) with runtime toggle fallback to regular discrete movement
+- Ivan: powerslide prototype integrated into input + movement pipeline
+  - slide trigger: `Shift` (hold-to-slide, release-to-exit)
+  - slide parameters are invariant-driven (`slide_stop_t90` controls grounded slide deceleration)
+  - slide has no entry boost; it preserves carried horizontal speed and decays via solver damping
+  - slide lowers hull height while active and restores standing hull on exit
+  - slide steering is camera-yaw driven (mouse look); keyboard strafe input does not steer slide
 - Ivan: deterministic feel harness bootstrap (`--feel-harness`)
   - harness geometry includes: flat ground, slope approximation, step, wall, ledge, and a deterministic moving-platform fixture
   - harness isolation toggles exposed in debug UI:
     - camera smoothing on/off
     - animation/root-motion visual layer on/off
     - custom friction on/off
-    - dash sweep on/off
+    - slide enable on/off
     - coyote/buffer leniency on/off
 - Ivan: expanded runtime feel diagnostics
   - `F2` now includes FPS + frame p95, sim steps, state, accel, contacts, normals, leniency timers, and rolling determinism hash summary
@@ -39,7 +41,7 @@
   - `F11` dumps rolling determinism trace hash buffer for replay/harness checks
 - Ivan: debug tuning surface reduced to invariant-first controls
   - removed most legacy/direct scalar sliders from the runtime debug menu
-  - kept compact controls for `Vmax`, run response timing, ground stop timing, air speed/gain, wallrun sink timing, jump height/apex timing, dash distance/duration, and leniency windows
+  - kept compact controls for `Vmax`, run response timing, ground stop timing, air speed/gain, wallrun sink timing, jump height/apex timing, slide stop timing, and leniency windows
   - restored `autojump_enabled` in compact toggles for bhop-chain validation
   - restored `wallrun_enabled` toggle for wallrun iteration
   - surf section is now isolation-only toggle (`surf_enabled`) with no surf-specific scalar sliders in the debug surface
@@ -56,7 +58,7 @@
   - all tilt is camera-only and does not write gameplay motion/velocity
 - Ivan: controller module split for ownership clarity and reviewability
   - `player_controller.py`: orchestration + authority loop
-  - `player_controller_actions.py`: jump/vault/grapple/crouch/friction
+  - `player_controller_actions.py`: jump/vault/grapple/slide-hull/friction
   - `player_controller_surf.py`: surf/air behavior + wall/surf probes
   - `player_controller_collision.py`: collision/step-slide/sweep logic
 - Ivan: camera and animation are now explicit read-only observers
@@ -100,7 +102,7 @@
   - saved demos are stored in-repo under `apps/ivan/replays/`
   - replay browser available from `Esc -> Replays`
   - playback re-simulates recorded per-tick input at fixed `60 Hz`
-  - replay mode includes a compact input HUD visualizer (movement/jump/crouch/mouse direction)
+  - replay mode includes a compact input HUD visualizer (movement/jump/slide/mouse direction)
   - replay HUD now shows explicit held input states (`WASD`, arrow keys, mouse buttons) captured per tick to avoid derived-axis flicker
   - per-tick replay frames now also include telemetry for feel tuning (position/velocity/speeds/camera angles/state/buttons)
   - replay telemetry export tooling:
@@ -110,6 +112,7 @@
     - `replay_compare_latest [out_dir] [route_tag]` auto-exports latest+previous runs and writes a metric/tuning delta comparison JSON
     - `python -m ivan --export-latest-replay-telemetry [--replay-telemetry-out <dir>]` exports without launching gameplay
     - `python -m ivan --compare-latest-replays [--replay-telemetry-out <dir>] [--replay-route-tag A]` compares latest vs previous without launching gameplay
+    - `python -m ivan --verify-latest-replay-determinism [--determinism-runs N] [--replay-telemetry-out <dir>]` runs repeated offline replay sim determinism checks and emits JSON
   - while replay is active, gameplay/menu input is locked; `R` exits replay and respawns to normal play
 - Ivan: in-game Feel Session tab (ESC menu)
   - route tagging via radio-style options (`A/B/C`)

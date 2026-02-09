@@ -9,7 +9,7 @@ from ivan.physics.tuning import PhysicsTuning
 
 
 class MotionSolver:
-    """Single authority for derived run/jump/gravity calculations."""
+    """Single authority for derived run/jump/slide/gravity calculations."""
 
     def __init__(self, *, config: MotionConfig) -> None:
         self._config = config
@@ -37,8 +37,8 @@ class MotionSolver:
     def coyote_time(self) -> float:
         return float(self._config.invariants.coyote_time)
 
-    def dash_speed(self) -> float:
-        return float(self._config.derived.dash_speed)
+    def slide_stop_t90(self) -> float:
+        return float(self._config.invariants.slide_stop_t90)
 
     def air_speed(self, *, speed_scale: float = 1.0) -> float:
         return max(0.0, float(self._config.derived.air_speed) * max(0.0, float(speed_scale)))
@@ -101,6 +101,12 @@ class MotionSolver:
 
     def apply_gravity(self, *, vel: LVector3f, dt: float, gravity_scale: float = 1.0) -> None:
         vel.z -= self.gravity() * max(0.0, float(gravity_scale)) * max(0.0, float(dt))
+
+    def apply_slide_ground_damping(self, *, speed: float, dt: float) -> float:
+        k = max(0.0, float(self._config.derived.slide_damp_k))
+        if k <= 1e-12:
+            return max(0.0, float(speed))
+        return max(0.0, float(speed) * math.exp(-k * max(0.0, float(dt))))
 
     def apply_wallrun_sink(self, *, vel: LVector3f, dt: float) -> None:
         # Preserve upward launch carry. Only control descending/neutral vertical on active wallrun.

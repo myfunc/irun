@@ -17,7 +17,7 @@ def _write_demo(path: Path, *, hs_values: list[float], grounded_values: list[boo
                 "mr": 0,
                 "jp": i in jump_pressed_ticks,
                 "jh": i in jump_pressed_ticks,
-                "ch": False,
+                "sp": False,
                 "gp": False,
                 "nt": False,
                 "kw": True,

@@ -6,17 +6,15 @@ from dataclasses import dataclass
 @dataclass
 class PhysicsTuning:
     # Invariant-driven movement core.
-    # All primary run/jump/dash/ground-slowdown behavior derives from these timing/target values.
+    # All primary run/jump/slide/ground-slowdown behavior derives from these timing/target values.
     run_t90: float = 0.240
     ground_stop_t90: float = 0.220
     jump_apex_time: float = 0.351
-    dash_distance: float = 6.0
-    dash_duration: float = 0.140
+    slide_stop_t90: float = 3.000
     coyote_time: float = 0.100
     coyote_buffer_enabled: bool = True
     custom_friction_enabled: bool = True
-    dash_enabled: bool = False
-    dash_sweep_enabled: bool = True
+    slide_enabled: bool = True
     harness_camera_smoothing_enabled: bool = True
     harness_animation_root_motion_enabled: bool = False
 
@@ -29,9 +27,8 @@ class PhysicsTuning:
     # Wallrun vertical sink response (lower is snappier sink control).
     wallrun_sink_t90: float = 0.220
     mouse_sensitivity: float = 0.14
-    crouch_speed_multiplier: float = 0.65
-    crouch_half_height: float = 0.68
-    crouch_eye_height: float = 0.42
+    slide_half_height_mult: float = 0.68
+    slide_eye_height_mult: float = 0.78
     wall_jump_boost: float = 5.534
     wall_jump_cooldown: float = 1.0
     surf_accel: float = 55.0
@@ -52,7 +49,6 @@ class PhysicsTuning:
     walljump_enabled: bool = True
     wallrun_enabled: bool = False
     vault_enabled: bool = False
-    crouch_enabled: bool = True
     grapple_enabled: bool = False
     grapple_fire_range: float = 180.0
     grapple_attach_boost: float = 8.0

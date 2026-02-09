@@ -12,16 +12,14 @@ NUMERIC_CONTROLS: list[tuple[str, float, float]] = [
     ("jump_apex_time", 0.08, 1.20),
     ("jump_buffer_time", 0.0, 0.35),
     ("coyote_time", 0.0, 0.35),
-    ("dash_distance", 0.5, 20.0),
-    ("dash_duration", 0.02, 1.00),
+    ("slide_stop_t90", 0.10, 8.00),
 ]
 
 TOGGLE_CONTROLS: list[str] = [
     "autojump_enabled",
     "coyote_buffer_enabled",
     "custom_friction_enabled",
-    "dash_enabled",
-    "dash_sweep_enabled",
+    "slide_enabled",
     "wallrun_enabled",
     "harness_camera_smoothing_enabled",
     "harness_animation_root_motion_enabled",
@@ -42,14 +40,12 @@ GROUPS: list[tuple[str, list[str], list[str]]] = [
             "jump_apex_time",
             "jump_buffer_time",
             "coyote_time",
-            "dash_distance",
-            "dash_duration",
+            "slide_stop_t90",
         ],
         [
             "autojump_enabled",
             "coyote_buffer_enabled",
-            "dash_enabled",
-            "dash_sweep_enabled",
+            "slide_enabled",
             "custom_friction_enabled",
             "wallrun_enabled",
         ],
@@ -80,8 +76,7 @@ FIELD_LABELS: dict[str, str] = {
     "jump_apex_time": "jump apex time",
     "jump_buffer_time": "input buffer",
     "coyote_time": "coyote time",
-    "dash_distance": "dash distance",
-    "dash_duration": "dash duration",
+    "slide_stop_t90": "slide stop time to 90%",
 }
 
 FIELD_HELP: dict[str, str] = {
@@ -95,16 +90,13 @@ FIELD_HELP: dict[str, str] = {
     "jump_apex_time": "Lower: shorter time to jump apex (snappier pop). Higher: longer float to apex.",
     "jump_buffer_time": "Lower: tighter jump timing before landing. Higher: more forgiving early jump presses.",
     "coyote_time": "Lower: less late-jump forgiveness after leaving ground. Higher: more forgiving coyote window.",
-    "dash_distance": "Lower: shorter dash travel. Higher: longer dash travel at the configured duration.",
-    "dash_duration": "Lower: shorter dash time (faster dash speed). Higher: longer dash time (slower dash speed).",
+    "slide_stop_t90": "Lower: slide momentum bleeds faster on ground. Higher: slide preserves carried speed longer before decelerating.",
     "autojump_enabled": "Lower (OFF): jump requires press timing each hop. Higher (ON): holding jump auto-queues grounded hops.",
     "coyote_buffer_enabled": "Lower (OFF): disable coyote + buffered leniency windows. Higher (ON): enable forgiving jump windows.",
     "custom_friction_enabled": "Lower (OFF): skip custom ground friction for isolation tests. Higher (ON): use normal friction model.",
-    "dash_enabled": "Lower (OFF): dash action disabled. Higher (ON): dash action enabled using derived dash speed.",
-    "dash_sweep_enabled": "Lower (OFF): dash uses regular movement collision. Higher (ON): dash uses dedicated sweep cast path.",
+    "slide_enabled": "Lower (OFF): shift slide action disabled. Higher (ON): shift engages powerslide with low profile hull.",
     "wallrun_enabled": "Lower (OFF): wallrun behavior disabled. Higher (ON): run along valid wall contacts with camera tilt + wallrun jump behavior.",
     "surf_enabled": "Lower (OFF): disable surf behavior entirely. Higher (ON): enable surf logic on surfable ramp normals.",
     "harness_camera_smoothing_enabled": "Lower (OFF): disable camera smoothing in harness mode. Higher (ON): enable camera smoothing.",
     "harness_animation_root_motion_enabled": "Lower (OFF): disable animation/root-motion influence. Higher (ON): enable animation/root-motion influence.",
 }
-

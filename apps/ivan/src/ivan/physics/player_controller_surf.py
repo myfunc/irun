@@ -4,6 +4,8 @@ import math
 
 from panda3d.core import LVector3f
 
+from ivan.physics.motion.state import MotionWriteSource
+
 
 class PlayerControllerSurfMixin:
     def _accelerate(self, wish_dir: LVector3f, wish_speed: float, accel: float, dt: float) -> None:
@@ -16,7 +18,11 @@ class PlayerControllerSurfMixin:
         accel_speed = accel * dt * wish_speed
         if accel_speed > add_speed:
             accel_speed = add_speed
-        self.vel += wish_dir * accel_speed
+        self._add_velocity(
+            wish_dir * accel_speed,
+            source=MotionWriteSource.SOLVER,
+            reason="air.accelerate",
+        )
 
     def _accelerate_surf_redirect(self, wish_dir: LVector3f, wish_speed: float, accel: float, dt: float) -> None:
         if wish_dir.lengthSquared() <= 0.0:
@@ -58,7 +64,11 @@ class PlayerControllerSurfMixin:
         if delta.z < 0.0:
             delta.z = 0.0
 
-        self.vel += delta
+        self._add_velocity(
+            delta,
+            source=MotionWriteSource.SOLVER,
+            reason="surf.redirect_accel",
+        )
 
     def has_surf_surface(self) -> bool:
         return bool(self.tuning.surf_enabled) and self._surf_contact_timer <= 0.30 and self._surf_normal.lengthSquared() > 0.01
@@ -107,7 +117,11 @@ class PlayerControllerSurfMixin:
         # Fast blend keeps surf responsive while still preserving inertia feel.
         blend_rate = 7.0
         blend = min(1.0, max(0.0, blend_rate * float(dt)))
-        self.vel += (desired - current) * blend
+        self._add_velocity(
+            (desired - current) * blend,
+            source=MotionWriteSource.SOLVER,
+            reason="surf.inertia_redirect",
+        )
 
     def _refresh_wall_contact_from_probe(self) -> None:
         n, p = self._probe_nearby_wall()
