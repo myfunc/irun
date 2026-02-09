@@ -5,6 +5,7 @@ import math
 from panda3d.core import LVector3f
 
 from ivan.common.aabb import AABB
+from ivan.physics.motion.state import MotionWriteSource
 
 
 class PlayerControllerCollisionMixin:
@@ -136,7 +137,7 @@ class PlayerControllerCollisionMixin:
                 self.grounded = True
                 self._ground_normal = LVector3f(n)
                 if self.vel.z < 0.0:
-                    self.vel.z = 0.0
+                    self._set_vertical_velocity(0.0, source=MotionWriteSource.COLLISION, reason="slide.floor_stop")
             elif abs(n.z) < 0.65:
                 hit_pos = pos
                 if hasattr(hit, "getHitPos"):
@@ -145,11 +146,15 @@ class PlayerControllerCollisionMixin:
                     self._set_wall_contact(LVector3f(n.x, n.y, 0.0), hit_pos)
             elif n.z < -0.65 and self.vel.z > 0.0:
                 # Ceiling.
-                self.vel.z = 0.0
+                self._set_vertical_velocity(0.0, source=MotionWriteSource.COLLISION, reason="slide.ceil_stop")
 
             clip_n = self._choose_clip_normal(n)
             if self.vel.dot(clip_n) < 0.0:
-                self.vel = self._clip_velocity(self.vel, clip_n)
+                self._set_velocity(
+                    self._clip_velocity(self.vel, clip_n),
+                    source=MotionWriteSource.COLLISION,
+                    reason="slide.clip_hit",
+                )
             time_left = 1.0 - hit_frac
             remaining = move * time_left
             if remaining.dot(clip_n) < 0.0:
@@ -161,42 +166,13 @@ class PlayerControllerCollisionMixin:
                 if remaining.dot(clip_p) < 0.0:
                     remaining = self._clip_velocity(remaining, clip_p, overbounce=1.0)
                 if self.vel.dot(clip_p) < 0.0:
-                    self.vel = self._clip_velocity(self.vel, clip_p)
+                    self._set_velocity(
+                        self._clip_velocity(self.vel, clip_p),
+                        source=MotionWriteSource.COLLISION,
+                        reason="slide.clip_multiplane",
+                    )
 
         self.pos = pos
-
-    def _bullet_dash_sweep_move(self, delta: LVector3f) -> None:
-        """Single sweep for dash to avoid snagging at high speed."""
-        if delta.lengthSquared() <= 1e-12:
-            return
-        start = LVector3f(self.pos)
-        end = start + delta
-        hit = self._bullet_sweep_closest(start, end)
-        if not hit.hasHit():
-            self.pos = end
-            return
-
-        self._contact_count += 1
-        frac = max(0.0, min(1.0, float(hit.getHitFraction())))
-        self.pos = start + delta * max(0.0, frac - 1e-4)
-        n = LVector3f(hit.getHitNormal())
-        if n.lengthSquared() > 1e-12:
-            n.normalize()
-        walkable_z = self._walkable_threshold_z(float(self.tuning.max_ground_slope_deg))
-        if n.z > walkable_z:
-            self.grounded = True
-            self._ground_normal = LVector3f(n)
-        elif abs(n.z) < 0.65:
-            hit_pos = self.pos
-            if hasattr(hit, "getHitPos"):
-                hit_pos = LVector3f(hit.getHitPos())
-            if self._is_valid_wall_contact(point=hit_pos):
-                self._set_wall_contact(LVector3f(n.x, n.y, 0.0), hit_pos)
-
-        if self.vel.dot(n) < 0.0:
-            self.vel = self._clip_velocity(self.vel, self._choose_clip_normal(n))
-        # End dash immediately on collision.
-        self._dash_time_left = 0.0
 
     def _bullet_step_slide_move(self, delta: LVector3f) -> None:
         # StepSlideMove: try regular slide; then try stepping up and sliding; choose the best.
@@ -217,7 +193,11 @@ class PlayerControllerCollisionMixin:
 
         # Second attempt: step up, move horizontally, then step down.
         self.pos = LVector3f(start_pos)
-        self.vel = LVector3f(start_vel)
+        self._set_velocity(
+            LVector3f(start_vel),
+            source=MotionWriteSource.COLLISION,
+            reason="stepslide.reset_second_try",
+        )
 
         step_up = LVector3f(0, 0, float(self.tuning.step_height))
         hit_up = self._bullet_sweep_closest(self.pos, self.pos + step_up)
@@ -242,10 +222,18 @@ class PlayerControllerCollisionMixin:
 
         if dist1 >= dist2:
             self.pos = pos1
-            self.vel = vel1
+            self._set_velocity(
+                LVector3f(vel1),
+                source=MotionWriteSource.COLLISION,
+                reason="stepslide.choose_plain",
+            )
         else:
             self.pos = pos2
-            self.vel = vel2
+            self._set_velocity(
+                LVector3f(vel2),
+                source=MotionWriteSource.COLLISION,
+                reason="stepslide.choose_step",
+            )
 
     def _bullet_ground_snap(self) -> None:
         # Keep the player glued to ground on small descents (Quake-style ground snap).
@@ -270,7 +258,7 @@ class PlayerControllerCollisionMixin:
         self.grounded = True
         self._ground_normal = LVector3f(n)
         if self.vel.z < 0.0:
-            self.vel.z = 0.0
+            self._set_vertical_velocity(0.0, source=MotionWriteSource.COLLISION, reason="ground_snap")
 
     def _move_and_collide(self, delta: LVector3f) -> None:
         self.grounded = False
@@ -311,7 +299,12 @@ class PlayerControllerCollisionMixin:
                 else:
                     self.pos.x = box.maximum.x + self.player_half.x
                     self._wall_normal = LVector3f(1, 0, 0)
-                self.vel.x = 0
+                self._set_horizontal_velocity(
+                    x=0.0,
+                    y=float(self.vel.y),
+                    source=MotionWriteSource.COLLISION,
+                    reason="axis_resolve_x",
+                )
                 self._wall_contact_timer = 0.0
             elif axis == "y":
                 if delta > 0:
@@ -320,7 +313,12 @@ class PlayerControllerCollisionMixin:
                 else:
                     self.pos.y = box.maximum.y + self.player_half.y
                     self._wall_normal = LVector3f(0, 1, 0)
-                self.vel.y = 0
+                self._set_horizontal_velocity(
+                    x=float(self.vel.x),
+                    y=0.0,
+                    source=MotionWriteSource.COLLISION,
+                    reason="axis_resolve_y",
+                )
                 self._wall_contact_timer = 0.0
             else:
                 if delta > 0:
@@ -328,6 +326,6 @@ class PlayerControllerCollisionMixin:
                 else:
                     self.pos.z = box.maximum.z + self.player_half.z
                     self.grounded = True
-                self.vel.z = 0
+                self._set_vertical_velocity(0.0, source=MotionWriteSource.COLLISION, reason="axis_resolve_z")
 
             paabb = self._player_aabb()

@@ -43,6 +43,21 @@ def _migrate_to_invariants(profile: dict[str, float | bool]) -> dict[str, float 
     out["air_speed_mult"] = max(0.50, min(4.0, legacy_air_speed / vmax))
     out["air_gain_t90"] = max(0.03, min(1.2, 0.9 / legacy_air_accel))
     out["wallrun_sink_t90"] = max(0.03, min(1.2, float(out.get("wallrun_sink_t90", 0.22))))
+    legacy_slide_duration = max(1e-4, float(out.get("slide_duration", out.get("dash_duration", 0.24))))
+    legacy_slide_stop_t90 = math.log(10.0) / (math.log(2.0) / legacy_slide_duration)
+    out["slide_stop_t90"] = max(
+        0.10,
+        min(8.0, float(out.get("slide_stop_t90", max(2.0, legacy_slide_stop_t90)))),
+    )
+    if "slide_half_height_mult" not in out:
+        crouch_h = float(out.get("crouch_half_height", 0.68))
+        stand_h = max(0.15, float(out.get("player_half_height", 1.05)))
+        out["slide_half_height_mult"] = max(0.30, min(1.0, crouch_h / stand_h))
+    if "slide_eye_height_mult" not in out:
+        crouch_eye = float(out.get("crouch_eye_height", 0.42))
+        stand_eye = max(0.1, float(out.get("player_eye_height", 0.625)))
+        out["slide_eye_height_mult"] = max(0.40, min(1.0, crouch_eye / stand_eye))
+    out["slide_enabled"] = bool(out.get("slide_enabled", out.get("dash_enabled", True)))
     out["coyote_buffer_enabled"] = True
     out["custom_friction_enabled"] = True
     for legacy in (
@@ -56,6 +71,16 @@ def _migrate_to_invariants(profile: dict[str, float | bool]) -> dict[str, float 
         "jump_accel",
         "air_control",
         "air_counter_strafe_brake",
+        "dash_distance",
+        "dash_duration",
+        "dash_enabled",
+        "dash_sweep_enabled",
+        "slide_duration",
+        "slide_speed_mult",
+        "crouch_speed_multiplier",
+        "crouch_half_height",
+        "crouch_eye_height",
+        "crouch_enabled",
     ):
         out.pop(legacy, None)
     return out
@@ -292,7 +317,7 @@ def on_tuning_change(host, field: str) -> None:
             host._apply_profile_snapshot(dict(host._net_authoritative_tuning), persist=False)
         host.ui.set_status("Server config is host-only. Local tuning changes are blocked.")
         return
-    if field in ("player_radius", "player_half_height", "crouch_half_height"):
+    if field in ("player_radius", "player_half_height", "slide_half_height_mult"):
         if host.player is not None:
             host.player.apply_hull_settings()
     if field == "vis_culling_enabled":

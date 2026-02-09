@@ -19,15 +19,13 @@ Kept controls:
 - `jump_apex_time`
 - `jump_buffer_time`
 - `coyote_time`
-- `dash_distance`
-- `dash_duration`
+- `slide_stop_t90`
 
 Kept toggles:
 - `autojump_enabled`
 - `coyote_buffer_enabled`
 - `custom_friction_enabled`
-- `dash_enabled`
-- `dash_sweep_enabled`
+- `slide_enabled`
 - `wallrun_enabled`
 - `surf_enabled`
 - `harness_camera_smoothing_enabled`
@@ -43,6 +41,12 @@ Not exposed anymore in debug UI:
 - legacy air scalars are mapped to two air invariants:
   - `air_speed_mult = legacy_max_air_speed / max_ground_speed`
   - `air_gain_t90 = 0.9 / legacy_jump_accel`
+
+## Slide policy addendum
+- Slide is hold-based (`Shift` down = active, release = exit).
+- Slide must preserve carried horizontal speed on engage (no artificial entry boost).
+- Slide deceleration is controlled only by `slide_stop_t90` so it stays independent from normal ground stop tuning.
+- Slide steering should be camera-yaw driven; keyboard strafe should not directly steer slide.
 
 ## Risks
 - hidden advanced settings still exist in profile/state payloads; accidental edits outside debug UI can still affect behavior.

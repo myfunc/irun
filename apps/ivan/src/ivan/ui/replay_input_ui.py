@@ -14,7 +14,7 @@ class ReplayInputUI:
     Replay-only input visualizer.
 
     Shows a compact "movement diamond" style indicator plus dedicated sections
-    for jump, crouch, and mouse direction.
+    for jump, slide, and mouse direction.
     """
 
     def __init__(self, *, aspect2d, theme: Theme) -> None:
@@ -96,7 +96,7 @@ class ReplayInputUI:
             fg=theme.text_muted,
         )
 
-        # Separate sections for jump/crouch/mouse.
+        # Separate sections for jump/slide/mouse.
         sx = self._move_origin_x + self._move_w + 0.08
         self._jump_box = self._box(
             x=sx,
@@ -107,13 +107,13 @@ class ReplayInputUI:
             text="JUMP",
             text_scale=theme.small_scale,
         )
-        self._crouch_box = self._box(
+        self._slide_box = self._box(
             x=sx,
             y=self._move_origin_y + 0.08,
             w=0.24,
             h=0.10,
             color=self._inactive,
-            text="CROUCH",
+            text="SLIDE",
             text_scale=theme.small_scale,
         )
         self._label(x=sx, y=self._move_origin_y + self._move_h + 0.03, text="Actions", scale=theme.small_scale, fg=theme.text_muted)
@@ -206,7 +206,7 @@ class ReplayInputUI:
         move_right: int,
         jump_pressed: bool,
         jump_held: bool,
-        crouch_held: bool,
+        slide_held: bool,
         look_dx: int,
         look_dy: int,
         key_w_held: bool = False,
@@ -236,7 +236,7 @@ class ReplayInputUI:
         # Action sections.
         jump_on = bool(jump_pressed) or bool(jump_held)
         self._jump_box["frameColor"] = self._active_fwd if jump_on else self._inactive
-        self._crouch_box["frameColor"] = self._active_back if bool(crouch_held) else self._inactive
+        self._slide_box["frameColor"] = self._active_back if bool(slide_held) else self._inactive
 
         # Arrow keys.
         self._arrow_u["frameColor"] = self._active_fwd if bool(arrow_up_held) else self._inactive

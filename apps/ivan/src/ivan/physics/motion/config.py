@@ -18,8 +18,7 @@ class MotionInvariants:
     air_speed_mult: float
     air_gain_t90: float
     wallrun_sink_t90: float
-    dash_distance: float
-    dash_duration: float
+    slide_stop_t90: float
     jump_buffer_time: float
     coyote_time: float
 
@@ -36,7 +35,7 @@ class MotionDerived:
     air_accel: float
     wallrun_sink_speed: float
     wallrun_sink_k: float
-    dash_speed: float
+    slide_damp_k: float
 
 
 @dataclass(frozen=True)
@@ -71,9 +70,8 @@ def derive_motion_config(*, tuning: PhysicsTuning) -> MotionConfig:
     wallrun_sink_speed = -max(0.20, float(jump_takeoff_speed) * 0.12)
     wallrun_sink_k = math.log(10.0) / wallrun_sink_t90
 
-    dash_distance = max(0.01, float(tuning.dash_distance))
-    dash_duration = max(1e-4, float(tuning.dash_duration))
-    dash_speed = dash_distance / dash_duration
+    slide_stop_t90 = max(1e-4, float(tuning.slide_stop_t90))
+    slide_damp_k = math.log(10.0) / slide_stop_t90
 
     invariants = MotionInvariants(
         vmax=vmax,
@@ -84,8 +82,7 @@ def derive_motion_config(*, tuning: PhysicsTuning) -> MotionConfig:
         air_speed_mult=air_speed_mult,
         air_gain_t90=air_gain_t90,
         wallrun_sink_t90=wallrun_sink_t90,
-        dash_distance=dash_distance,
-        dash_duration=dash_duration,
+        slide_stop_t90=slide_stop_t90,
         jump_buffer_time=max(0.0, float(tuning.jump_buffer_time)),
         coyote_time=max(0.0, float(tuning.coyote_time)),
     )
@@ -98,6 +95,6 @@ def derive_motion_config(*, tuning: PhysicsTuning) -> MotionConfig:
         air_accel=max(0.0, float(air_accel)),
         wallrun_sink_speed=float(wallrun_sink_speed),
         wallrun_sink_k=max(0.0, float(wallrun_sink_k)),
-        dash_speed=max(0.0, float(dash_speed)),
+        slide_damp_k=max(0.0, float(slide_damp_k)),
     )
     return MotionConfig(invariants=invariants, derived=derived)

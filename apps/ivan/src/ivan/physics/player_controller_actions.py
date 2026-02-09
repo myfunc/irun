@@ -4,6 +4,8 @@ import math
 
 from panda3d.core import LVector3f
 
+from ivan.physics.motion.state import MotionWriteSource
+
 
 class PlayerControllerActionsMixin:
     def attach_grapple(self, *, anchor: LVector3f) -> None:
@@ -18,7 +20,11 @@ class PlayerControllerActionsMixin:
         self._grapple_attach_shorten_left = max(0.0, float(self.tuning.grapple_attach_shorten_time))
         if rope_dist > 1e-9:
             rope.normalize()
-            self.vel += rope * max(0.0, float(self.tuning.grapple_attach_boost))
+            self._add_velocity(
+                rope * max(0.0, float(self.tuning.grapple_attach_boost)),
+                source=MotionWriteSource.IMPULSE,
+                reason="grapple.attach_boost",
+            )
 
     def detach_grapple(self) -> None:
         self._grapple_attached = False
@@ -62,14 +68,22 @@ class PlayerControllerActionsMixin:
             boost = jump_dir * wjb
         else:
             boost = away * wjb + forward * (wjb * 0.45)
-        self.vel.x = boost.x
-        self.vel.y = boost.y
-        self.vel.z = self._jump_up_speed() * 0.95
+        self._set_horizontal_velocity(
+            x=float(boost.x),
+            y=float(boost.y),
+            source=MotionWriteSource.IMPULSE,
+            reason="walljump.horizontal",
+        )
+        self._set_vertical_velocity(
+            self._jump_up_speed() * 0.95,
+            source=MotionWriteSource.IMPULSE,
+            reason="walljump.vertical",
+        )
         self._wall_jump_lock_timer = 0.0
         self._wall_contact_timer = 999.0
         self._wall_normal = LVector3f(0, 0, 0)
         self._jump_buffer_timer = 0.0
-        self._dash_time_left = 0.0
+        self._slide_active = False
 
     def _try_vault(self, *, yaw_deg: float) -> bool:
         if self.collision is None:
@@ -135,16 +149,27 @@ class PlayerControllerActionsMixin:
         if forward.lengthSquared() > 1e-12:
             forward.normalize()
 
-        self.vel.z = max(self.vel.z, self._jump_up_speed() * float(self.tuning.vault_jump_multiplier))
-        self.vel.x += forward.x * float(self.tuning.vault_forward_boost)
-        self.vel.y += forward.y * float(self.tuning.vault_forward_boost)
+        self._set_vertical_velocity(
+            max(float(self.vel.z), self._jump_up_speed() * float(self.tuning.vault_jump_multiplier)),
+            source=MotionWriteSource.IMPULSE,
+            reason="vault.vertical",
+        )
+        self._add_velocity(
+            LVector3f(forward.x, forward.y, 0.0) * float(self.tuning.vault_forward_boost),
+            source=MotionWriteSource.IMPULSE,
+            reason="vault.forward_boost",
+        )
 
         max_vault_hspeed = float(self._motion_solver.air_speed(speed_scale=1.0)) * 1.6
         hspeed = math.sqrt(self.vel.x * self.vel.x + self.vel.y * self.vel.y)
         if hspeed > max_vault_hspeed and hspeed > 1e-9:
             s = max_vault_hspeed / hspeed
-            self.vel.x *= s
-            self.vel.y *= s
+            self._set_horizontal_velocity(
+                x=float(self.vel.x) * s,
+                y=float(self.vel.y) * s,
+                source=MotionWriteSource.SOLVER,
+                reason="vault.hspeed_cap",
+            )
 
         self._vault_cooldown_timer = 0.0
         self._wall_contact_timer = 999.0
@@ -177,10 +202,18 @@ class PlayerControllerActionsMixin:
         # Rope is taut: remove outward radial speed and add a pull to restore rope length.
         radial_out = float(self.vel.dot(n))
         if radial_out > 0.0:
-            self.vel -= n * radial_out
+            self._add_velocity(
+                -n * radial_out,
+                source=MotionWriteSource.CONSTRAINT,
+                reason="grapple.remove_radial_out",
+            )
         pull_max = max(0.0, float(self.tuning.grapple_pull_strength))
         pull = min(pull_max, max(0.0, (dist - self._grapple_length) / max(1e-5, dt)))
-        self.vel -= n * pull
+        self._add_velocity(
+            -n * pull,
+            source=MotionWriteSource.CONSTRAINT,
+            reason="grapple.pull",
+        )
 
     def _enforce_grapple_length(self) -> None:
         if not self.is_grapple_attached():
@@ -193,35 +226,40 @@ class PlayerControllerActionsMixin:
         self.pos = self._grapple_anchor + n * self._grapple_length
         radial_out = float(self.vel.dot(n))
         if radial_out > 0.0:
-            self.vel -= n * radial_out
+            self._add_velocity(
+                -n * radial_out,
+                source=MotionWriteSource.CONSTRAINT,
+                reason="grapple.enforce_length",
+            )
 
     def _current_target_half_height(self) -> float:
         stand_h = max(0.15, float(self._standing_half_height))
-        if self.crouched and self.tuning.crouch_enabled:
-            return min(stand_h, max(0.15, float(self.tuning.crouch_half_height)))
+        if self.crouched:
+            target = max(0.30, min(1.0, float(self.tuning.slide_half_height_mult)))
+            return min(stand_h, max(0.15, stand_h * target))
         return stand_h
 
-    def _update_crouch_state(self, crouching: bool) -> None:
-        if not self.tuning.crouch_enabled:
-            crouching = False
-
-        target = bool(crouching)
+    def _update_slide_hull_state(self, slide_active: bool) -> None:
+        target = bool(slide_active)
         if target == self.crouched:
             return
         if target:
-            self._apply_crouch_hull(True)
+            self._apply_slide_hull(True)
             self.crouched = True
             return
 
         if self._can_uncrouch():
-            self._apply_crouch_hull(False)
+            self._apply_slide_hull(False)
             self.crouched = False
 
-    def _apply_crouch_hull(self, crouched: bool) -> None:
+    def _apply_slide_hull(self, crouched: bool) -> None:
         old_half = float(self.player_half.z)
         stand_h = max(0.15, float(self._standing_half_height))
-        crouch_h = min(stand_h, max(0.15, float(self.tuning.crouch_half_height)))
-        new_half = crouch_h if crouched else stand_h
+        low_h = min(
+            stand_h,
+            max(0.15, stand_h * max(0.30, min(1.0, float(self.tuning.slide_half_height_mult)))),
+        )
+        new_half = low_h if crouched else stand_h
         if abs(new_half - old_half) < 1e-6:
             return
 

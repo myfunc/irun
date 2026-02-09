@@ -20,6 +20,11 @@ from ivan.replays.telemetry import (
     export_replay_telemetry,
     telemetry_export_dir,
 )
+from ivan.replays.determinism_verify import (
+    ReplayDeterminismReport,
+    verify_latest_replay_determinism,
+    verify_replay_determinism,
+)
 
 __all__ = [
     "DemoFrame",
@@ -38,4 +43,7 @@ __all__ = [
     "export_latest_replay_telemetry",
     "export_replay_telemetry",
     "telemetry_export_dir",
+    "ReplayDeterminismReport",
+    "verify_latest_replay_determinism",
+    "verify_replay_determinism",
 ]

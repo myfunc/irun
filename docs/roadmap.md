@@ -41,8 +41,10 @@ Items temporarily on hold pending further analysis:
 - 2) Jump derivation (`H_jump`, `T_apex`) replacing direct jump-speed tuning: **completed (staged)**
 - 3) Air control through motion solver authority: **completed (staged)**
 - 3a) Air-gain invariant collapse (`air_speed_mult`, `air_gain_t90`) with legacy air scalar removal from active tuning: **completed (staged)**
-- 4) Dash sweep/cast path + runtime harness toggle: **completed (staged)**
+- 4) Shift powerslide mode replacing dash/crouch (`slide_stop_t90`, hold semantics, low-hull state): **completed (staged)**
+- 4a) Velocity authority hardening (non-solver writes routed through explicit velocity interface sources): **completed (staged)**
 - 5) Camera read-only integration on top of solved motion: **completed (staged)**
 - 6) Animation read-only integration + determinism/HUD validation: **completed (staged)**
 - 7) Controller ownership split (intent ingestion + module boundaries): **completed (staged)**
 - 8) Wallrun feel pass (tilt direction, camera-biased jump, invariant sink timing): **completed (staged)**
+- 9) Reintroduce dash as a separate mode (after baseline/instrumentation pass): **pending**

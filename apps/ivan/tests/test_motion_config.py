@@ -61,14 +61,13 @@ def test_ground_damping_reaches_10_percent_at_stop_t90() -> None:
     assert vel.x < 1.05
 
 
-def test_dash_speed_derived_from_distance_and_duration() -> None:
+def test_slide_derivation_uses_stop_t90() -> None:
     tuning = PhysicsTuning(
-        dash_distance=7.2,
-        dash_duration=0.24,
+        slide_stop_t90=2.5,
     )
     cfg = derive_motion_config(tuning=tuning)
 
-    assert math.isclose(cfg.derived.dash_speed, 30.0, rel_tol=1e-6)
+    assert math.isclose(cfg.derived.slide_damp_k, math.log(10.0) / 2.5, rel_tol=1e-6)
 
 
 def test_air_derivation_uses_speed_multiplier_and_t90() -> None:

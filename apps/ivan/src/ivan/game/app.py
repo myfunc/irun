@@ -137,7 +137,6 @@ class RunnerDemo(ShowBase):
         self._mouse_dx_accum: float = 0.0
         self._mouse_dy_accum: float = 0.0
         self._prev_jump_down: bool = False
-        self._prev_dash_down: bool = False
         self._prev_grapple_down: bool = False
         self._prev_noclip_toggle_down: bool = False
         self._prev_demo_save_down: bool = False
@@ -987,7 +986,6 @@ class RunnerDemo(ShowBase):
             if not self._playback_active:
                 self._playback_look_scale = self._look_input_scale
             self._prev_jump_down = False
-            self._prev_dash_down = False
             self._prev_grapple_down = False
             self._prev_noclip_toggle_down = False
             self._prev_demo_save_down = False
@@ -1131,8 +1129,11 @@ class RunnerDemo(ShowBase):
         if self.player is not None:
             player_pos = LVector3f(self.player.pos)
             eye_height = float(self.tuning.player_eye_height)
-            if self.player.crouched and bool(self.tuning.crouch_enabled):
-                eye_height = min(eye_height, float(self.tuning.crouch_eye_height))
+            if self.player.is_sliding():
+                eye_height = min(
+                    eye_height,
+                    eye_height * max(0.40, min(1.0, float(self.tuning.slide_eye_height_mult))),
+                )
             cam_pos = LVector3f(player_pos.x, player_pos.y, player_pos.z + eye_height)
         return (player_pos, cam_pos, float(self._yaw), float(self._pitch))
 
@@ -1450,7 +1451,7 @@ class RunnerDemo(ShowBase):
                 move_right=int(cmd.move_right),
                 jump_pressed=bool(cmd.jump_pressed),
                 jump_held=bool(cmd.jump_held),
-                crouch_held=bool(cmd.crouch_held),
+                slide_held=bool(cmd.slide_pressed),
                 look_dx=int(cmd.look_dx),
                 look_dy=int(cmd.look_dy),
                 key_w_held=bool(cmd.key_w_held),
@@ -1481,15 +1482,13 @@ class RunnerDemo(ShowBase):
             self._on_grapple_primary_down()
 
         wish = self._wish_direction_from_axes(move_forward=cmd.move_forward, move_right=cmd.move_right)
-        crouching = bool(cmd.crouch_held)
         jump_requested = bool(cmd.jump_pressed)
         if (
             int(cmd.move_forward) != 0
             or int(cmd.move_right) != 0
             or bool(cmd.jump_pressed)
             or bool(cmd.jump_held)
-            or bool(cmd.dash_pressed)
-            or bool(cmd.crouch_held)
+            or bool(cmd.slide_pressed)
             or bool(cmd.grapple_pressed)
             or int(cmd.look_dx) != 0
             or int(cmd.look_dy) != 0
@@ -1501,7 +1500,13 @@ class RunnerDemo(ShowBase):
             jump_requested = True
 
         if self.tuning.noclip_enabled:
-            self._step_noclip(dt=self._sim_fixed_dt, wish_dir=wish, jump_held=bool(cmd.jump_held), crouching=crouching)
+            self._step_noclip(
+                dt=self._sim_fixed_dt,
+                move_forward=int(cmd.move_forward),
+                move_right=int(cmd.move_right),
+                jump_held=bool(cmd.jump_held),
+                slide_pressed=bool(cmd.slide_pressed),
+            )
         else:
             if not bool(self.tuning.grapple_enabled):
                 self.player.detach_grapple()
@@ -1509,9 +1514,8 @@ class RunnerDemo(ShowBase):
                 dt=self._sim_fixed_dt,
                 intent=MotionIntent(
                     wish_dir=LVector3f(wish),
-                    crouching=bool(crouching),
                     jump_requested=bool(jump_requested),
-                    dash_requested=bool(cmd.dash_pressed),
+                    slide_requested=bool(cmd.slide_pressed),
                 ),
                 yaw_deg=self._yaw,
                 pitch_deg=self._pitch,
@@ -1548,7 +1552,7 @@ class RunnerDemo(ShowBase):
             inp_mr=int(cmd.move_right),
             inp_jp=bool(cmd.jump_pressed),
             inp_jh=bool(cmd.jump_held),
-            inp_dp=bool(cmd.dash_pressed),
+            inp_sp=bool(cmd.slide_pressed),
         )
         tick_hash = deterministic_state_hash(
             pos=LVector3f(self.player.pos),
@@ -1594,8 +1598,7 @@ class RunnerDemo(ShowBase):
                     "mr": int(cmd.move_right),
                     "jp": bool(cmd.jump_pressed),
                     "jh": bool(cmd.jump_held),
-                    "dp": bool(cmd.dash_pressed),
-                    "ch": bool(cmd.crouch_held),
+                    "sp": bool(cmd.slide_pressed),
                     "gp": bool(cmd.grapple_pressed),
                 },
             )
@@ -1654,8 +1657,7 @@ class RunnerDemo(ShowBase):
                 "det_h": str(det_h),
                 "inp_jp": bool(cmd.jump_pressed),
                 "inp_jh": bool(cmd.jump_held),
-                "inp_dp": bool(cmd.dash_pressed),
-                "inp_ch": bool(cmd.crouch_held),
+                "inp_sp": bool(cmd.slide_pressed),
                 "inp_gp": bool(cmd.grapple_pressed),
                 "inp_nt": bool(cmd.noclip_toggle_pressed),
                 "inp_mf": int(cmd.move_forward),
@@ -1677,8 +1679,11 @@ class RunnerDemo(ShowBase):
         hspeed = math.sqrt(float(vel.x) * float(vel.x) + float(vel.y) * float(vel.y))
         speed = math.sqrt(float(vel.x) * float(vel.x) + float(vel.y) * float(vel.y) + float(vel.z) * float(vel.z))
         eye_height = float(self.tuning.player_eye_height)
-        if bool(self.player.crouched) and bool(self.tuning.crouch_enabled):
-            eye_height = min(eye_height, float(self.tuning.crouch_eye_height))
+        if self.player.is_sliding():
+            eye_height = min(
+                eye_height,
+                eye_height * max(0.40, min(1.0, float(self.tuning.slide_eye_height_mult))),
+            )
         det_h = deterministic_state_hash(
             pos=LVector3f(pos),
             vel=LVector3f(vel),
@@ -1705,13 +1710,14 @@ class RunnerDemo(ShowBase):
             "pitch": float(self._pitch),
             "det_h": str(det_h),
             "grounded": bool(self.player.grounded),
+            "sliding": bool(self.player.is_sliding()),
+            # Legacy key retained for compatibility with older telemetry consumers.
             "crouched": bool(self.player.crouched),
             "grapple": bool(self.player.is_grapple_attached()),
             "noclip": bool(self.tuning.noclip_enabled),
             "inp_jp": bool(cmd.jump_pressed),
             "inp_jh": bool(cmd.jump_held),
-            "inp_dp": bool(cmd.dash_pressed),
-            "inp_ch": bool(cmd.crouch_held),
+            "inp_sp": bool(cmd.slide_pressed),
             "inp_gp": bool(cmd.grapple_pressed),
             "inp_nt": bool(cmd.noclip_toggle_pressed),
             "inp_mf": int(cmd.move_forward),
@@ -1818,16 +1824,38 @@ class RunnerDemo(ShowBase):
     def _toggle_noclip(self) -> None:
         self.tuning.noclip_enabled = not bool(self.tuning.noclip_enabled)
 
-    def _step_noclip(self, *, dt: float, wish_dir: LVector3f, jump_held: bool, crouching: bool) -> None:
+    def _step_noclip(
+        self,
+        *,
+        dt: float,
+        move_forward: int,
+        move_right: int,
+        jump_held: bool,
+        slide_pressed: bool,
+    ) -> None:
         if self.player is None:
             return
+        forward = self._view_direction()
+        h_rad = math.radians(float(self._yaw))
+        right = LVector3f(math.cos(h_rad), math.sin(h_rad), 0.0)
+        if right.lengthSquared() > 1e-12:
+            right.normalize()
+        move = LVector3f(0.0, 0.0, 0.0)
+        if int(move_forward) > 0:
+            move += forward
+        elif int(move_forward) < 0:
+            move -= forward
+        if int(move_right) > 0:
+            move += right
+        elif int(move_right) < 0:
+            move -= right
         up = 1.0 if jump_held else 0.0
-        down = 1.0 if crouching else 0.0
-        move = LVector3f(wish_dir.x, wish_dir.y, up - down)
+        down = 1.0 if slide_pressed else 0.0
+        move.z += up - down
         if move.lengthSquared() > 1e-12:
             move.normalize()
         speed = max(0.0, float(self.tuning.noclip_speed))
-        self.player.vel = move * speed
+        self.player.set_external_velocity(vel=move * speed, reason="noclip")
         self.player.pos += self.player.vel * dt
         self.player.grounded = False
 
@@ -1995,7 +2023,7 @@ class RunnerDemo(ShowBase):
             self.ui.set_health(self._local_hp)
             self.ui.set_status(
                 f"speed: {hspeed:.2f} | z-vel: {self.player.vel.z:.2f} | grounded: {self.player.grounded} | "
-                f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()} | dash: {self.player.is_dashing()} | "
+                f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()} | slide: {self.player.is_sliding()} | "
                 f"grapple: {self.player.is_grapple_attached()} | hp: {self._local_hp} | net: {self._net_connected} | "
                 f"rec: {self._active_recording is not None} | replay: {self._playback_active}"
             )
@@ -2015,9 +2043,6 @@ class RunnerDemo(ShowBase):
 
     def _update_menu_hold(self, *, now: float) -> None:
         _menu.update_menu_hold(self, now=now)
-
-    def _is_crouching(self) -> bool:
-        return self._is_key_down("c")
 
     def _smoke_exit(self, task: Task) -> int:
         self._smoke_frames -= 1
