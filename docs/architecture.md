@@ -46,6 +46,7 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/ui/replay_browser_ui.py`: in-game replay browser overlay (UI kit list menu)
 - `apps/ivan/src/ivan/ui/replay_input_ui.py`: in-game replay input HUD (UI kit panel) for recorded command visualization
 - `apps/ivan/src/ivan/replays/demo.py`: input-demo storage (record/save/load/list) using repository-local storage under `apps/ivan/replays/`
+- `apps/ivan/src/ivan/replays/telemetry.py`: replay telemetry export pipeline (CSV tick dump + JSON summary metrics)
 - `apps/ivan/src/ivan/net/server.py`: authoritative multiplayer server loop (TCP bootstrap + UDP input/snapshots)
 - `apps/ivan/src/ivan/net/client.py`: multiplayer client transport for handshake/input send/snapshot poll
 - `apps/ivan/src/ivan/net/protocol.py`: multiplayer packet/message schema and payload codecs
@@ -96,7 +97,12 @@ See: `docs/ui-kit.md`.
     - Env: `IRUN_IVAN_CONSOLE_PORT` (default `7779`).
     - Protocol: request `{"line":"echo hi","role":"client","origin":"mcp"}` -> response `{"ok":true,"out":["hi"]}`.
   - Dedicated server process also starts a localhost control bridge on `IRUN_IVAN_SERVER_CONSOLE_PORT` (default `39001`).
+  - Replay telemetry export commands are available in the client console:
+    - `replay_export_latest [out_dir]`
+    - `replay_export <replay_path> [out_dir]`
   - `ivan-mcp` runs an MCP stdio server (Python 3.9, no deps) that exposes a single tool: `console_exec`.
+- CLI telemetry export:
+  - `python -m ivan --export-latest-replay-telemetry [--replay-telemetry-out <dir>]` exports latest replay metrics and exits.
 - Display/window:
   - Default: windowed 1280x720 on all platforms (Windows + macOS). Window is user-resizable.
   - Display settings (fullscreen, resolution) persist in `~/.irun/ivan/state.json` and are applied on startup.
@@ -107,6 +113,7 @@ See: `docs/ui-kit.md`.
   - While either menu is open, gameplay input is blocked but simulation continues.
   - `Esc` menu can open a replay browser (`Replays`) to load saved input demos.
   - Replay playback shows a dedicated replay input HUD and keeps gameplay/menu inputs locked until exit (`R`).
+  - Replay input HUD prefers explicitly recorded held states (`WASD`, arrows, mouse buttons) over derived movement axes.
   - `F2` input debug overlay includes rolling gameplay-feel telemetry (for movement/camera tuning passes).
   - Gameplay movement step supports optional noclip mode, optional autojump queueing, surf behavior on configured slanted surfaces, and grapple-rope constraint movement.
   - Grapple targeting uses collision-world ray queries (`ray_closest`) from camera center.

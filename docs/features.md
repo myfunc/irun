@@ -53,7 +53,12 @@
   - replay browser available from `Esc -> Replays`
   - playback re-simulates recorded per-tick input at fixed `60 Hz`
   - replay mode includes a compact input HUD visualizer (movement/jump/crouch/mouse direction)
+  - replay HUD now shows explicit held input states (`WASD`, arrow keys, mouse buttons) captured per tick to avoid derived-axis flicker
   - per-tick replay frames now also include telemetry for feel tuning (position/velocity/speeds/camera angles/state/buttons)
+  - replay telemetry export tooling:
+    - `replay_export_latest` (in-game console command) exports latest replay to CSV + JSON summary
+    - `replay_export <path> [out_dir]` exports a selected replay to CSV + JSON summary
+    - `python -m ivan --export-latest-replay-telemetry [--replay-telemetry-out <dir>]` exports without launching gameplay
   - while replay is active, gameplay/menu input is locked; `R` exits replay and respawns to normal play
 - Ivan: multiplayer foundation (authoritative server + connected clients)
   - dedicated server mode with TCP bootstrap + UDP gameplay packets

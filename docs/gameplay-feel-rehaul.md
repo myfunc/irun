@@ -59,6 +59,10 @@ Deliverables:
   - camera jerk signal (linear/angular acceleration proxies)
 - F2 overlay shows rolling feel metrics summary.
 - Optional text export path for benchmark sessions.
+- Replay telemetry export tooling:
+  - per-run CSV tick dump
+  - per-run JSON summary metrics
+  - latest-replay export trigger (CLI + in-game console command)
 
 Acceptance:
 - Metrics update during normal gameplay.
@@ -132,6 +136,8 @@ Acceptance:
   - landing speed loss
   - ground flickers per minute
   - camera jerk (avg/max)
+- Baseline checklist document:
+  - `docs/gameplay-baseline-checklist.md`
 
 ## Risks and Mitigations
 - Risk: "Smoother camera" hides simulation problems.
@@ -180,10 +186,8 @@ Validation completed:
 - Phase 3 polish: replay HUD and telemetry reduce iteration cost by making route-level behavior visible during every test run.
 
 ## Next Steps (Execution Order)
-1. Add an export utility to summarize replay telemetry (CSV/JSON) per run.
-2. Define Route A/B/C bundles and baseline protocol in a small checklist doc.
-3. Capture initial baseline datasets (3 runs per route).
-4. Start Phase 1 camera pipeline pass behind explicit tuning params.
+1. Capture initial baseline datasets (3 runs per route) using `docs/gameplay-baseline-checklist.md`.
+2. Start Phase 1 camera pipeline pass behind explicit tuning params.
 
 ## Rehaul Board Snapshot
 - Overall status: `Phase 0 active`, `Phase 1 ready-to-start after baselines`.

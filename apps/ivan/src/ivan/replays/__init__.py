@@ -9,6 +9,12 @@ from ivan.replays.demo import (
     new_recording,
     save_recording,
 )
+from ivan.replays.telemetry import (
+    ReplayTelemetryExport,
+    export_latest_replay_telemetry,
+    export_replay_telemetry,
+    telemetry_export_dir,
+)
 
 __all__ = [
     "DemoFrame",
@@ -20,4 +26,8 @@ __all__ = [
     "load_replay",
     "new_recording",
     "save_recording",
+    "ReplayTelemetryExport",
+    "export_latest_replay_telemetry",
+    "export_replay_telemetry",
+    "telemetry_export_dir",
 ]

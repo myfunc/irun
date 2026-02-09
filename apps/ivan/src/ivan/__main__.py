@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
 
 from ivan.game import run
 from ivan.net import run_server
+from ivan.replays.telemetry import export_latest_replay_telemetry
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -68,7 +70,26 @@ def main(argv: list[str] | None = None) -> None:
         default="player",
         help="Multiplayer player name.",
     )
+    parser.add_argument(
+        "--export-latest-replay-telemetry",
+        action="store_true",
+        help="Export telemetry (CSV + JSON summary) for the latest replay and exit.",
+    )
+    parser.add_argument(
+        "--replay-telemetry-out",
+        default=None,
+        help="Optional output directory for replay telemetry exports.",
+    )
     args = parser.parse_args(argv)
+
+    if args.export_latest_replay_telemetry:
+        out_dir = Path(args.replay_telemetry_out) if args.replay_telemetry_out else None
+        result = export_latest_replay_telemetry(out_dir=out_dir)
+        print(f"source: {result.source_demo}")
+        print(f"csv: {result.csv_path}")
+        print(f"summary: {result.summary_path}")
+        print(f"ticks: {result.tick_count} (telemetry: {result.telemetry_tick_count})")
+        return
 
     if args.server:
         run_server(
