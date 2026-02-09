@@ -626,18 +626,20 @@ class RunnerDemo(ShowBase):
         if self._mode != "game":
             return
         self.pause_ui.show_feel_session()
-        self.pause_ui.set_feel_status("Use route + feedback, then Export/Apply. Compare runs automatically on Apply.")
+        self.pause_ui.set_feel_status("Select route, add feedback note, then Export/Apply.")
 
-    def _feel_export_latest(self, route_tag: str) -> None:
+    def _feel_export_latest(self, route_tag: str, feedback_text: str) -> None:
         tag = str(route_tag or "").strip()
+        text = str(feedback_text or "").strip()
         try:
-            exported = export_latest_replay_telemetry()
+            exported = export_latest_replay_telemetry(route_tag=tag or None, comment=text or None)
         except Exception as e:
             msg = f"Feel export failed: {e}"
             self.pause_ui.set_feel_status(msg)
             self.ui.set_status(msg)
             return
-        msg = f"Exported latest replay telemetry: {exported.summary_path.name} ({tag or 'route: none'})"
+        self.pause_ui.clear_feel_feedback()
+        msg = f"Saved export + note ({tag or 'route: none'}): {exported.summary_path.name}"
         self.pause_ui.set_feel_status(msg)
         self.ui.set_status(msg)
 
@@ -668,12 +670,12 @@ class RunnerDemo(ShowBase):
         latest_summary: dict[str, Any] | None = None
         compare_note = "compare skipped"
         try:
-            comp = compare_latest_replays(route_tag=tag or None)
+            comp = compare_latest_replays(route_tag=tag or None, latest_comment=text or None)
             latest_summary = json.loads(comp.latest_export.summary_path.read_text(encoding="utf-8"))
             compare_note = f"compare +{comp.improved_count}/-{comp.regressed_count}/={comp.equal_count}"
         except Exception as compare_err:
             try:
-                exported = export_latest_replay_telemetry()
+                exported = export_latest_replay_telemetry(route_tag=tag or None, comment=text or None)
                 latest_summary = json.loads(exported.summary_path.read_text(encoding="utf-8"))
                 compare_note = f"compare skipped ({compare_err})"
             except Exception as export_err:
@@ -697,7 +699,8 @@ class RunnerDemo(ShowBase):
         preview = ", ".join(f"{a.field} {float(a.before):.3f}->{float(a.after):.3f}" for a in adjustments[:4])
         if len(adjustments) > 4:
             preview += f", +{len(adjustments) - 4} more"
-        msg = f"Applied {len(adjustments)} feel adjustment(s) [{tag or 'route: none'}] ({compare_note}): {preview}"
+        self.pause_ui.clear_feel_feedback()
+        msg = f"Applied {len(adjustments)} tweak(s), note saved, feedback cleared [{tag or 'route: none'}] ({compare_note}): {preview}"
         self.pause_ui.set_feel_status(msg)
         self.ui.set_status(msg)
 

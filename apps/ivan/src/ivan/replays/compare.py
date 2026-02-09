@@ -120,6 +120,7 @@ def compare_latest_replays(
     *,
     out_dir: Path | None = None,
     route_tag: str | None = None,
+    latest_comment: str | None = None,
 ) -> ReplayTelemetryComparison:
     replays = list_replays()
     if len(replays) < 2:
@@ -127,8 +128,13 @@ def compare_latest_replays(
     export_dir = Path(out_dir).expanduser().resolve() if out_dir is not None else telemetry_export_dir()
     export_dir.mkdir(parents=True, exist_ok=True)
 
-    latest = export_replay_telemetry(replay_path=replays[0], out_dir=export_dir)
-    reference = export_replay_telemetry(replay_path=replays[1], out_dir=export_dir)
+    latest = export_replay_telemetry(
+        replay_path=replays[0],
+        out_dir=export_dir,
+        route_tag=route_tag,
+        comment=latest_comment,
+    )
+    reference = export_replay_telemetry(replay_path=replays[1], out_dir=export_dir, route_tag=route_tag)
     latest_stem = latest.source_demo.stem.replace(".ivan_demo", "")
     ref_stem = reference.source_demo.stem.replace(".ivan_demo", "")
     out_path = export_dir / f"{latest_stem}.compare-vs-{ref_stem}.json"
@@ -146,4 +152,3 @@ def compare_latest_replays(
         regressed_count=int(regressed),
         equal_count=int(equal),
     )
-

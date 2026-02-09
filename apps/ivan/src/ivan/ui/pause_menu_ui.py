@@ -133,17 +133,6 @@ class PauseMenuUI:
             pos=(0.0, 0, theme.pad),
             text_wordwrap=22,
         )
-        self._feel_status = DirectLabel(
-            parent=self._tabs.page(3),
-            text="",
-            text_scale=theme.small_scale,
-            text_align=TextNode.ALeft,
-            text_fg=theme.text,
-            frameColor=(0, 0, 0, 0),
-            pos=(0.0, 0, theme.pad),
-            text_wordwrap=22,
-        )
-
         btn_h = 0.13
         btn_w = content_w
 
@@ -412,6 +401,14 @@ class PauseMenuUI:
             frame_color=theme.panel2,
             text_fg=theme.text,
         )
+        try:
+            self._feel_feedback_input.entry["width"] = 96
+        except Exception:
+            pass
+        try:
+            self._feel_feedback_input.entry.guiItem.setMaxChars(800)
+        except Exception:
+            pass
         self._feel_export_button = Button.build(
             parent=self._tabs.page(3),
             theme=theme,
@@ -420,7 +417,7 @@ class PauseMenuUI:
             w=btn_w,
             h=btn_h,
             label="Export Latest Replay",
-            on_click=lambda: on_feel_export_latest(self.feel_route_tag),
+            on_click=lambda: on_feel_export_latest(self.feel_route_tag, self.feel_feedback_text),
         )
         self._feel_apply_feedback_button = Button.build(
             parent=self._tabs.page(3),
@@ -431,6 +428,25 @@ class PauseMenuUI:
             h=btn_h,
             label="Apply Feedback Tuning",
             on_click=lambda: on_feel_apply_feedback(self.feel_route_tag, self.feel_feedback_text),
+        )
+        status_h = max(0.12, btn_h * 1.25)
+        status_y = theme.pad + btn_h + theme.gap + 0.02
+        self._feel_status_panel = DirectFrame(
+            parent=self._tabs.page(3),
+            frameColor=theme.panel2,
+            relief=DGG.FLAT,
+            frameSize=(0.0, btn_w, 0.0, status_h),
+            pos=(0.0, 0.0, status_y),
+        )
+        self._feel_status = DirectLabel(
+            parent=self._feel_status_panel,
+            text="",
+            text_scale=theme.small_scale * 0.95,
+            text_align=TextNode.ALeft,
+            text_fg=theme.text,
+            frameColor=(0, 0, 0, 0),
+            pos=(theme.pad * 0.65, 0.0, status_h * 0.33),
+            text_wordwrap=26,
         )
         self._feel_back_button = Button.build(
             parent=self._tabs.page(3),
@@ -553,6 +569,15 @@ class PauseMenuUI:
             return str(self._feel_feedback_input.entry.get()).strip()
         except Exception:
             return ""
+
+    def set_feel_feedback_text(self, text: str) -> None:
+        try:
+            self._feel_feedback_input.entry.enterText(str(text))
+        except Exception:
+            pass
+
+    def clear_feel_feedback(self) -> None:
+        self.set_feel_feedback_text("")
 
     def _set_feel_route_tag(self, tag: str) -> None:
         t = str(tag or "").strip().upper()
