@@ -13,9 +13,13 @@
 - Ivan: in-game menu/debug UI block gameplay input but keep simulation running (no pause)
 - Ivan: classic center crosshair (Half-Life/CS style) visible during active gameplay
 - Ivan: input debug overlay (`F2`) for keyboard/mouse troubleshooting
+- Ivan: gameplay feel telemetry in `F2` overlay (rolling jump success, landing speed loss, ground flicker, camera jerk proxies)
 - Ivan: error console overlay (`F3`) that captures and shows unhandled exceptions without crashing the app (cycles hidden/collapsed/feed)
 - Ivan: generated test course with walls and jump obstacles
 - Ivan: BSP-to-map-bundle asset pipeline and runtime map loading (`--map`, including assets-relative aliases)
+- Ivan: Source VMF import pipeline (`tools/importers/source/import_source_vmf.py`) that compiles VMF -> BSP (`vbsp`/`vvis`/`vrad`) and then builds IVAN map bundles
+- Ivan: TrenchBroom map import pipeline (`tools/importers/goldsrc/import_trenchbroom_map.py`) that compiles Valve220 `.map` via GoldSrc tools (`hlcsg`/`hlbsp`/`hlvis`/`hlrad`) and then builds IVAN map bundles
+  - Supports SDHLT binary naming (`sdHLCSG`/`sdHLBSP`/`sdHLVIS`/`sdHLRAD`) including their no-`-game` CLI behavior
 - Ivan: packed map bundles (`.irunmap`) for imported maps (zip archive with runtime auto-extract cache)
 - Ivan: Source material extraction (VTF->PNG conversion), textured rendering, and skybox hookup
   - Basic VMT parsing for translucency/additive/alphatest and `$basetexture` indirection
@@ -25,6 +29,7 @@
   - Supports masked transparency for `{` textures via GoldSrc-style blue colorkey / palette index 255
   - Converts GoldSrc skybox textures from `gfx/env/` into bundle `materials/skybox/` (when present)
   - Extracts baked GoldSrc lightmaps (RGB) into bundle `lightmaps/` and renders them in runtime (supports up to 4 light styles per face)
+  - Runtime now falls back to base textures for faces whose referenced lightmap files are missing (prevents full-black map rendering for partial bundles)
 - Ivan: GoldSrc PVS visibility culling (BSP VISIBILITY + leaf surface lists) to avoid rendering geometry hidden behind walls (when cache is available)
   - Currently disabled by default (can be toggled ON in the debug menu via `vis_culling_enabled`).
 - Ivan: main menu (UI kit) with map bundle selection and on-demand GoldSrc/Xash3D import from a chosen game directory
@@ -40,7 +45,9 @@
   - recording starts on spawn/respawn and can be saved with `F`
   - saved demos are stored in-repo under `apps/ivan/replays/`
   - replay browser available from `Esc -> Replays`
-  - playback re-simulates recorded per-tick input (no position samples) at fixed `60 Hz`
+  - playback re-simulates recorded per-tick input at fixed `60 Hz`
+  - per-tick replay frames now also include telemetry for feel tuning (position/velocity/speeds/camera angles/state/buttons)
+  - while replay is active, gameplay/menu input is locked; `R` exits replay and respawns to normal play
 - Ivan: multiplayer foundation (authoritative server + connected clients)
   - dedicated server mode with TCP bootstrap + UDP gameplay packets
   - normal client sessions are offline by default; ESC menu `Open To Network` starts/stops embedded host mode for LAN joinability while keeping the local player in-session
@@ -101,6 +108,7 @@
 - Rendering: retro texture filtering options (nearest-neighbor, mipmap strategy)
 - Game loop: pause, restart, level select
 - Debug: in-game tweakables and metrics
+- Gameplay feel rehaul plan and phased execution tracker: `docs/gameplay-feel-rehaul.md`
 - UI: extend the procedural UI kit to cover remaining runtime UI needs (avoid one-off custom UI)
 
 ## Out of Scope (For Now)

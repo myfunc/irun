@@ -31,10 +31,12 @@ See: `docs/ui-kit.md`.
   - `apps/ivan/src/ivan/game/input_system.py`: mouse/keyboard sampling + input command helpers
   - `apps/ivan/src/ivan/game/menu_flow.py`: main menu controller + import worker glue
   - `apps/ivan/src/ivan/game/grapple_rope.py`: grapple rope rendering helper
+  - `apps/ivan/src/ivan/game/feel_metrics.py`: rolling gameplay-feel telemetry (jump/landing/ground flicker/camera jerk proxies)
 - `apps/ivan/src/ivan/maps/catalog.py`: runtime catalog helpers for shipped bundles and GoldSrc-like map discovery
 - `apps/ivan/src/ivan/state.py`: small persistent user state (last launched map, last game dir/mod, tuning profiles + active profile snapshot)
 - `apps/ivan/src/ivan/world/scene.py`: Scene building, external map-bundle loading (`--map`), spawn point/yaw
 - `apps/ivan/src/ivan/maps/steam.py`: Steam library scanning helpers (manual Half-Life auto-detect)
+- `apps/ivan/src/ivan/maps/goldsrc_compile.py`: GoldSrc compiler resolver/helpers (`hlcsg`/`hlbsp`/`hlvis`/`hlrad`) used by TrenchBroom import flow
 - `apps/ivan/src/ivan/physics/tuning.py`: Tunable movement/physics parameters (exposed via debug/admin UI)
 - `apps/ivan/src/ivan/physics/player_controller.py`: Kinematic character controller (Quake3-style step + slide)
 - `apps/ivan/src/ivan/physics/collision_world.py`: Bullet collision query world (convex sweeps against static geometry)
@@ -51,9 +53,14 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/common/aabb.py`: Shared AABB type used for graybox fallback
 - `apps/ivan/tools/build_source_bsp_assets.py`: Source BSP -> IVAN map bundle (triangles + textures; VTF->PNG)
   - Extracts per-face Source lightmaps and basic VMT metadata (e.g. `$basetexture`, translucency hints) into `map.json`.
+- `apps/ivan/tools/importers/source/import_source_vmf.py`: Source VMF -> BSP -> IVAN bundle helper
+  - Uses Source compile tools (`vbsp`/`vvis`/`vrad`) to compile a VMF first, then invokes `build_source_bsp_assets.py`.
+  - Builds in an isolated temporary game root that links VMF-local assets and can optionally reference a real Source game root for fallback content.
 - `apps/ivan/tools/importers/goldsrc/import_goldsrc_bsp.py`: GoldSrc/Xash3D BSP -> IVAN map bundle (triangles + WAD textures + resource copy)
   - Notes: GoldSrc masked textures use `{` prefix; importer emits PNG alpha using palette/index rules and runtime enables binary transparency for those materials.
   - Notes: The importer extracts embedded BSP textures when present and falls back to scanning `--game-root` for `.wad` files if the BSP omits the worldspawn `wad` list.
+- `apps/ivan/tools/importers/goldsrc/import_trenchbroom_map.py`: TrenchBroom Valve220 `.map` -> GoldSrc BSP compile (`hlcsg`/`hlbsp`/`hlvis`/`hlrad`) -> IVAN bundle helper
+  - Supports both classic `hl*` binaries and SDHLT `sdHL*` binaries (auto-handles toolchain CLI differences).
 
 ## Runtime
 - Start: `python -m ivan` (from `apps/ivan`)
@@ -94,6 +101,7 @@ See: `docs/ui-kit.md`.
   - `` ` `` opens debug/admin tuning menu and unlocks cursor.
   - While either menu is open, gameplay input is blocked but simulation continues.
   - `Esc` menu can open a replay browser (`Replays`) to load saved input demos.
+  - `F2` input debug overlay includes rolling gameplay-feel telemetry (for movement/camera tuning passes).
   - Gameplay movement step supports optional noclip mode, optional autojump queueing, surf behavior on configured slanted surfaces, and grapple-rope constraint movement.
   - Grapple targeting uses collision-world ray queries (`ray_closest`) from camera center.
 
@@ -104,6 +112,7 @@ See: `docs/ui-kit.md`.
   - Reason: imported GoldSrc maps commonly reference non-power-of-two textures; automatic rescaling breaks BSP UV mapping.
 - Coordinate system: IVAN uses Panda3D's default world axes (`X` right, `Y` forward, `Z` up). GoldSrc BSP imports keep the same axes and only apply a uniform scale.
 - Imported BSP bundles render with baked lightmaps (Source/GoldSrc) and disable dynamic scene lights for map geometry.
+- If a face references missing lightmap files at runtime, IVAN skips lightmap shading for that face and falls back to base-texture rendering (avoids full-black output for partial bundles).
 - Optional visibility culling:
   - GoldSrc bundles can use BSP PVS (VISIBILITY + leaf face lists) to avoid rendering world geometry behind walls.
   - Currently disabled by default; can be toggled at runtime via debug setting `vis_culling_enabled`.

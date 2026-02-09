@@ -68,6 +68,18 @@ python3 tools/importers/goldsrc/import_goldsrc_bsp.py \
   --scale 0.03
 ```
 
+1. Import a **TrenchBroom** `.map` (Valve220) by compiling to GoldSrc BSP first:
+```bash
+cd apps/ivan
+source .venv/bin/activate
+python3 tools/importers/goldsrc/import_trenchbroom_map.py \
+  --map <path-to-trenchbroom.map> \
+  --game-root <path-to-mod-root> \
+  --out <bundle-dir-or-map.json-or.irunmap> \
+  --compile-bin <path-to-hlcsg-hlbsp-hlvis-hlrad> \
+  --scale 0.03
+```
+
 GoldSrc analyze-only (prints WAD list + detected resource refs, no output written):
 ```bash
 python3 tools/importers/goldsrc/import_goldsrc_bsp.py \
