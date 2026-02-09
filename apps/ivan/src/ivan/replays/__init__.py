@@ -9,6 +9,11 @@ from ivan.replays.demo import (
     new_recording,
     save_recording,
 )
+from ivan.replays.compare import (
+    ReplayTelemetryComparison,
+    compare_exported_summaries,
+    compare_latest_replays,
+)
 from ivan.replays.telemetry import (
     ReplayTelemetryExport,
     export_latest_replay_telemetry,
@@ -26,6 +31,9 @@ __all__ = [
     "load_replay",
     "new_recording",
     "save_recording",
+    "ReplayTelemetryComparison",
+    "compare_exported_summaries",
+    "compare_latest_replays",
     "ReplayTelemetryExport",
     "export_latest_replay_telemetry",
     "export_replay_telemetry",

@@ -20,13 +20,24 @@ This checklist is used for Gameplay Feel Rehaul Phase 0 baseline capture.
 - Do not include warmup attempts in the baseline dataset.
 
 ## Required Metrics Per Run
-- `jump_takeoff.success_rate`
+- `metrics.jump_takeoff.success_rate`
+- `metrics.landing_speed_loss_avg`
 - `metrics.ground_flicker_per_min`
+- `metrics.camera_lin_jerk_avg`
+- `metrics.camera_ang_jerk_avg`
 - `metrics.horizontal_speed_avg`
 - `metrics.horizontal_speed_max`
 - `metrics.speed_avg`
 - `metrics.speed_max`
 - `ticks.duration_s`
+
+## Quick Commands
+- Export latest replay telemetry:
+  - In-game console: `replay_export_latest`
+  - CLI: `python -m ivan --export-latest-replay-telemetry`
+- Compare latest vs previous replay (auto-export both first):
+  - In-game console: `replay_compare_latest . A`
+  - CLI: `python -m ivan --compare-latest-replays --replay-route-tag A`
 
 ## Checklist
 

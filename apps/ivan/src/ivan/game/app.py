@@ -43,6 +43,8 @@ from ivan.replays import (
     DemoFrame,
     DemoRecording,
     append_frame,
+    compare_latest_replays,
+    export_latest_replay_telemetry,
     list_replays,
     load_replay,
     new_recording,
@@ -67,6 +69,8 @@ from . import menu_flow as _menu
 from . import netcode as _net
 from . import tuning_profiles as _profiles
 from .feel_metrics import FeelMetrics
+from .feel_feedback import apply_adjustments as _apply_feedback_adjustments
+from .feel_feedback import suggest_adjustments as _suggest_feel_adjustments
 from .hooks import EventHooks
 from .input_system import _InputCommand
 from .netcode import _NetPerfStats, _PredictedInput, _PredictedState, _RemotePlayerVisual
@@ -238,11 +242,15 @@ class RunnerDemo(ShowBase):
             on_back_to_menu=self._back_to_menu,
             on_quit=self.userExit,
             on_open_replays=self._open_replay_browser,
+            on_open_feel_session=self._open_feel_session_menu,
             on_open_keybindings=self._open_keybindings_menu,
             on_rebind_noclip=self._start_rebind_noclip,
             on_toggle_open_network=self._on_toggle_open_network,
             on_connect_server=self._on_connect_server_from_menu,
             on_disconnect_server=self._on_disconnect_server_from_menu,
+            on_feel_export_latest=self._feel_export_latest,
+            on_feel_compare_latest=self._feel_compare_latest,
+            on_feel_apply_feedback=self._feel_apply_feedback,
         )
         self.pause_ui.set_noclip_binding(self._noclip_toggle_key)
         self.pause_ui.set_open_to_network(self._open_to_network)
@@ -613,6 +621,77 @@ class RunnerDemo(ShowBase):
         self.pause_ui.show_keybindings()
         self.pause_ui.set_noclip_binding(self._noclip_toggle_key)
         self.pause_ui.set_keybind_status("")
+
+    def _open_feel_session_menu(self) -> None:
+        if self._mode != "game":
+            return
+        self.pause_ui.show_feel_session()
+        self.pause_ui.set_feel_status("Use Route tag + feedback, then Export/Compare/Apply.")
+
+    def _feel_export_latest(self, route_tag: str) -> None:
+        tag = str(route_tag or "").strip()
+        try:
+            exported = export_latest_replay_telemetry()
+        except Exception as e:
+            msg = f"Feel export failed: {e}"
+            self.pause_ui.set_feel_status(msg)
+            self.ui.set_status(msg)
+            return
+        msg = f"Exported latest replay telemetry: {exported.summary_path.name} ({tag or 'route: none'})"
+        self.pause_ui.set_feel_status(msg)
+        self.ui.set_status(msg)
+
+    def _feel_compare_latest(self, route_tag: str) -> None:
+        tag = str(route_tag or "").strip()
+        try:
+            comp = compare_latest_replays(route_tag=tag or None)
+        except Exception as e:
+            msg = f"Feel compare failed: {e}"
+            self.pause_ui.set_feel_status(msg)
+            self.ui.set_status(msg)
+            return
+        msg = (
+            f"Compare complete: +{comp.improved_count} / -{comp.regressed_count} / ={comp.equal_count} "
+            f"({comp.comparison_path.name})"
+        )
+        self.pause_ui.set_feel_status(msg)
+        self.ui.set_status(msg)
+
+    def _feel_apply_feedback(self, route_tag: str, feedback_text: str) -> None:
+        text = str(feedback_text or "").strip()
+        tag = str(route_tag or "").strip()
+        if not text:
+            msg = "Feel feedback is empty."
+            self.pause_ui.set_feel_status(msg)
+            self.ui.set_status(msg)
+            return
+        latest_summary: dict[str, Any] | None = None
+        try:
+            exported = export_latest_replay_telemetry()
+            import json as _json
+
+            latest_summary = _json.loads(exported.summary_path.read_text(encoding="utf-8"))
+        except Exception:
+            latest_summary = None
+        adjustments = _suggest_feel_adjustments(
+            feedback_text=text,
+            tuning=self.tuning,
+            latest_summary=latest_summary,
+        )
+        if not adjustments:
+            msg = "No tuning adjustments suggested for this feedback."
+            self.pause_ui.set_feel_status(msg)
+            self.ui.set_status(msg)
+            return
+        _apply_feedback_adjustments(tuning=self.tuning, adjustments=adjustments)
+        for adj in adjustments:
+            self._on_tuning_change(str(adj.field))
+        preview = ", ".join(f"{a.field} {float(a.before):.3f}->{float(a.after):.3f}" for a in adjustments[:4])
+        if len(adjustments) > 4:
+            preview += f", +{len(adjustments) - 4} more"
+        msg = f"Applied {len(adjustments)} feel adjustment(s) [{tag or 'route: none'}]: {preview}"
+        self.pause_ui.set_feel_status(msg)
+        self.ui.set_status(msg)
 
     def _open_replay_browser(self) -> None:
         if self._mode != "game":
