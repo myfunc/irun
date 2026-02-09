@@ -56,6 +56,7 @@ from ivan.ui.input_debug_ui import InputDebugUI
 from ivan.ui.main_menu import ImportRequest, MainMenuController
 from ivan.ui.pause_menu_ui import PauseMenuUI
 from ivan.ui.replay_browser_ui import ReplayBrowserUI, ReplayListItem
+from ivan.ui.replay_input_ui import ReplayInputUI
 from ivan.world.scene import WorldScene
 from irun_ui_kit.renderer import UIRenderer
 from irun_ui_kit.theme import Theme
@@ -255,6 +256,8 @@ class RunnerDemo(ShowBase):
             on_select=self._load_replay_from_path,
             on_close=self._close_replay_browser,
         )
+        self.replay_input_ui = ReplayInputUI(aspect2d=self.aspect2d, theme=self.ui_theme)
+        self.replay_input_ui.hide()
         self.console_ui = ConsoleUI(aspect2d=self.aspect2d, theme=self.ui_theme, on_submit=self._console_submit_line)
         self.input_debug = InputDebugUI(aspect2d=self.aspect2d, theme=self.ui_theme)
         self._setup_input()
@@ -661,6 +664,7 @@ class RunnerDemo(ShowBase):
         self.pause_ui.hide()
         self._pause_menu_open = False
         self._set_pointer_lock(True)
+        self.replay_input_ui.show()
 
         if self.scene is not None and rec.metadata.map_id != self.scene.map_id:
             # If map differs and replay points to a known map path, reload the scene first.
@@ -678,6 +682,7 @@ class RunnerDemo(ShowBase):
         self._mouse_dx_accum = 0.0
         self._mouse_dy_accum = 0.0
         self._last_mouse = None
+        self.replay_input_ui.hide()
         if was_active and reason:
             self.ui.set_status(str(reason))
 
@@ -1252,6 +1257,16 @@ class RunnerDemo(ShowBase):
             return
         pre_grounded = bool(self.player.grounded)
         pre_vel = LVector3f(self.player.vel)
+        if self._playback_active:
+            self.replay_input_ui.set_input(
+                move_forward=int(cmd.move_forward),
+                move_right=int(cmd.move_right),
+                jump_pressed=bool(cmd.jump_pressed),
+                jump_held=bool(cmd.jump_held),
+                crouch_held=bool(cmd.crouch_held),
+                look_dx=int(cmd.look_dx),
+                look_dy=int(cmd.look_dy),
+            )
 
         self._apply_look_delta(
             dx=cmd.look_dx,
@@ -1526,6 +1541,8 @@ class RunnerDemo(ShowBase):
                 pass
 
             if self._mode == "menu":
+                if self.replay_input_ui.is_visible():
+                    self.replay_input_ui.hide()
                 self.ui.set_crosshair_visible(False)
                 if self._menu is not None:
                     self._menu.tick(globalClock.getFrameTime())
@@ -1541,16 +1558,22 @@ class RunnerDemo(ShowBase):
                     self._pending_map_json = None
                 return Task.cont
             if self._mode != "game" or self.player is None:
+                if self.replay_input_ui.is_visible():
+                    self.replay_input_ui.hide()
                 return Task.cont
 
             frame_dt = min(globalClock.getDt(), 0.25)
             now = float(globalClock.getFrameTime())
             if self._playback_active:
+                if not self.replay_input_ui.is_visible():
+                    self.replay_input_ui.show()
                 # Replay must be driven only by recorded input frames.
                 self._mouse_dx_accum = 0.0
                 self._mouse_dy_accum = 0.0
                 self._last_mouse = None
             else:
+                if self.replay_input_ui.is_visible():
+                    self.replay_input_ui.hide()
                 self._poll_mouse_look_delta()
 
             if self.scene is not None:
