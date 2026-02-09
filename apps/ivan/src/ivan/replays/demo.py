@@ -8,7 +8,7 @@ from pathlib import Path
 from ivan.paths import app_root
 
 
-DEMO_FORMAT_VERSION = 1
+DEMO_FORMAT_VERSION = 2
 DEMO_EXT = ".ivan_demo.json"
 
 
@@ -23,6 +23,7 @@ class DemoFrame:
     crouch_held: bool
     grapple_pressed: bool
     noclip_toggle_pressed: bool
+    telemetry: dict[str, float | int | bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -112,6 +113,7 @@ def save_recording(rec: DemoRecording) -> Path:
                 "ch": bool(f.crouch_held),
                 "gp": bool(f.grapple_pressed),
                 "nt": bool(f.noclip_toggle_pressed),
+                "tm": dict(f.telemetry) if isinstance(f.telemetry, dict) else None,
             }
             for f in rec.frames
         ],
@@ -125,7 +127,8 @@ def load_replay(path: Path) -> DemoRecording:
     if not isinstance(raw, dict):
         raise ValueError("Invalid replay payload")
     ver = raw.get("format_version")
-    if int(ver) != DEMO_FORMAT_VERSION:
+    iver = int(ver)
+    if iver not in (1, DEMO_FORMAT_VERSION):
         raise ValueError(f"Unsupported replay format_version={ver}")
 
     meta = raw.get("metadata")
@@ -162,6 +165,7 @@ def load_replay(path: Path) -> DemoRecording:
                 crouch_held=bool(row.get("ch")),
                 grapple_pressed=bool(row.get("gp")),
                 noclip_toggle_pressed=bool(row.get("nt")),
+                telemetry=(dict(row.get("tm")) if isinstance(row.get("tm"), dict) else None),
             )
         )
     return DemoRecording(metadata=md, frames=frames)
