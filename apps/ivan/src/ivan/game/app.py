@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import json
 import errno
 import os
 import sys
@@ -249,7 +250,6 @@ class RunnerDemo(ShowBase):
             on_connect_server=self._on_connect_server_from_menu,
             on_disconnect_server=self._on_disconnect_server_from_menu,
             on_feel_export_latest=self._feel_export_latest,
-            on_feel_compare_latest=self._feel_compare_latest,
             on_feel_apply_feedback=self._feel_apply_feedback,
         )
         self.pause_ui.set_noclip_binding(self._noclip_toggle_key)
@@ -626,7 +626,7 @@ class RunnerDemo(ShowBase):
         if self._mode != "game":
             return
         self.pause_ui.show_feel_session()
-        self.pause_ui.set_feel_status("Use Route tag + feedback, then Export/Compare/Apply.")
+        self.pause_ui.set_feel_status("Use route + feedback, then Export/Apply. Compare runs automatically on Apply.")
 
     def _feel_export_latest(self, route_tag: str) -> None:
         tag = str(route_tag or "").strip()
@@ -666,13 +666,21 @@ class RunnerDemo(ShowBase):
             self.ui.set_status(msg)
             return
         latest_summary: dict[str, Any] | None = None
+        compare_note = "compare skipped"
         try:
-            exported = export_latest_replay_telemetry()
-            import json as _json
-
-            latest_summary = _json.loads(exported.summary_path.read_text(encoding="utf-8"))
-        except Exception:
-            latest_summary = None
+            comp = compare_latest_replays(route_tag=tag or None)
+            latest_summary = json.loads(comp.latest_export.summary_path.read_text(encoding="utf-8"))
+            compare_note = f"compare +{comp.improved_count}/-{comp.regressed_count}/={comp.equal_count}"
+        except Exception as compare_err:
+            try:
+                exported = export_latest_replay_telemetry()
+                latest_summary = json.loads(exported.summary_path.read_text(encoding="utf-8"))
+                compare_note = f"compare skipped ({compare_err})"
+            except Exception as export_err:
+                msg = f"Feel export failed: {export_err}"
+                self.pause_ui.set_feel_status(msg)
+                self.ui.set_status(msg)
+                return
         adjustments = _suggest_feel_adjustments(
             feedback_text=text,
             tuning=self.tuning,
@@ -689,7 +697,7 @@ class RunnerDemo(ShowBase):
         preview = ", ".join(f"{a.field} {float(a.before):.3f}->{float(a.after):.3f}" for a in adjustments[:4])
         if len(adjustments) > 4:
             preview += f", +{len(adjustments) - 4} more"
-        msg = f"Applied {len(adjustments)} feel adjustment(s) [{tag or 'route: none'}]: {preview}"
+        msg = f"Applied {len(adjustments)} feel adjustment(s) [{tag or 'route: none'}] ({compare_note}): {preview}"
         self.pause_ui.set_feel_status(msg)
         self.ui.set_status(msg)
 

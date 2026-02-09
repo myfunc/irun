@@ -38,6 +38,7 @@ This checklist is used for Gameplay Feel Rehaul Phase 0 baseline capture.
 - Compare latest vs previous replay (auto-export both first):
   - In-game console: `replay_compare_latest . A`
   - CLI: `python -m ivan --compare-latest-replays --replay-route-tag A`
+  - In-game Feel Session: this compare runs automatically when you press `Apply Feedback Tuning`.
 
 ## Checklist
 

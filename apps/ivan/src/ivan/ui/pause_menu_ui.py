@@ -33,7 +33,6 @@ class PauseMenuUI:
         on_connect_server,
         on_disconnect_server,
         on_feel_export_latest,
-        on_feel_compare_latest,
         on_feel_apply_feedback,
     ) -> None:
         aspect_ratio = 16.0 / 9.0
@@ -52,6 +51,7 @@ class PauseMenuUI:
         w = panel_width
         h = panel_top - panel_bottom
         self._theme = theme
+        self._feel_route_tag: str = "A"
 
         self._panel = Panel.build(
             parent=aspect2d,
@@ -349,24 +349,47 @@ class PauseMenuUI:
         feel_label_y0 = page_h - theme.pad - theme.small_scale * 1.0
         self._feel_route_label = DirectLabel(
             parent=self._tabs.page(3),
-            text="Route tag (A/B/C)",
+            text="Route",
             text_scale=theme.small_scale,
             text_align=TextNode.ALeft,
             text_fg=theme.text,
             frameColor=(0, 0, 0, 0),
             pos=(0.0, 0, feel_label_y0),
         )
-        self._feel_route_input = TextInput.build(
+        route_w = (btn_w / 3.0) - theme.gap
+        route_y = feel_label_y0 - input_h * 0.70
+        self._feel_route_a = Checkbox.build(
             parent=self._tabs.page(3),
             theme=theme,
-            x=btn_w / 2.0,
-            y=feel_label_y0 - input_h * 0.8,
-            w=btn_w,
-            h=input_h,
-            initial="A",
-            on_submit=lambda _text: None,
-            frame_color=theme.panel2,
-            text_fg=theme.text,
+            x=(route_w * 0.5),
+            y=route_y,
+            w=route_w,
+            h=input_h * 0.85,
+            label="A",
+            checked=True,
+            on_change=lambda checked: self._on_feel_route_change("A", bool(checked)),
+        )
+        self._feel_route_b = Checkbox.build(
+            parent=self._tabs.page(3),
+            theme=theme,
+            x=(route_w * 1.5) + theme.gap,
+            y=route_y,
+            w=route_w,
+            h=input_h * 0.85,
+            label="B",
+            checked=False,
+            on_change=lambda checked: self._on_feel_route_change("B", bool(checked)),
+        )
+        self._feel_route_c = Checkbox.build(
+            parent=self._tabs.page(3),
+            theme=theme,
+            x=(route_w * 2.5) + (theme.gap * 2.0),
+            y=route_y,
+            w=route_w,
+            h=input_h * 0.85,
+            label="C",
+            checked=False,
+            on_change=lambda checked: self._on_feel_route_change("C", bool(checked)),
         )
         self._feel_feedback_label = DirectLabel(
             parent=self._tabs.page(3),
@@ -375,13 +398,13 @@ class PauseMenuUI:
             text_align=TextNode.ALeft,
             text_fg=theme.text,
             frameColor=(0, 0, 0, 0),
-            pos=(0.0, 0, feel_label_y0 - input_h * 1.9),
+            pos=(0.0, 0, feel_label_y0 - input_h * 2.1),
         )
         self._feel_feedback_input = TextInput.build(
             parent=self._tabs.page(3),
             theme=theme,
             x=btn_w / 2.0,
-            y=feel_label_y0 - input_h * 2.7,
+            y=feel_label_y0 - input_h * 2.9,
             w=btn_w,
             h=input_h,
             initial="",
@@ -393,27 +416,17 @@ class PauseMenuUI:
             parent=self._tabs.page(3),
             theme=theme,
             x=btn_w / 2.0,
-            y=feel_label_y0 - input_h * 4.2,
+            y=feel_label_y0 - input_h * 4.4,
             w=btn_w,
             h=btn_h,
             label="Export Latest Replay",
             on_click=lambda: on_feel_export_latest(self.feel_route_tag),
         )
-        self._feel_compare_button = Button.build(
-            parent=self._tabs.page(3),
-            theme=theme,
-            x=btn_w / 2.0,
-            y=feel_label_y0 - input_h * 5.45,
-            w=btn_w,
-            h=btn_h,
-            label="Compare Latest vs Previous",
-            on_click=lambda: on_feel_compare_latest(self.feel_route_tag),
-        )
         self._feel_apply_feedback_button = Button.build(
             parent=self._tabs.page(3),
             theme=theme,
             x=btn_w / 2.0,
-            y=feel_label_y0 - input_h * 6.7,
+            y=feel_label_y0 - input_h * 5.65,
             w=btn_w,
             h=btn_h,
             label="Apply Feedback Tuning",
@@ -489,6 +502,7 @@ class PauseMenuUI:
             active_text_fg=self._theme.text,
             inactive_text_fg=self._theme.text_muted,
         )
+        self._set_feel_route_tag(self._feel_route_tag)
 
     def set_noclip_binding(self, key_name: str) -> None:
         self._noclip_bind_label["text"] = f"Current noclip key: {str(key_name).upper()}"
@@ -531,10 +545,7 @@ class PauseMenuUI:
 
     @property
     def feel_route_tag(self) -> str:
-        try:
-            return str(self._feel_route_input.entry.get()).strip()
-        except Exception:
-            return ""
+        return str(self._feel_route_tag)
 
     @property
     def feel_feedback_text(self) -> str:
@@ -542,3 +553,19 @@ class PauseMenuUI:
             return str(self._feel_feedback_input.entry.get()).strip()
         except Exception:
             return ""
+
+    def _set_feel_route_tag(self, tag: str) -> None:
+        t = str(tag or "").strip().upper()
+        if t not in {"A", "B", "C"}:
+            t = "A"
+        self._feel_route_tag = t
+        self._feel_route_a.set_checked(t == "A")
+        self._feel_route_b.set_checked(t == "B")
+        self._feel_route_c.set_checked(t == "C")
+
+    def _on_feel_route_change(self, tag: str, checked: bool) -> None:
+        if not checked:
+            # Keep radio semantics: one option always selected.
+            self._set_feel_route_tag(self._feel_route_tag)
+            return
+        self._set_feel_route_tag(tag)
