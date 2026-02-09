@@ -147,3 +147,56 @@ Acceptance:
 - [x] Surface metrics in F2 overlay.
 - [ ] Capture initial baseline run metrics for Route A/B/C.
 - [ ] Open follow-up tasks for Phase 1 and Phase 2 implementation slices.
+
+## Current Progress (2026-02-09)
+Completed now:
+- Replay reliability/input-safety pass:
+  - Replay playback is now hard-locked from live gameplay/menu input contamination.
+  - During replay, only `R` exits playback and returns to normal respawned play.
+  - Replay stop path resets playback and input accumulators consistently.
+- Replay observability pass:
+  - Demo frame format upgraded (`format_version=2`) with backward-compatible loading of v1 demos.
+  - Each recorded tick now stores telemetry useful for feel analysis:
+    - position/eye height
+    - velocity and horizontal/total speed
+    - camera yaw/pitch
+    - grounded/crouched/grapple/noclip state
+    - per-tick command snapshot (jump/crouch/grapple/noclip/move/look)
+- Replay UX pass:
+  - Added replay-only input HUD (UI kit based) showing:
+    - movement cluster (left/right + forward/back)
+    - dedicated jump section
+    - dedicated crouch section
+    - dedicated mouse-direction section (+ raw dx/dy)
+
+Validation completed:
+- Replay format tests pass (`test_replay_demo.py`).
+- Runtime smoke runs pass in menu boot and map boot paths.
+
+## Why This Helps Future Phases
+- Phase 0 baselining: replay telemetry gives us a stable per-tick data source to compare tuning passes, not just subjective feel.
+- Phase 1 camera work: camera-angle and input data in demos lets us quantify camera response quality against identical inputs.
+- Phase 2 movement stability: grounded transitions + speed data in demos makes step/slope/landing regressions measurable and reviewable.
+- Phase 3 polish: replay HUD and telemetry reduce iteration cost by making route-level behavior visible during every test run.
+
+## Next Steps (Execution Order)
+1. Add an export utility to summarize replay telemetry (CSV/JSON) per run.
+2. Define Route A/B/C bundles and baseline protocol in a small checklist doc.
+3. Capture initial baseline datasets (3 runs per route).
+4. Start Phase 1 camera pipeline pass behind explicit tuning params.
+
+## Rehaul Board Snapshot
+- Overall status: `Phase 0 active`, `Phase 1 ready-to-start after baselines`.
+- What is complete:
+  - feel-metrics overlay in gameplay (`F2`)
+  - replay data expansion (v2 frames with movement/camera/state telemetry)
+  - replay input lock + deterministic playback safety improvements
+  - replay input HUD for visual command verification during playback
+- What is next:
+  - telemetry export utility (per-run summaries + route comparators)
+  - baseline capture pack for Route A/B/C (3 runs each)
+  - camera smoothing/FOV response slice with measurable before/after
+- Why this sequence matters:
+  - we now have objective data and deterministic replays before camera/movement retuning
+  - every future tuning slice can be validated against the same recorded inputs
+  - regression detection is now practical for both movement and camera feel
