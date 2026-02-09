@@ -38,6 +38,7 @@ class PhysicsTuning:
     surf_min_normal_z: float = 0.05
     surf_max_normal_z: float = 0.72
     vault_jump_multiplier: float = 1.25
+    vault_height_boost: float = 0.10
     vault_forward_boost: float = 0.85
     vault_min_ledge_height: float = 0.20
     vault_max_ledge_height: float = 2.10

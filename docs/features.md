@@ -42,7 +42,7 @@
   - `F11` dumps rolling determinism trace hash buffer for replay/harness checks
 - Ivan: debug tuning surface reduced to invariant-first controls
   - removed most legacy/direct scalar sliders from the runtime debug menu
-  - kept compact controls for `Vmax`, run response timing, ground stop timing, air speed/gain, wallrun sink timing, jump height/apex timing, slide stop timing, leniency windows, and vault iteration (`vault_max_ledge_height`, `vault_forward_boost`)
+  - kept compact controls for `Vmax`, run response timing, ground stop timing, air speed/gain, wallrun sink timing, jump height/apex timing, slide stop timing, leniency windows, and vault iteration (`vault_max_ledge_height`, `vault_height_boost`, `vault_forward_boost`)
   - added character-height iteration slider (`player_half_height`) with automatic eye-height proportional update
   - added optional character scale lock toggle to auto-derive `player_radius` + `step_height` from `player_half_height` without touching core feel invariants
   - restored `autojump_enabled` in compact toggles for bhop-chain validation
@@ -51,7 +51,9 @@
 - Ivan: wallrun feedback polish
   - while wallrunning, camera now applies slight roll tilt away from the wall as an engagement indicator
   - wallrun jump now biases horizontal launch direction toward camera forward heading (while still peeling off wall)
+  - wallrun jump now enforces a minimum peel-away horizontal component opposite the wall so jump-off gains reliable wall-exit distance
   - wallrun vertical sink is now invariant-driven (`wallrun_sink_t90`) instead of ad-hoc per-feature velocity edits
+  - debug UI now maps `wallrun_sink_t90` in intuitive direction (higher slider value = stronger wallrun hold / less height loss)
   - wallrun tilt recovery now begins immediately when wallrun ends (including jump-off), avoiding delayed recentering
 - Ivan: read-only camera tilt animation pass
   - wallrun roll transitions are now smoothed (snappy exponential response instead of one-frame snap)
@@ -72,6 +74,10 @@
   - successful vault mantle assist now runs in phased clearance (up first, then forward) to avoid "vault ok but still blocked" outcomes
   - ledge-top probing now samples dual origins and near/outside wall offsets to reduce false `no ledge top` rejects
   - vault max obstacle slider range increased to `7.5` and runtime cap raised to `3x` previous height limit
+  - new `vault_height_boost` slider controls extra vault vertical clearance/pop
+  - vault now preserves carried horizontal speed (plus small forward gain) instead of clamping toward low fixed caps
+  - vault vertical impulse/pop was reduced; mantle assist is now slower/smoother and more forward-biased than upward
+  - vault temporarily relaxes collision against the currently vaulted obstacle during assist to avoid snagging/drag, while still blocking new front walls
   - vault camera dip now uses a smooth dip/recover curve; vault exit enforces slight airborne pop so successful vault chains continue in air
   - if jump is buffered shortly before wall contact while airborne, vault can now still trigger on contact
 - Ivan: controller module split for ownership clarity and reviewability

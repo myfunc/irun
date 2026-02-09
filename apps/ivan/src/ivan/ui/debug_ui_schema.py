@@ -13,6 +13,7 @@ NUMERIC_CONTROLS: list[tuple[str, float, float]] = [
     ("grace_period", 0.0, 0.35),
     ("slide_stop_t90", 0.10, 8.00),
     ("vault_max_ledge_height", 0.40, 7.50),
+    ("vault_height_boost", 0.00, 1.20),
     ("vault_forward_boost", 0.00, 4.00),
     ("player_half_height", 0.70, 1.60),
 ]
@@ -45,6 +46,7 @@ GROUPS: list[tuple[str, list[str], list[str]]] = [
             "grace_period",
             "slide_stop_t90",
             "vault_max_ledge_height",
+            "vault_height_boost",
             "vault_forward_boost",
         ],
         [
@@ -92,6 +94,7 @@ FIELD_LABELS: dict[str, str] = {
     "grace_period": "grace period",
     "slide_stop_t90": "slide stop time to 90%",
     "vault_max_ledge_height": "vault max obstacle height",
+    "vault_height_boost": "vault height boost",
     "vault_forward_boost": "vault speed boost",
     "player_half_height": "player half height",
 }
@@ -102,12 +105,13 @@ FIELD_HELP: dict[str, str] = {
     "ground_stop_t90": "Lower: faster slowdown when coasting on ground. Higher: longer inertia before coming to rest.",
     "air_speed_mult": "Lower: tighter air-speed cap relative to Vmax. Higher: allows more carry and bhop top speed.",
     "air_gain_t90": "Lower: faster air speed gain (stronger bhop/strafe gain). Higher: slower air speed build-up.",
-    "wallrun_sink_t90": "Lower: wallrun vertical sink stabilizes faster. Higher: slower sink response and floatier wallrun.",
+    "wallrun_sink_t90": "Lower: weaker wallrun hold and faster height loss. Higher: stronger wallrun hold and slower height loss.",
     "jump_height": "Lower: shorter hop height. Higher: higher jump apex.",
     "jump_apex_time": "Lower: shorter time to jump apex (snappier pop). Higher: longer float to apex.",
     "grace_period": "Lower: tighter shared leniency distance for jump buffer/coyote/vault timing. Higher: wider distance-derived grace window (time scales from speed, but never below base).",
     "slide_stop_t90": "Lower: slide momentum bleeds faster on ground. Higher: slide preserves carried speed longer before decelerating.",
     "vault_max_ledge_height": "Lower: only low obstacles can be vaulted. Higher: taller obstacles remain vaultable (up to 3x previous height cap).",
+    "vault_height_boost": "Lower: flatter/lower vault arc. Higher: more vertical clearance and stronger vault pop.",
     "vault_forward_boost": "Lower: weaker forward carry when vault triggers. Higher: stronger forward push while vaulting.",
     "player_half_height": "Lower: shorter player hull. Higher: taller player hull; eye height auto-scales to keep camera proportion.",
     "autojump_enabled": "Lower (OFF): jump requires press timing each hop. Higher (ON): holding jump auto-queues grounded hops.",
