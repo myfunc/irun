@@ -28,8 +28,14 @@
 - Ivan: GoldSrc PVS visibility culling (BSP VISIBILITY + leaf surface lists) to avoid rendering geometry hidden behind walls (when cache is available)
   - Currently disabled by default (can be toggled ON in the debug menu via `vis_culling_enabled`).
 - Ivan: main menu (UI kit) with map bundle selection and on-demand GoldSrc/Xash3D import from a chosen game directory
+  - Mouse-driven: click menu items to select, mouse wheel to scroll; keyboard navigation still supported (Up/Down/Enter)
   - Fast navigation: hold Up/Down for accelerated scrolling, Left/Right page jump, and `Cmd+F`/`Ctrl+F` search
   - Delete imported/generated map bundles from the UI (safe delete: `assets/imported/**` and `assets/generated/*`)
+- Ivan: video/display settings (main menu > Video Settings)
+  - Default: windowed 1280x720 (cross-platform: Windows and macOS)
+  - Preset resolutions: 1280x720, 1600x900, 1920x1080, 2560x1440, and fullscreen
+  - Window is resizable by dragging edges in windowed mode
+  - Settings persist across sessions in user state (`~/.irun/ivan/state.json`)
 - Ivan: CLI prefill for GoldSrc/Xash3D import flow (`--hl-root`, `--hl-mod`)
   - Supports common macOS Steam layout where the game content lives under `<Game>.app/Contents/Resources`
 - Ivan: optional Steam Half-Life auto-detect (manual action in main menu, not default)
@@ -95,13 +101,16 @@
 - Movement: iterate wallrun from toggleable prototype hooks
 - Camera: follow camera with collision avoidance and smoothing
 - Levels: modular blocks, checkpoints, hazards, collectibles
-- Maps: format v3 (entities, triggers, lights, chunked baked geometry) + editor workflow
-- Tools: Baker app (map viewer + import manager + configurable lighting rebake with light rig overrides and quality presets)
+- Maps: TrenchBroom integration for level editing (analysis in progress)
 - Time trial: portal/leaderboards (plus ghosts/replays; map_hash binding)
 - Rendering: retro texture filtering options (nearest-neighbor, mipmap strategy)
 - Game loop: pause, restart, level select
 - Debug: in-game tweakables and metrics
 - UI: extend the procedural UI kit to cover remaining runtime UI needs (avoid one-off custom UI)
+
+## Paused
+- Maps: format v3 (entities, triggers, lights, chunked baked geometry) — paused pending TrenchBroom integration analysis
+- Tools: Baker app (map viewer + import manager + lighting rebake) — paused; external editor replaces the editing/preview role
 
 ## Out of Scope (For Now)
 - Matchmaking/lobbies/NAT traversal

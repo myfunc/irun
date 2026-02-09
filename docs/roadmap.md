@@ -18,7 +18,11 @@
 - UI kit: standardize procedural windows/panels/controls and theme tokens before wiring into runtime UI
   - Near-term: lock down typography + DPI scaling + low-res readability rules, then add focus/keyboard navigation and a scroll container
 - Handcrafted, player-generated map workflow and validation tools
-- Packed map bundles for distribution and git-friendly imports (`.irunmap`)
-- Baker app: map viewer + import manager + lighting bake tool (presets, light rig overrides, WYSIWYG preview)
-- Map format v3: entities + triggers + lights + baked chunking (data first; streaming later)
+- Packed map bundles for distribution and git-friendly imports (`.irunmap`) — **default format for all maps**
+- External level editor: TrenchBroom (analysis and integration tracked separately)
 - Time trial: local timing + local personal best storage (replays/portal later)
+
+## Paused
+Items temporarily on hold pending further analysis:
+- ~~Baker app~~: map viewer + import manager + lighting bake tool — paused; external editor (TrenchBroom) replaces the editing/preview role.
+- ~~Map format v3~~: entities + triggers + lights + baked chunking — paused; map format direction depends on TrenchBroom integration analysis.

@@ -41,10 +41,12 @@ class MainMenuController:
         on_start_map_json,
         on_import_bsp,
         on_quit,
+        on_apply_video=None,
     ) -> None:
         self._on_start_map_json = on_start_map_json
         self._on_import_bsp = on_import_bsp
         self._on_quit = on_quit
+        self._on_apply_video = on_apply_video
 
         self._app_root = ivan_app_root()
         self._state = state or load_state()
@@ -52,10 +54,11 @@ class MainMenuController:
             aspect2d=aspect2d,
             theme=theme,
             title="IVAN",
-            hint="Up/Down: select | Enter: choose | Esc: back/quit",
+            hint="Click or Enter: choose | Scroll: navigate | Esc: back/quit",
+            on_click=self.on_enter,
         )
 
-        self._screen: str = "main"  # main | bundles | mods | maps
+        self._screen: str = "main"  # main | bundles | mods | maps | video
         self._bundles: list[MapBundle] = []
         self._selected_bundle: MapBundle | None = None
         self._delete_target: MapBundle | None = None
@@ -63,6 +66,11 @@ class MainMenuController:
         self._mod: str | None = initial_mod or self._state.last_mod
         self._mods: list[str] = []
         self._maps = []
+
+        # Video settings state for the settings sub-screen.
+        self._video_fullscreen: bool = self._state.fullscreen
+        self._video_width: int = self._state.window_width
+        self._video_height: int = self._state.window_height
 
         self._continue_map_json: str | None = self._state.last_map_json
         self._continue_label: str | None = None
@@ -120,6 +128,10 @@ class MainMenuController:
             self._screen = "bundles"
             self._refresh_bundles()
             return
+        if self._screen == "video":
+            self._screen = "main"
+            self._refresh_main()
+            return
         self._screen = "main"
         self._refresh_main()
 
@@ -149,6 +161,9 @@ class MainMenuController:
         if self._screen == "maps":
             self._enter_map(idx)
             return
+        if self._screen == "video":
+            self._enter_video(idx)
+            return
 
     def _refresh_main(self) -> None:
         self._ui.set_title("IVAN :: Main Menu")
@@ -175,6 +190,7 @@ class MainMenuController:
         else:
             items.append(ListMenuItem("Game dir: (not set)"))
 
+        items.append(ListMenuItem("Video Settings"))
         items.append(ListMenuItem("Quit"))
         self._ui.set_items(items, selected=0)
         self._ui.set_status("")
@@ -290,6 +306,11 @@ class MainMenuController:
             return
 
         if idx == 5:
+            self._screen = "video"
+            self._refresh_video()
+            return
+
+        if idx == 6:
             self._on_quit()
             return
 
@@ -376,6 +397,56 @@ class MainMenuController:
                 bsp_path=m.bsp_path,
             )
         )
+
+    # -- Video Settings sub-screen ------------------------------------
+
+    _VIDEO_RESOLUTIONS: list[tuple[int, int]] = [
+        (1280, 720),
+        (1600, 900),
+        (1920, 1080),
+        (2560, 1440),
+    ]
+
+    def _refresh_video(self) -> None:
+        self._ui.set_title("IVAN :: Video Settings")
+        self._ui.set_hint("Click or Enter: apply | Esc: back")
+        items: list[ListMenuItem] = []
+        for w, h in self._VIDEO_RESOLUTIONS:
+            active = (not self._video_fullscreen and self._video_width == w and self._video_height == h)
+            tag = " [active]" if active else ""
+            items.append(ListMenuItem(f"Windowed {w} x {h}{tag}"))
+        fs_tag = " [active]" if self._video_fullscreen else ""
+        items.append(ListMenuItem(f"Fullscreen{fs_tag}"))
+        items.append(ListMenuItem("Back"))
+        self._ui.set_items(items, selected=0)
+        current = "Fullscreen" if self._video_fullscreen else f"Windowed {self._video_width}x{self._video_height}"
+        self._ui.set_status(f"Current: {current}")
+
+    def _enter_video(self, idx: int) -> None:
+        n_res = len(self._VIDEO_RESOLUTIONS)
+        if 0 <= idx < n_res:
+            w, h = self._VIDEO_RESOLUTIONS[idx]
+            self._video_fullscreen = False
+            self._video_width = w
+            self._video_height = h
+        elif idx == n_res:
+            self._video_fullscreen = True
+        elif idx == n_res + 1:
+            # Back
+            self._screen = "main"
+            self._refresh_main()
+            return
+        else:
+            return
+        if self._on_apply_video:
+            self._on_apply_video(
+                fullscreen=self._video_fullscreen,
+                width=self._video_width,
+                height=self._video_height,
+            )
+        self._refresh_video()
+
+    # -- Continue / misc helpers ------------------------------------
 
     def _refresh_continue(self) -> None:
         self._continue_label = None

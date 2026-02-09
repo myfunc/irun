@@ -1,6 +1,0 @@
-"LightmappedGeneric"
-{
-	"$basetexture" "cs_dust/-0Sand"
-	$surfaceprop "concrete"
-	$POINTSAMPLEMAGFILTER 1
-}

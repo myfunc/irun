@@ -65,24 +65,10 @@ def poll_mouse_look_delta(host) -> None:
         host._last_mouse = None
         return
 
-    # Primary path: normalized mouse coords (works well with relative mouse mode).
-    if host.mouseWatcherNode is not None and host.mouseWatcherNode.hasMouse():
-        mx = float(host.mouseWatcherNode.getMouseX())
-        my = float(host.mouseWatcherNode.getMouseY())
-        if host._last_mouse is None:
-            host._last_mouse = (mx, my)
-            return
-        lmx, lmy = host._last_mouse
-        host._last_mouse = (mx, my)
-
-        dx_norm = mx - lmx
-        # Keep non-inverted vertical look (mouse up -> look up).
-        dy_norm = lmy - my
-        host._mouse_dx_accum += dx_norm * (host.win.getXSize() * 0.5)
-        host._mouse_dy_accum += dy_norm * (host.win.getYSize() * 0.5)
-        return
-
-    # Fallback: pointer delta vs screen center (useful if hasMouse() stays false on some macOS setups).
+    # Center-snap approach: read cursor pixel offset from window center, accumulate,
+    # then snap the cursor back to center.  This keeps the cursor confined reliably
+    # in windowed mode on all platforms (Windows + macOS) and avoids the cursor
+    # drifting to the window edge and escaping.
     cx = host.win.getXSize() // 2
     cy = host.win.getYSize() // 2
     pointer = host.win.getPointer(0)
@@ -93,7 +79,7 @@ def poll_mouse_look_delta(host) -> None:
         return
     host._mouse_dx_accum += dx
     host._mouse_dy_accum += dy
-    host._center_mouse()
+    host.win.movePointer(0, cx, cy)
 
 
 def consume_mouse_look_delta(host) -> tuple[int, int]:

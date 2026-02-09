@@ -80,6 +80,8 @@ class RunnerDemo(ShowBase):
         loadPrcFileData("", "textures-power-2 none")
         loadPrcFileData("", "textures-square none")
         loadPrcFileData("", "textures-auto-power-2 0")
+        # Allow the user to resize the window by dragging its edges.
+        loadPrcFileData("", "win-fixed-size 0")
         if cfg.smoke:
             loadPrcFileData("", "window-type offscreen")
 
@@ -286,17 +288,51 @@ class RunnerDemo(ShowBase):
     def _setup_window(self) -> None:
         if self.cfg.smoke:
             return
+        state = self._loaded_state
+        fullscreen = bool(state.fullscreen)
+        win_w = int(state.window_width) if state.window_width else 1280
+        win_h = int(state.window_height) if state.window_height else 720
+
         props = WindowProperties()
         props.setCursorHidden(self._pointer_locked)
-        props.setMouseMode(WindowProperties.M_relative if self._pointer_locked else WindowProperties.M_absolute)
+        # M_confined keeps the OS cursor inside the window in windowed mode.
+        # Actual FPS input is handled via per-frame center-snap in poll_mouse_look_delta.
+        props.setMouseMode(WindowProperties.M_confined if self._pointer_locked else WindowProperties.M_absolute)
         props.setTitle("IRUN IVAN Demo")
-        props.setSize(self.pipe.getDisplayWidth(), self.pipe.getDisplayHeight())
+        if fullscreen:
+            props.setFullscreen(True)
+            props.setSize(self.pipe.getDisplayWidth(), self.pipe.getDisplayHeight())
+        else:
+            props.setFullscreen(False)
+            props.setSize(win_w, win_h)
         self.win.requestProperties(props)
         self.camLens.setFov(96)
         # Reduce near-plane clipping when hugging walls in first-person.
         self.camLens.setNearFar(0.03, 5000.0)
         if self._pointer_locked:
             self._center_mouse()
+
+    def _apply_video_settings(self, *, fullscreen: bool, width: int, height: int) -> None:
+        """Apply display settings at runtime and persist them to user state."""
+        if self.cfg.smoke:
+            return
+        props = WindowProperties()
+        if fullscreen:
+            props.setFullscreen(True)
+            props.setSize(self.pipe.getDisplayWidth(), self.pipe.getDisplayHeight())
+        else:
+            props.setFullscreen(False)
+            props.setSize(int(width), int(height))
+        self.win.requestProperties(props)
+        update_state(fullscreen=fullscreen, window_width=int(width), window_height=int(height))
+
+    def _on_scroll_wheel(self, direction: int) -> None:
+        """Route mouse wheel: menu scroll in menu mode, debug scroll in game mode."""
+        if self._mode == "menu" and self._menu is not None and not self._importing:
+            self._safe_call("menu.wheel", lambda: self._menu.move(-direction))
+            return
+        if self._mode == "game" and self._debug_menu_open:
+            self.ui.scroll_wheel(direction)
 
     def _setup_input(self) -> None:
         self.accept("escape", lambda: self._safe_call("input.escape", self._on_escape))
@@ -323,8 +359,8 @@ class RunnerDemo(ShowBase):
         self.accept("s-up", lambda: self._menu_nav_release(1))
         self.accept("control-f", lambda: self._safe_call("menu.search", self._menu_toggle_search))
         self.accept("meta-f", lambda: self._safe_call("menu.search", self._menu_toggle_search))
-        self.accept("wheel_up", lambda: self._safe_call("input.wheel_up", lambda: self._on_debug_wheel(+1)))
-        self.accept("wheel_down", lambda: self._safe_call("input.wheel_down", lambda: self._on_debug_wheel(-1)))
+        self.accept("wheel_up", lambda: self._safe_call("input.wheel_up", lambda: self._on_scroll_wheel(+1)))
+        self.accept("wheel_down", lambda: self._safe_call("input.wheel_down", lambda: self._on_scroll_wheel(-1)))
         if hasattr(self, "buttonThrowers") and self.buttonThrowers:
             try:
                 self.buttonThrowers[0].node().setKeystrokeEvent("keystroke")
@@ -420,7 +456,9 @@ class RunnerDemo(ShowBase):
         self._last_mouse = None
         props = WindowProperties()
         props.setCursorHidden(self._pointer_locked)
-        props.setMouseMode(WindowProperties.M_relative if self._pointer_locked else WindowProperties.M_absolute)
+        # M_confined keeps the OS cursor inside the window in windowed mode.
+        # Actual FPS input is handled via per-frame center-snap in poll_mouse_look_delta.
+        props.setMouseMode(WindowProperties.M_confined if self._pointer_locked else WindowProperties.M_absolute)
         self.win.requestProperties(props)
         if self._pointer_locked:
             self._center_mouse()
