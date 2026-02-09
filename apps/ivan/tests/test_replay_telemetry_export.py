@@ -74,7 +74,12 @@ def _write_demo(path: Path) -> Path:
 def test_export_replay_telemetry_writes_csv_and_summary(tmp_path: Path) -> None:
     replay_path = _write_demo(tmp_path / "sample.ivan_demo.json")
 
-    exported = export_replay_telemetry(replay_path=replay_path, out_dir=tmp_path / "out")
+    exported = export_replay_telemetry(
+        replay_path=replay_path,
+        out_dir=tmp_path / "out",
+        route_tag="A",
+        comment="first note",
+    )
 
     assert exported.tick_count == 2
     assert exported.telemetry_tick_count == 2
@@ -96,6 +101,19 @@ def test_export_replay_telemetry_writes_csv_and_summary(tmp_path: Path) -> None:
     assert "tuning" in summary["demo"]
     assert "landing_speed_loss_avg" in summary["metrics"]
     assert "camera_lin_jerk_avg" in summary["metrics"]
+    assert summary["export_metadata"]["route_tag"] == "A"
+    assert summary["export_metadata"]["comment"] == "first note"
+    assert len(summary["export_history"]) == 1
+
+    exported2 = export_replay_telemetry(
+        replay_path=replay_path,
+        out_dir=tmp_path / "out",
+        route_tag="A",
+        comment="second note",
+    )
+    summary2 = json.loads(exported2.summary_path.read_text(encoding="utf-8"))
+    assert len(summary2["export_history"]) == 2
+    assert summary2["export_history"][-1]["comment"] == "second note"
 
     rec = load_replay(replay_path)
     assert rec.frames[1].key_d_held is True
