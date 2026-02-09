@@ -31,7 +31,14 @@ Items temporarily on hold pending further analysis:
 - Phase 0: instrumentation and baseline capture (jump success, landing loss, ground flicker, camera jerk)
   - Baseline tooling now includes replay telemetry export (CSV + JSON summary), latest-vs-previous comparator utility, and checklist doc (`docs/gameplay-baseline-checklist.md`)
   - In-game Feel Session panel wires export/compare/feedback actions for faster iteration loops
-- Phase 1: camera pipeline smoothing and readability pass
+- Phase 1: camera pipeline smoothing and readability pass (**in progress**)
+  - read-only camera feedback slice landed and rehauled to compact invariants:
+    - `camera_base_fov`
+    - `camera_speed_fov_max_add`
+    - `camera_tilt_gain`
+    - `camera_event_gain`
+    - `camera_feedback_enabled`
+  - debug tuning now uses real-unit slider/entry values instead of normalized `0..100` values
 - Phase 2: movement transition stability pass (stairs/slope/ground-air handoff)
 - Phase 3: acceleration/friction polish + profile packaging
 - Acceptance gates and execution board tracked in `docs/gameplay-feel-rehaul.md`

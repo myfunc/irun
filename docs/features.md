@@ -5,7 +5,7 @@
 - Ivan: bhop/strafe-style movement prototype
 - Ivan: in-game debug/admin panel with live movement parameter tuning
 - Ivan: debug-tuned parameters persist to local state and load as next-run defaults
-- Ivan: debug panel upgraded to grouped, collapsible, scrollable CS-style boxed layout with normalized sliders
+- Ivan: debug panel upgraded to grouped, collapsible, scrollable CS-style boxed layout with real-unit sliders/entries
 - Ivan: debug profile manager with default presets (`surf_bhop_c2`, `surf_bhop`, `bhop`, `surf`, `surf_sky2_server`), immediate per-profile setting restore on switch, and persistent custom profile saves
 - Ivan: in-game menu on `Esc` (Resume, Map Selector, Key Bindings, Back to Main Menu, Quit)
 - Ivan: debug/admin panel moved to `` ` `` (tilde/backtick)
@@ -37,6 +37,7 @@
     - coyote/buffer leniency on/off
 - Ivan: expanded runtime feel diagnostics
   - `F2` now includes FPS + frame p95, sim steps, state, accel, contacts, normals, leniency timers, and rolling determinism hash summary
+  - `F2` now includes live camera feedback diagnostics (`cam_fov`, target fov, speed ratio/curve factor, camera event quality/amplitude/reject reason) for fast camera tuning
   - `F2` + gameplay status line now include vault diagnostics (`ok` or explicit reject reason) for ledge-vault iteration
   - `F10` dumps rolling diagnostics buffer to JSON for offline jank analysis
   - `F11` dumps rolling determinism trace hash buffer for replay/harness checks
@@ -61,9 +62,21 @@
     - strafe left/right -> subtle roll
     - backpedal -> subtle pitch
   - all tilt is camera-only and does not write gameplay motion/velocity
+- Ivan: read-only camera feedback pass (movement feedback, not movement authority)
+  - added speed-driven FOV response (`camera_base_fov`, `camera_speed_fov_max_add`) with explicit policy:
+    - no FOV widening at or below `Vmax`
+    - widening starts only above `Vmax`
+    - speed-FOV reaches configured max addition by ~`10x Vmax`, with stronger visible response in common `2x-5x` flow speeds
+  - added unified event envelope feedback (`camera_event_gain`) shared by landing + successful-bhop pulses
+  - added tilt scaling invariant (`camera_tilt_gain`) for movement/wallrun/vault camera tilt intensity
+  - feedback can be isolated with `camera_feedback_enabled` in the debug menu camera section
 - Ivan: read-only camera height smoothing pass
   - slide and vault eye-height transitions are smoothed through a dedicated `CameraHeightObserver`
   - camera observer state resets on map start/respawn/network reconcile paths to avoid stale offset snaps
+- Ivan: pause menu layout refresh for iteration ergonomics
+  - ESC menu panel is wider/taller to avoid clipping in gameplay resolutions
+  - top tabs use concise labels to avoid truncation
+  - Menu tab action buttons use a two-column grid so all actions remain visible without overlap
 - Ivan: vault leniency and trigger criteria refactor
   - vault is enabled by default for movement iteration
   - vault timing now uses the same `grace_period` invariant used by jump buffering and coyote windows
