@@ -53,7 +53,7 @@ def _write_demo(path: Path, *, hs_values: list[float], grounded_values: list[boo
             "look_scale": 256,
             "map_id": "route-a",
             "map_json": None,
-            "tuning": {"gravity": 24.0},
+            "tuning": {"jump_height": 1.48, "jump_apex_time": 0.351},
         },
         "frames": frames,
     }

@@ -16,6 +16,7 @@ class _InputCommand:
         move_right: int = 0,
         jump_pressed: bool = False,
         jump_held: bool = False,
+        dash_pressed: bool = False,
         crouch_held: bool = False,
         grapple_pressed: bool = False,
         noclip_toggle_pressed: bool = False,
@@ -40,6 +41,7 @@ class _InputCommand:
         self.move_right = int(move_right)
         self.jump_pressed = bool(jump_pressed)
         self.jump_held = bool(jump_held)
+        self.dash_pressed = bool(dash_pressed)
         self.crouch_held = bool(crouch_held)
         self.grapple_pressed = bool(grapple_pressed)
         self.noclip_toggle_pressed = bool(noclip_toggle_pressed)
@@ -68,6 +70,7 @@ class _InputCommand:
             move_right=self.move_right,
             jump_pressed=self.jump_pressed,
             jump_held=self.jump_held,
+            dash_pressed=self.dash_pressed,
             crouch_held=self.crouch_held,
             grapple_pressed=self.grapple_pressed,
             noclip_toggle_pressed=self.noclip_toggle_pressed,
@@ -97,6 +100,7 @@ class _InputCommand:
             move_right=frame.move_right,
             jump_pressed=frame.jump_pressed,
             jump_held=frame.jump_held,
+            dash_pressed=frame.dash_pressed,
             crouch_held=frame.crouch_held,
             grapple_pressed=frame.grapple_pressed,
             noclip_toggle_pressed=frame.noclip_toggle_pressed,
@@ -188,6 +192,7 @@ def sample_live_input_command(host, *, menu_open: bool) -> _InputCommand:
     move_forward = 0
     move_right = 0
     jump_held = False
+    dash_down = False
     crouch_held = False
     grapple_down = False
     mouse_right_down = False
@@ -212,6 +217,7 @@ def sample_live_input_command(host, *, menu_open: bool) -> _InputCommand:
         arrow_left_held = bool(host.mouseWatcherNode and host.mouseWatcherNode.isButtonDown(KeyboardButton.left()))
         arrow_right_held = bool(host.mouseWatcherNode and host.mouseWatcherNode.isButtonDown(KeyboardButton.right()))
         jump_held = is_key_down(host, "space")
+        dash_down = is_key_down(host, "shift")
         crouch_held = host._is_crouching()
         grapple_down = is_key_down(host, "mouse1")
         mouse_right_down = is_key_down(host, "mouse3")
@@ -226,6 +232,7 @@ def sample_live_input_command(host, *, menu_open: bool) -> _InputCommand:
         move_right=move_right,
         jump_pressed=(not menu_open) and jump_held and (not host._prev_jump_down),
         jump_held=(not menu_open) and jump_held,
+        dash_pressed=(not menu_open) and dash_down and (not host._prev_dash_down),
         crouch_held=(not menu_open) and crouch_held,
         grapple_pressed=(not menu_open) and grapple_down and (not host._prev_grapple_down),
         noclip_toggle_pressed=(not menu_open) and noclip_toggle_down and (not host._prev_noclip_toggle_down),
@@ -245,6 +252,7 @@ def sample_live_input_command(host, *, menu_open: bool) -> _InputCommand:
     )
 
     host._prev_jump_down = (not menu_open) and jump_held
+    host._prev_dash_down = (not menu_open) and dash_down
     host._prev_grapple_down = (not menu_open) and grapple_down
     host._prev_noclip_toggle_down = (not menu_open) and noclip_toggle_down
 

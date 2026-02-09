@@ -84,50 +84,50 @@ def test_all_toggle_controls_have_tooltips_with_lower_higher_guidance() -> None:
 
 
 def test_jump_height_controls_jump_velocity() -> None:
-    low = PhysicsTuning(jump_height=0.6, gravity=24.0)
-    high = PhysicsTuning(jump_height=2.4, gravity=24.0)
+    low = PhysicsTuning(jump_height=0.6, jump_apex_time=0.30)
+    high = PhysicsTuning(jump_height=2.4, jump_apex_time=0.30)
     low_ctrl = _make_controller(low)
     high_ctrl = _make_controller(high)
     assert high_ctrl._jump_up_speed() > low_ctrl._jump_up_speed()
-    assert math.isclose(low_ctrl._jump_up_speed(), math.sqrt(2.0 * 24.0 * 0.6), rel_tol=1e-6)
+    assert math.isclose(low_ctrl._jump_up_speed(), (2.0 * 0.6) / 0.30, rel_tol=1e-6)
 
 
-def test_jump_accel_affects_air_acceleration_strength() -> None:
-    low = PhysicsTuning(jump_accel=3.0, max_air_speed=12.0)
-    high = PhysicsTuning(jump_accel=30.0, max_air_speed=12.0)
-    low_ctrl = _make_controller(low)
-    high_ctrl = _make_controller(high)
+def test_air_gain_t90_affects_air_acceleration_strength() -> None:
+    slow = PhysicsTuning(max_ground_speed=6.0, air_speed_mult=2.0, air_gain_t90=0.40)
+    fast = PhysicsTuning(max_ground_speed=6.0, air_speed_mult=2.0, air_gain_t90=0.08)
+    slow_ctrl = _make_controller(slow)
+    fast_ctrl = _make_controller(fast)
 
-    low_ctrl.grounded = False
-    high_ctrl.grounded = False
+    slow_ctrl.grounded = False
+    fast_ctrl.grounded = False
     wish = LVector3f(1, 0, 0)
-    low_ctrl.step(dt=0.016, wish_dir=wish, yaw_deg=0.0, crouching=False)
-    high_ctrl.step(dt=0.016, wish_dir=wish, yaw_deg=0.0, crouching=False)
-    assert high_ctrl.vel.x > low_ctrl.vel.x
+    slow_ctrl.step(dt=0.016, wish_dir=wish, yaw_deg=0.0, crouching=False)
+    fast_ctrl.step(dt=0.016, wish_dir=wish, yaw_deg=0.0, crouching=False)
+    assert fast_ctrl.vel.x > slow_ctrl.vel.x
 
 
-def test_air_counter_strafe_brake_strength_affects_deceleration() -> None:
-    low = PhysicsTuning(air_counter_strafe_brake=1.0)
-    high = PhysicsTuning(air_counter_strafe_brake=40.0)
-    low_ctrl = _make_controller(low)
-    high_ctrl = _make_controller(high)
+def test_air_speed_multiplier_affects_air_top_speed() -> None:
+    low = _make_controller(PhysicsTuning(max_ground_speed=6.0, air_speed_mult=1.0, air_gain_t90=0.08))
+    high = _make_controller(PhysicsTuning(max_ground_speed=6.0, air_speed_mult=2.0, air_gain_t90=0.08))
 
-    low_ctrl.grounded = False
-    high_ctrl.grounded = False
-    low_ctrl.vel = LVector3f(10, 0, 0)
-    high_ctrl.vel = LVector3f(10, 0, 0)
-    opposite = LVector3f(-1, 0, 0)
-    low_ctrl.step(dt=0.016, wish_dir=opposite, yaw_deg=0.0, crouching=False)
-    high_ctrl.step(dt=0.016, wish_dir=opposite, yaw_deg=0.0, crouching=False)
-    assert abs(high_ctrl.vel.x) < abs(low_ctrl.vel.x)
+    for _ in range(80):
+        low.grounded = False
+        high.grounded = False
+        low.step(dt=0.016, wish_dir=LVector3f(1, 0, 0), yaw_deg=0.0, crouching=False)
+        high.step(dt=0.016, wish_dir=LVector3f(1, 0, 0), yaw_deg=0.0, crouching=False)
+
+    low_speed = math.sqrt(low.vel.x * low.vel.x + low.vel.y * low.vel.y)
+    high_speed = math.sqrt(high.vel.x * high.vel.x + high.vel.y * high.vel.y)
+    assert high_speed > low_speed
 
 
 def test_surf_input_does_not_reverse_horizontal_direction_in_one_tick() -> None:
     tuning = PhysicsTuning(
         surf_enabled=True,
-        jump_accel=30.0,
+        air_gain_t90=0.03,
         surf_accel=80.0,
-        max_air_speed=24.0,
+        max_ground_speed=6.0,
+        air_speed_mult=4.0,
     )
     ctrl = _make_controller(tuning)
     ctrl.grounded = False
@@ -143,9 +143,10 @@ def test_surf_input_does_not_reverse_horizontal_direction_in_one_tick() -> None:
 def test_surf_opposite_steer_redirects_momentum_without_killing_speed() -> None:
     tuning = PhysicsTuning(
         surf_enabled=True,
-        jump_accel=20.0,
+        air_gain_t90=0.045,
         surf_accel=60.0,
-        max_air_speed=24.0,
+        max_ground_speed=6.0,
+        air_speed_mult=4.0,
     )
     ctrl = _make_controller(tuning)
     ctrl.grounded = False
@@ -171,7 +172,7 @@ def test_surf_accel_never_adds_downward_vertical_component() -> None:
 
 
 def test_stale_surf_contact_does_not_apply_surf_accel_after_leaving_ramp() -> None:
-    ctrl = _make_controller(PhysicsTuning(surf_enabled=True, jump_accel=20.0, surf_accel=60.0))
+    ctrl = _make_controller(PhysicsTuning(surf_enabled=True, air_gain_t90=0.045, surf_accel=60.0))
     ctrl.grounded = False
     ctrl.vel = LVector3f(0.0, 0.0, 0.0)
     # Old contact should not keep surf acceleration active.
@@ -203,6 +204,67 @@ def test_wallrun_does_not_cancel_upward_jump_velocity() -> None:
 
     ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
     assert ctrl.vel.z > 0.0
+
+
+def test_wallrun_sets_active_state_and_camera_roll_indicator() -> None:
+    tuning = PhysicsTuning(wallrun_enabled=True)
+    ctrl = _make_controller(tuning)
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(4.0, 0.0, 0.0)
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
+
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+
+    assert ctrl.is_wallrunning()
+    assert ctrl.wallrun_camera_roll_deg(yaw_deg=0.0) < -0.1
+
+
+def test_wallrun_camera_roll_clears_soon_after_contact_loss() -> None:
+    tuning = PhysicsTuning(wallrun_enabled=True)
+    ctrl = _make_controller(tuning)
+    ctrl.grounded = False
+    ctrl._wallrun_active = True
+    ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
+    ctrl._wall_contact_timer = 0.12
+
+    assert ctrl.wallrun_camera_roll_deg(yaw_deg=0.0) == 0.0
+
+
+def test_wallrun_jump_biases_to_camera_forward_direction() -> None:
+    tuning = PhysicsTuning(
+        wallrun_enabled=True,
+        walljump_enabled=True,
+        wall_jump_cooldown=0.0,
+        wall_jump_boost=7.5,
+        enable_jump_buffer=False,
+    )
+    ctrl = _make_controller(tuning)
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(5.0, 0.0, -1.0)
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)  # wall peel-away points +X
+    ctrl.queue_jump()
+
+    # Camera points +Y (yaw 0): wallrun jump should favor camera forward over pure wall normal.
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, pitch_deg=0.0, crouching=False)
+
+    assert ctrl.vel.z > 0.0
+    assert ctrl.vel.y > abs(ctrl.vel.x)
+
+
+def test_wallrun_sink_t90_controls_descent_response() -> None:
+    fast = _make_controller(PhysicsTuning(wallrun_enabled=True, wallrun_sink_t90=0.08))
+    slow = _make_controller(PhysicsTuning(wallrun_enabled=True, wallrun_sink_t90=0.60))
+    for ctrl in (fast, slow):
+        ctrl.grounded = False
+        ctrl.vel = LVector3f(4.0, 0.0, -6.0)
+        ctrl._wall_contact_timer = 0.0
+        ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
+
+    fast.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+    slow.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+    assert fast.vel.z > slow.vel.z
 
 
 def test_crouch_speed_multiplier_reduces_ground_acceleration() -> None:
@@ -263,6 +325,126 @@ def test_walljump_not_allowed_while_grounded_even_with_wall_contact() -> None:
     ctrl._wall_contact_timer = 0.0
     ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
     assert not ctrl.has_wall_for_jump()
+
+
+def test_coyote_jump_window_allows_late_jump_when_enabled() -> None:
+    tuning = PhysicsTuning(
+        coyote_buffer_enabled=True,
+        coyote_time=0.12,
+        jump_height=1.2,
+        jump_apex_time=0.30,
+    )
+    ctrl = _make_controller(tuning)
+    ctrl.grounded = True
+
+    # Prime coyote timer from grounded state.
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+    assert ctrl.grounded is False
+    assert ctrl.coyote_left() > 0.0
+
+    ctrl.queue_jump()
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+    assert ctrl.vel.z > 0.0
+
+
+def test_dash_sweep_stops_dash_when_sweep_hits() -> None:
+    ctrl = PlayerController(
+        tuning=PhysicsTuning(dash_enabled=True, dash_sweep_enabled=True),
+        spawn_point=LVector3f(0, 0, 3),
+        aabbs=[],
+        collision=_FakeCollision(),
+    )
+    ctrl.grounded = False
+    ctrl.queue_dash(wish_dir=LVector3f(1, 0, 0), yaw_deg=0.0)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(1, 0, 0), yaw_deg=0.0, crouching=False)
+
+    assert not ctrl.is_dashing()
+    assert ctrl.contact_count() >= 1
+
+
+def test_invariant_vmax_remains_authoritative_under_input() -> None:
+    low = _make_controller(
+        PhysicsTuning(
+            max_ground_speed=4.0,
+            run_t90=0.22,
+            ground_stop_t90=0.10,
+        )
+    )
+    high = _make_controller(
+        PhysicsTuning(
+            max_ground_speed=10.0,
+            run_t90=0.22,
+            ground_stop_t90=0.10,
+        )
+    )
+    wish = LVector3f(1, 0, 0)
+
+    for _ in range(90):
+        low.grounded = True
+        high.grounded = True
+        low.step(dt=0.016, wish_dir=wish, yaw_deg=0.0, crouching=False)
+        high.step(dt=0.016, wish_dir=wish, yaw_deg=0.0, crouching=False)
+
+    low_speed = math.sqrt(low.vel.x * low.vel.x + low.vel.y * low.vel.y)
+    high_speed = math.sqrt(high.vel.x * high.vel.x + high.vel.y * high.vel.y)
+    assert low_speed > 3.5
+    assert high_speed > 9.0
+    assert high_speed > low_speed * 2.2
+
+
+def test_ground_friction_still_damps_speed_without_input() -> None:
+    ctrl = _make_controller(
+        PhysicsTuning(
+            ground_stop_t90=0.15,
+            custom_friction_enabled=True,
+        )
+    )
+    ctrl.vel = LVector3f(8.0, 0.0, 0.0)
+
+    for _ in range(40):
+        ctrl.grounded = True
+        ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+
+    speed = math.sqrt(ctrl.vel.x * ctrl.vel.x + ctrl.vel.y * ctrl.vel.y)
+    assert speed < 1.0
+
+
+def test_ground_jump_tick_preserves_horizontal_speed() -> None:
+    ctrl = _make_controller(
+        PhysicsTuning(
+            custom_friction_enabled=True,
+            ground_stop_t90=0.05,
+            enable_jump_buffer=False,
+        )
+    )
+    ctrl.grounded = True
+    ctrl.vel = LVector3f(9.0, 0.0, 0.0)
+    ctrl.queue_jump()
+
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+
+    assert ctrl.vel.x > 8.8
+    assert ctrl.vel.z > 0.0
+
+
+def test_ground_jump_tick_preserves_horizontal_speed_with_move_input() -> None:
+    ctrl = _make_controller(
+        PhysicsTuning(
+            custom_friction_enabled=True,
+            run_t90=0.06,
+            ground_stop_t90=0.05,
+            max_ground_speed=6.0,
+            enable_jump_buffer=False,
+        )
+    )
+    ctrl.grounded = True
+    ctrl.vel = LVector3f(12.0, 0.0, 0.0)
+    ctrl.queue_jump()
+
+    ctrl.step(dt=0.016, wish_dir=LVector3f(1.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+
+    assert ctrl.vel.x > 11.7
+    assert ctrl.vel.z > 0.0
 
 
 def test_corner_jump_uses_ground_jump_not_walljump() -> None:

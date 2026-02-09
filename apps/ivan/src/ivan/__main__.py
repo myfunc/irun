@@ -24,6 +24,11 @@ def main(argv: list[str] | None = None) -> None:
         help="Optional PNG output path (only used with --smoke). Saves a single screenshot before exit.",
     )
     parser.add_argument(
+        "--feel-harness",
+        action="store_true",
+        help="Boot directly into the deterministic movement feel harness scene.",
+    )
+    parser.add_argument(
         "--map",
         dest="map_json",
         default=None,
@@ -124,6 +129,7 @@ def main(argv: list[str] | None = None) -> None:
     run(
         smoke=args.smoke,
         smoke_screenshot=args.smoke_screenshot,
+        feel_harness=args.feel_harness,
         map_json=map_json,
         hl_root=args.hl_root,
         hl_mod=args.hl_mod,

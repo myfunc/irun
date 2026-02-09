@@ -14,6 +14,54 @@
 - Ivan: classic center crosshair (Half-Life/CS style) visible during active gameplay
 - Ivan: input debug overlay (`F2`) for keyboard/mouse troubleshooting
 - Ivan: gameplay feel telemetry in `F2` overlay (rolling jump success, landing speed loss, ground flicker, camera jerk proxies)
+- Ivan: staged invariant-motion refactor foundation
+  - added invariant fields for run/stop/jump/air/dash/wallrun timing windows (`run_t90`, `ground_stop_t90`, `jump_apex_time`, `air_speed_mult`, `air_gain_t90`, `wallrun_sink_t90`, `dash_distance`, `dash_duration`, `coyote_time`)
+  - added `physics.motion` package with single config object (`MotionConfig`: invariants + derived constants)
+  - `PlayerController` now consumes `MotionSolver` for derived run response, ground damping, gravity, and jump takeoff speed
+  - gameplay/client/server simulation now routes through `MotionIntent` (`step_with_intent`) for unified movement command ingestion
+  - legacy run/gravity direct movement fields were removed from active tuning and migrated into invariant timing fields
+  - legacy air gain scalars (`max_air_speed`, `jump_accel`, `air_control`, `air_counter_strafe_brake`) are migrated for compatibility and removed from active tuning schema
+- Ivan: dash prototype now integrated into input + movement pipeline
+  - dash trigger: `Shift` (edge-triggered input command)
+  - dash parameters are invariant-driven (`dash_distance`, `dash_duration` -> derived dash speed)
+  - high-speed collision path supports sweep/cast (`dash_sweep_enabled`) with runtime toggle fallback to regular discrete movement
+- Ivan: deterministic feel harness bootstrap (`--feel-harness`)
+  - harness geometry includes: flat ground, slope approximation, step, wall, ledge, and a deterministic moving-platform fixture
+  - harness isolation toggles exposed in debug UI:
+    - camera smoothing on/off
+    - animation/root-motion visual layer on/off
+    - custom friction on/off
+    - dash sweep on/off
+    - coyote/buffer leniency on/off
+- Ivan: expanded runtime feel diagnostics
+  - `F2` now includes FPS + frame p95, sim steps, state, accel, contacts, normals, leniency timers, and rolling determinism hash summary
+  - `F10` dumps rolling diagnostics buffer to JSON for offline jank analysis
+  - `F11` dumps rolling determinism trace hash buffer for replay/harness checks
+- Ivan: debug tuning surface reduced to invariant-first controls
+  - removed most legacy/direct scalar sliders from the runtime debug menu
+  - kept compact controls for `Vmax`, run response timing, ground stop timing, air speed/gain, wallrun sink timing, jump height/apex timing, dash distance/duration, and leniency windows
+  - restored `autojump_enabled` in compact toggles for bhop-chain validation
+  - restored `wallrun_enabled` toggle for wallrun iteration
+  - surf section is now isolation-only toggle (`surf_enabled`) with no surf-specific scalar sliders in the debug surface
+- Ivan: wallrun feedback polish
+  - while wallrunning, camera now applies slight roll tilt away from the wall as an engagement indicator
+  - wallrun jump now biases horizontal launch direction toward camera forward heading (while still peeling off wall)
+  - wallrun vertical sink is now invariant-driven (`wallrun_sink_t90`) instead of ad-hoc per-feature velocity edits
+  - wallrun tilt recovery now begins immediately when wallrun ends (including jump-off), avoiding delayed recentering
+- Ivan: read-only camera tilt animation pass
+  - wallrun roll transitions are now smoothed (snappy exponential response instead of one-frame snap)
+  - camera adds gentle movement-relative tilt:
+    - strafe left/right -> subtle roll
+    - backpedal -> subtle pitch
+  - all tilt is camera-only and does not write gameplay motion/velocity
+- Ivan: controller module split for ownership clarity and reviewability
+  - `player_controller.py`: orchestration + authority loop
+  - `player_controller_actions.py`: jump/vault/grapple/crouch/friction
+  - `player_controller_surf.py`: surf/air behavior + wall/surf probes
+  - `player_controller_collision.py`: collision/step-slide/sweep logic
+- Ivan: camera and animation are now explicit read-only observers
+  - `camera_observer.py`: render-shell camera smoothing that follows solved simulation state only
+  - `animation_observer.py`: optional visual bob/root-motion layer that applies camera-only offsets and never writes movement state
 - Ivan: error console overlay (`F3`) that captures and shows unhandled exceptions without crashing the app (cycles hidden/collapsed/feed)
 - Ivan: generated test course with walls and jump obstacles
 - Ivan: BSP-to-map-bundle asset pipeline and runtime map loading (`--map`, including assets-relative aliases)
@@ -31,7 +79,7 @@
   - Extracts baked GoldSrc lightmaps (RGB) into bundle `lightmaps/` and renders them in runtime (supports up to 4 light styles per face)
   - Runtime now falls back to base textures for faces whose referenced lightmap files are missing (prevents full-black map rendering for partial bundles)
 - Ivan: GoldSrc PVS visibility culling (BSP VISIBILITY + leaf surface lists) to avoid rendering geometry hidden behind walls (when cache is available)
-  - Currently disabled by default (can be toggled ON in the debug menu via `vis_culling_enabled`).
+  - Currently disabled by default (`vis_culling_enabled` remains a tuning field/profile value but is not in the compact invariant debug menu).
 - Ivan: main menu (UI kit) with map bundle selection and on-demand GoldSrc/Xash3D import from a chosen game directory
   - Mouse-driven: click menu items to select, mouse wheel to scroll; keyboard navigation still supported (Up/Down/Enter)
   - Fast navigation: hold Up/Down for accelerated scrolling, Left/Right page jump, and `Cmd+F`/`Ctrl+F` search

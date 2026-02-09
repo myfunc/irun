@@ -35,6 +35,7 @@ def _frame_to_row(*, tick: int, frame: DemoFrame) -> dict[str, Any]:
         "move_right": int(frame.move_right),
         "jump_pressed": int(bool(frame.jump_pressed)),
         "jump_held": int(bool(frame.jump_held)),
+        "dash_pressed": int(bool(frame.dash_pressed)),
         "crouch_held": int(bool(frame.crouch_held)),
         "grapple_pressed": int(bool(frame.grapple_pressed)),
         "noclip_toggle_pressed": int(bool(frame.noclip_toggle_pressed)),
@@ -218,6 +219,7 @@ def _summary(rec: DemoRecording) -> dict[str, Any]:
     input_counts = {
         "jump_pressed_ticks": int(sum(1 for f in frames if f.jump_pressed)),
         "jump_held_ticks": int(sum(1 for f in frames if f.jump_held)),
+        "dash_pressed_ticks": int(sum(1 for f in frames if f.dash_pressed)),
         "crouch_held_ticks": int(sum(1 for f in frames if f.crouch_held)),
         "move_forward_pos_ticks": int(sum(1 for f in frames if int(f.move_forward) > 0)),
         "move_forward_neg_ticks": int(sum(1 for f in frames if int(f.move_forward) < 0)),
@@ -239,6 +241,7 @@ def _summary(rec: DemoRecording) -> dict[str, Any]:
     ground_flicker = _compute_ground_flicker(grounded_values)
     landing_loss = _compute_landing_loss(tm_frames)
     camera_jerk = _compute_camera_jerk(tm_frames, tick_rate=tick_rate)
+    det_hashes = [str(tm.get("det_h")) for tm in tm_frames if isinstance(tm.get("det_h"), str) and str(tm.get("det_h")).strip()]
     return {
         "format_version": 1,
         "demo": {
@@ -273,6 +276,8 @@ def _summary(rec: DemoRecording) -> dict[str, Any]:
             "camera_ang_jerk_avg": float(camera_jerk["ang_avg"]),
             "camera_ang_jerk_max": float(camera_jerk["ang_max"]),
             "camera_jerk_samples": int(camera_jerk["samples"]),
+            "det_hash_samples": int(len(det_hashes)),
+            "det_hash_last": str(det_hashes[-1]) if det_hashes else "",
             "jump_takeoff": jump_success,
         },
         "input_counts": input_counts,
