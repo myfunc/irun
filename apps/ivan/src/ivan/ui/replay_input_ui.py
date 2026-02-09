@@ -219,13 +219,15 @@ class ReplayInputUI:
         arrow_right_held: bool = False,
         mouse_left_held: bool = False,
         mouse_right_held: bool = False,
+        raw_wasd_available: bool = False,
+        raw_arrows_available: bool = False,
+        raw_mouse_buttons_available: bool = False,
     ) -> None:
         # Movement cluster (prefer recorded held states; fallback to axis values for old demos).
-        has_raw_wasd = bool(key_w_held or key_a_held or key_s_held or key_d_held)
-        left_on = bool(key_a_held) if has_raw_wasd else int(move_right) < 0
-        right_on = bool(key_d_held) if has_raw_wasd else int(move_right) > 0
-        up_on = bool(key_w_held) if has_raw_wasd else int(move_forward) > 0
-        down_on = bool(key_s_held) if has_raw_wasd else int(move_forward) < 0
+        left_on = bool(key_a_held) if bool(raw_wasd_available) else int(move_right) < 0
+        right_on = bool(key_d_held) if bool(raw_wasd_available) else int(move_right) > 0
+        up_on = bool(key_w_held) if bool(raw_wasd_available) else int(move_forward) > 0
+        down_on = bool(key_s_held) if bool(raw_wasd_available) else int(move_forward) < 0
         self._move_left["frameColor"] = self._active_lr if left_on else self._inactive
         self._move_right["frameColor"] = self._active_lr if right_on else self._inactive
         self._move_center_top["frameColor"] = self._active_fwd if up_on else self._inactive
@@ -241,12 +243,17 @@ class ReplayInputUI:
         self._arrow_d["frameColor"] = self._active_back if bool(arrow_down_held) else self._inactive
         self._arrow_l["frameColor"] = self._active_lr if bool(arrow_left_held) else self._inactive
         self._arrow_r["frameColor"] = self._active_lr if bool(arrow_right_held) else self._inactive
+        if not bool(raw_arrows_available):
+            self._arrow_u["frameColor"] = self._inactive
+            self._arrow_d["frameColor"] = self._inactive
+            self._arrow_l["frameColor"] = self._inactive
+            self._arrow_r["frameColor"] = self._inactive
 
         # Mouse direction section.
         self._mouse_l["frameColor"] = self._active_lr if int(look_dx) < 0 else self._inactive
         self._mouse_r["frameColor"] = self._active_lr if int(look_dx) > 0 else self._inactive
         self._mouse_u["frameColor"] = self._active_fwd if int(look_dy) < 0 else self._inactive
         self._mouse_d["frameColor"] = self._active_back if int(look_dy) > 0 else self._inactive
-        self._mouse_lmb["frameColor"] = self._active_fwd if bool(mouse_left_held) else self._inactive
-        self._mouse_rmb["frameColor"] = self._active_back if bool(mouse_right_held) else self._inactive
+        self._mouse_lmb["frameColor"] = self._active_fwd if (bool(raw_mouse_buttons_available) and bool(mouse_left_held)) else self._inactive
+        self._mouse_rmb["frameColor"] = self._active_back if (bool(raw_mouse_buttons_available) and bool(mouse_right_held)) else self._inactive
         self._mouse_delta["text"] = f"dx {int(look_dx)} | dy {int(look_dy)}"

@@ -33,6 +33,9 @@ class DemoFrame:
     arrow_right_held: bool = False
     mouse_left_held: bool = False
     mouse_right_held: bool = False
+    raw_wasd_available: bool = False
+    raw_arrows_available: bool = False
+    raw_mouse_buttons_available: bool = False
     telemetry: dict[str, float | int | bool] | None = None
 
 
@@ -174,6 +177,9 @@ def load_replay(path: Path) -> DemoRecording:
     for row in frames_in:
         if not isinstance(row, dict):
             continue
+        has_raw_wasd = all(k in row for k in ("kw", "ka", "ks", "kd"))
+        has_raw_arrows = all(k in row for k in ("au", "ad", "al", "ar"))
+        has_raw_mouse_buttons = all(k in row for k in ("m1", "m2"))
         frames.append(
             DemoFrame(
                 look_dx=int(row.get("dx") or 0),
@@ -197,6 +203,9 @@ def load_replay(path: Path) -> DemoRecording:
                 arrow_right_held=bool(row.get("ar")) if "ar" in row else False,
                 mouse_left_held=bool(row.get("m1")) if "m1" in row else bool(row.get("gp")),
                 mouse_right_held=bool(row.get("m2")) if "m2" in row else False,
+                raw_wasd_available=bool(has_raw_wasd),
+                raw_arrows_available=bool(has_raw_arrows),
+                raw_mouse_buttons_available=bool(has_raw_mouse_buttons),
                 telemetry=(dict(row.get("tm")) if isinstance(row.get("tm"), dict) else None),
             )
         )
