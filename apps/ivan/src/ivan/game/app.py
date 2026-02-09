@@ -71,6 +71,7 @@ from . import menu_flow as _menu
 from . import netcode as _net
 from . import tuning_profiles as _profiles
 from .animation_observer import AnimationObserver
+from .camera_height_observer import CameraHeightObserver
 from .camera_observer import CameraObserver
 from .camera_tilt_observer import CameraTiltObserver, motion_tilt_targets
 from .determinism import DeterminismTrace, deterministic_state_hash
@@ -179,6 +180,7 @@ class RunnerDemo(ShowBase):
         self._net_perf_text: str = ""
         self._camera_observer = CameraObserver()
         self._camera_tilt_observer = CameraTiltObserver()
+        self._camera_height_observer = CameraHeightObserver()
         self._animation_observer = AnimationObserver()
         self._feel_metrics = FeelMetrics()
         self._feel_diag = RollingFeelDiagnostics(tick_rate_hz=self._sim_tick_rate_hz)
@@ -977,6 +979,7 @@ class RunnerDemo(ShowBase):
             )
             self._local_hp = 100
             self._camera_tilt_observer.reset()
+            self._camera_height_observer.reset()
             self._sim_state_ready = False
             self._push_sim_snapshot()
             self._render_interpolated_state(alpha=1.0)
@@ -1167,6 +1170,13 @@ class RunnerDemo(ShowBase):
         c = self._lerp_vec(self._sim_prev_cam_pos, self._sim_curr_cam_pos, a)
         y = self._lerp_angle_deg(self._sim_prev_yaw, self._sim_curr_yaw, a)
         pi = self._lerp_angle_deg(self._sim_prev_pitch, self._sim_curr_pitch, a)
+        target_eye_offset_z = float(c.z - p.z)
+        smoothed_eye_offset_z = self._camera_height_observer.observe(
+            dt=float(frame_dt),
+            target_offset_z=float(target_eye_offset_z),
+            enabled=bool(self.tuning.harness_camera_smoothing_enabled),
+        )
+        c.z = float(p.z) + float(smoothed_eye_offset_z)
         if not bool(self.tuning.harness_camera_smoothing_enabled):
             c = LVector3f(self._sim_curr_cam_pos)
             y = float(self._sim_curr_yaw)
@@ -1178,9 +1188,11 @@ class RunnerDemo(ShowBase):
         wallrun_roll = 0.0
         move_roll = 0.0
         move_pitch = 0.0
+        vault_pitch = 0.0
         if self.player is not None:
             if self.player.is_wallrunning():
                 wallrun_roll = float(self.player.wallrun_camera_roll_deg(yaw_deg=float(y)))
+            vault_pitch = float(self.player.vault_camera_pitch_deg())
             move_tilt = motion_tilt_targets(
                 vel=LVector3f(self.player.vel),
                 yaw_deg=float(y),
@@ -1193,7 +1205,7 @@ class RunnerDemo(ShowBase):
             move_roll *= 0.35
             move_pitch *= 0.50
         target_roll = float(wallrun_roll + move_roll)
-        target_pitch = float(move_pitch)
+        target_pitch = float(move_pitch + vault_pitch)
         tilt_pose = self._camera_tilt_observer.observe(
             dt=float(frame_dt),
             target_roll=float(target_roll),
@@ -1300,6 +1312,7 @@ class RunnerDemo(ShowBase):
             self._net_reconcile_pitch_offset = 0.0
             self._camera_observer.reset()
             self._camera_tilt_observer.reset()
+            self._camera_height_observer.reset()
             self._net_cfg_apply_pending_version = 0
             self._net_cfg_apply_sent_at = 0.0
             self._net_perf.reset()
@@ -1796,6 +1809,7 @@ class RunnerDemo(ShowBase):
         self._net_reconcile_pitch_offset = 0.0
         self._camera_observer.reset()
         self._camera_tilt_observer.reset()
+        self._camera_height_observer.reset()
         self._det_trace.reset()
         self._det_trace_hash = "0" * 16
         self._last_sim_vel = LVector3f(0, 0, 0)
@@ -1945,6 +1959,7 @@ class RunnerDemo(ShowBase):
                 contacts = int(self.player.contact_count()) if self.player is not None else 0
                 jump_buf = float(self.player.jump_buffer_left()) if self.player is not None else 0.0
                 coyote = float(self.player.coyote_left()) if self.player is not None else 0.0
+                vault_dbg = self.player.vault_debug_status() if self.player is not None else "idle"
                 state_name = self.player.motion_state_name() if self.player is not None else "none"
                 last_input_age = max(0.0, float(now) - float(self._last_input_time))
                 self.input_debug.set_text(
@@ -1956,7 +1971,7 @@ class RunnerDemo(ShowBase):
                     f"state={state_name} wish=({wish_dbg.x:+.2f},{wish_dbg.y:+.2f}) pos=({pos.x:+.2f},{pos.y:+.2f},{pos.z:+.2f})\n"
                     f"vel=({vel.x:+.2f},{vel.y:+.2f},{vel.z:+.2f}) accel=({accel.x:+.2f},{accel.y:+.2f},{accel.z:+.2f}) grounded={int(grounded)} contacts={contacts}\n"
                     f"floor_n=({floor_n.x:+.2f},{floor_n.y:+.2f},{floor_n.z:+.2f}) wall_n=({wall_n.x:+.2f},{wall_n.y:+.2f},{wall_n.z:+.2f})\n"
-                    f"last_input_age={last_input_age:.3f}s jump_buf={jump_buf:.3f}s coyote={coyote:.3f}s\n"
+                    f"last_input_age={last_input_age:.3f}s jump_buf={jump_buf:.3f}s coyote={coyote:.3f}s vault={vault_dbg}\n"
                     f"{self._net_perf_text if self._net_perf_text else 'net perf | waiting for samples...'}\n"
                     f"{self._feel_perf_text}"
                 )
@@ -2019,13 +2034,14 @@ class RunnerDemo(ShowBase):
                     self._net_perf_last_publish = now_perf
 
             hspeed = math.sqrt(self.player.vel.x * self.player.vel.x + self.player.vel.y * self.player.vel.y)
+            vault_dbg = self.player.vault_debug_status()
             self.ui.set_speed(hspeed)
             self.ui.set_health(self._local_hp)
             self.ui.set_status(
                 f"speed: {hspeed:.2f} | z-vel: {self.player.vel.z:.2f} | grounded: {self.player.grounded} | "
                 f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()} | slide: {self.player.is_sliding()} | "
                 f"grapple: {self.player.is_grapple_attached()} | hp: {self._local_hp} | net: {self._net_connected} | "
-                f"rec: {self._active_recording is not None} | replay: {self._playback_active}"
+                f"rec: {self._active_recording is not None} | replay: {self._playback_active} | vault: {vault_dbg}"
             )
 
             if self._game_mode is not None:

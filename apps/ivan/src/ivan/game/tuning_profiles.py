@@ -13,6 +13,16 @@ def to_persisted_value(value: object) -> float | bool:
     return float(value)
 
 
+def _apply_character_scale_lock(tuning: PhysicsTuning) -> None:
+    half_h = max(0.15, float(tuning.player_half_height))
+    eye_ratio = 0.625 / 1.05
+    radius_ratio = 0.42 / 1.05
+    step_ratio = 0.55 / 1.05
+    tuning.player_eye_height = max(0.10, half_h * eye_ratio)
+    tuning.player_radius = max(0.15, min(0.90, half_h * radius_ratio))
+    tuning.step_height = max(0.10, min(1.20, half_h * step_ratio))
+
+
 def _migrate_to_invariants(profile: dict[str, float | bool]) -> dict[str, float | bool]:
     out = dict(profile)
     g = max(
@@ -58,7 +68,13 @@ def _migrate_to_invariants(profile: dict[str, float | bool]) -> dict[str, float 
         stand_eye = max(0.1, float(out.get("player_eye_height", 0.625)))
         out["slide_eye_height_mult"] = max(0.40, min(1.0, crouch_eye / stand_eye))
     out["slide_enabled"] = bool(out.get("slide_enabled", out.get("dash_enabled", True)))
-    out["coyote_buffer_enabled"] = True
+    out["coyote_buffer_enabled"] = bool(out.get("coyote_buffer_enabled", out.get("enable_jump_buffer", True)))
+    legacy_coyote = float(out.get("coyote_time", 0.0))
+    legacy_buffer = float(out.get("jump_buffer_time", 0.0))
+    out["grace_period"] = max(
+        0.0,
+        min(0.35, float(out.get("grace_period", max(legacy_coyote, legacy_buffer, 0.120)))),
+    )
     out["custom_friction_enabled"] = True
     for legacy in (
         "invariant_motion_enabled",
@@ -77,6 +93,9 @@ def _migrate_to_invariants(profile: dict[str, float | bool]) -> dict[str, float 
         "dash_sweep_enabled",
         "slide_duration",
         "slide_speed_mult",
+        "enable_jump_buffer",
+        "jump_buffer_time",
+        "coyote_time",
         "crouch_speed_multiplier",
         "crouch_half_height",
         "crouch_eye_height",
@@ -99,7 +118,7 @@ def build_default_profiles() -> dict[str, dict[str, float | bool]]:
         {
             "surf_enabled": True,
             "autojump_enabled": True,
-            "enable_jump_buffer": True,
+            "coyote_buffer_enabled": True,
             "jump_height": 1.0108081703186036,
             "jump_apex_time": math.sqrt((2.0 * 1.0108081703186036) / 39.6196435546875),
             "max_ground_speed": 6.622355737686157,
@@ -109,7 +128,7 @@ def build_default_profiles() -> dict[str, dict[str, float | bool]]:
             "air_gain_t90": 0.9 / 31.738659286499026,
             "wallrun_sink_t90": 0.22,
             "mouse_sensitivity": 0.09978364143371583,
-            "jump_buffer_time": 0.2329816741943359,
+            "grace_period": 0.2329816741943359,
             "wall_jump_cooldown": 0.9972748947143555,
             "surf_accel": 23.521632385253906,
             "surf_gravity_scale": 0.33837084770202636,
@@ -130,7 +149,7 @@ def build_default_profiles() -> dict[str, dict[str, float | bool]]:
         {
             "surf_enabled": False,
             "autojump_enabled": True,
-            "enable_jump_buffer": True,
+            "coyote_buffer_enabled": True,
             "run_t90": max(0.03, min(1.2, math.log(10.0) / 34.0)),
             "ground_stop_t90": max(0.03, min(1.2, math.log(10.0) / 4.8)),
             "air_speed_mult": 14.0 / float(base.max_ground_speed),
@@ -143,7 +162,7 @@ def build_default_profiles() -> dict[str, dict[str, float | bool]]:
         {
             "surf_enabled": True,
             "autojump_enabled": False,
-            "enable_jump_buffer": False,
+            "coyote_buffer_enabled": False,
             "run_t90": max(0.03, min(1.2, math.log(10.0) / 10.0)),
             "ground_stop_t90": max(0.03, min(1.2, math.log(10.0) / 3.8)),
             "air_speed_mult": 22.0 / float(base.max_ground_speed),
@@ -170,7 +189,7 @@ def build_default_profiles() -> dict[str, dict[str, float | bool]]:
             "surf_min_normal_z": 0.05,
             "surf_max_normal_z": 0.72,
             "autojump_enabled": False,
-            "enable_jump_buffer": False,
+            "coyote_buffer_enabled": False,
             "walljump_enabled": False,
             "wallrun_enabled": False,
             "vault_enabled": False,
@@ -216,7 +235,8 @@ def load_profiles_from_state(host, state: IvanState) -> None:
     # Apply those values to the chosen active profile once at load time.
     if state.tuning_overrides and not state.tuning_profiles and active in host._profiles:
         fields = set(PhysicsTuning.__annotations__.keys())
-        for k, v in state.tuning_overrides.items():
+        migrated_overrides = _migrate_to_invariants(dict(state.tuning_overrides))
+        for k, v in migrated_overrides.items():
             if k in fields:
                 host._profiles[active][k] = v
 
@@ -243,6 +263,8 @@ def apply_profile_snapshot(host, values: dict[str, float | bool], *, persist: bo
             setattr(host.tuning, field, value)
     finally:
         host._suspend_tuning_persist = False
+    if bool(getattr(host.tuning, "character_scale_lock_enabled", False)):
+        _apply_character_scale_lock(host.tuning)
     if getattr(host, "player", None) is not None:
         host.player.apply_hull_settings()
     if hasattr(host, "ui") and host.ui is not None:
@@ -317,7 +339,20 @@ def on_tuning_change(host, field: str) -> None:
             host._apply_profile_snapshot(dict(host._net_authoritative_tuning), persist=False)
         host.ui.set_status("Server config is host-only. Local tuning changes are blocked.")
         return
-    if field in ("player_radius", "player_half_height", "slide_half_height_mult"):
+    persist_fields: list[str] = [str(field)]
+    if field == "player_half_height":
+        # Keep camera framing proportional to hull height while iterating character scale.
+        default_eye_ratio = 0.625 / 1.05
+        host.tuning.player_eye_height = max(0.10, float(host.tuning.player_half_height) * float(default_eye_ratio))
+        persist_fields.append("player_eye_height")
+
+    if field in ("player_half_height", "character_scale_lock_enabled") and bool(host.tuning.character_scale_lock_enabled):
+        _apply_character_scale_lock(host.tuning)
+        for dep in ("player_eye_height", "player_radius", "step_height"):
+            if dep not in persist_fields:
+                persist_fields.append(dep)
+
+    if any(f in ("player_radius", "player_half_height", "slide_half_height_mult") for f in persist_fields):
         if host.player is not None:
             host.player.apply_hull_settings()
     if field == "vis_culling_enabled":
@@ -327,9 +362,13 @@ def on_tuning_change(host, field: str) -> None:
             except Exception:
                 pass
     if host._active_profile_name in host._profiles:
-        host._profiles[host._active_profile_name][field] = to_persisted_value(getattr(host.tuning, field))
+        for persist_field in persist_fields:
+            host._profiles[host._active_profile_name][persist_field] = to_persisted_value(
+                getattr(host.tuning, persist_field)
+            )
     if not host._suspend_tuning_persist:
-        host._persist_tuning_field(field)
+        for persist_field in persist_fields:
+            host._persist_tuning_field(persist_field)
     if host._net_connected and host._net_can_configure:
         host._send_tuning_to_server()
 

@@ -145,6 +145,7 @@ Notes:
 - The value is horizontal speed, rounded down to an integer.
 - A classic Half-Life/CS-style center crosshair is shown during active gameplay (hidden in pause/debug/menu).
 - Detailed movement status (`speed/z-vel/grounded/wall`) is shown in the bottom-left corner during gameplay and hidden while the debug/admin panel is open.
+- Vault diagnostics are shown in the status line and `F2` overlay (`vault ok` / explicit reject reason) to debug ledge-vault failures quickly.
 - A health bar/chip is shown in the top-left corner (`HP`).
 - Input debug (F2) and the error console (F3) are shown as boxed overlays that avoid overlapping the HUD bars.
 
@@ -178,19 +179,23 @@ Numeric settings include normalized sliders + entry fields for precise tuning:
 - `wallrun_sink_t90`
 - `jump_height`
 - `jump_apex_time`
-- `jump_buffer_time`
-- `coyote_time`
+- `grace_period`
 - `slide_stop_t90`
+- `vault_max_ledge_height`
+- `vault_forward_boost`
+- `player_half_height`
 
 Boolean toggles are shown inline as labeled rows with `ON/OFF` buttons:
 - Autojump (hold jump to keep hopping)
 - Coyote/buffer enable
 - Custom friction enable
 - Slide enable
+- Vault enable
 - Wallrun enable
 - Surf enable
 - Harness camera smoothing enable
 - Harness animation/root-motion enable
+- Character scale lock enable
 
 Movement notes:
 - Air speed and bunnyhop gain are controlled by two invariants:
@@ -212,7 +217,10 @@ Movement notes:
 - After attach, rope also auto-shortens for a short configurable window (`grapple_attach_shorten_speed`, `grapple_attach_shorten_time`) for a seamless pull-in feel.
 - Wallrun camera tilts away from the active wall side.
 - Wallrun vertical sink is timing-driven (`wallrun_sink_t90`) instead of direct velocity clamps.
-- `vault_enabled` is OFF by default. If enabled, pressing jump again near a ledge can trigger a vault: feet must be below ledge top, vault jump is higher than normal, and a small forward speed boost is applied.
+- `grace_period` is the shared leniency window used by jump buffering, coyote jump, and vault timing checks.
+- `vault_enabled` is ON by default. Pressing jump near a front-facing ledge can trigger a vault when the obstacle is above step height but not taller than character height; vault adds a small forward boost and upward impulse.
+- `player_half_height` can be changed from debug UI during feel iteration; eye height is auto-scaled from hull height to keep camera proportion stable.
+- `character_scale_lock_enabled` (optional) auto-derives `player_radius` and `step_height` from `player_half_height` while keeping core motion feel invariants unchanged.
 - Step risers are filtered out for wall-contact detection to reduce jitter and accidental wall-state hits on stairs/steps.
 - Surf prototype uses GoldSrc-like air movement on steep ramps: wish direction is projected to ramp plane, then normal air acceleration + collision clipping drive surf movement.
 - On surf ramps, acceleration follows the ramp-plane wish direction (not world-up injection), allowing controlled horizontal-to-vertical momentum transfer.

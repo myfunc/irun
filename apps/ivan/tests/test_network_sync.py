@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from ivan.game import RunnerDemo
+from ivan.game import tuning_profiles as profiles_mod
 from ivan.physics.tuning import PhysicsTuning
 from ivan.net.server import MultiplayerServer
 from panda3d.core import LVector3f
@@ -343,6 +344,61 @@ def test_dedicated_server_defaults_match_surf_bhop_c2_core_values(monkeypatch) -
         assert abs(float(srv.tuning.air_speed_mult) - (6.845157165527343 / 6.622355737686157)) < 1e-6
         assert bool(srv.tuning.surf_enabled) is True
         assert bool(srv.tuning.autojump_enabled) is True
-        assert bool(srv.tuning.enable_jump_buffer) is True
+        assert bool(srv.tuning.coyote_buffer_enabled) is True
+        assert abs(float(srv.tuning.grace_period) - 0.2329816741943359) < 1e-6
     finally:
         srv.close()
+
+
+def test_player_half_height_change_autoscales_eye_height_and_persists_both_fields() -> None:
+    host = SimpleNamespace()
+    host._net_connected = False
+    host._net_can_configure = False
+    host._net_authoritative_tuning = {}
+    host.ui = _FakeUI()
+    host.player = SimpleNamespace(apply_hull_settings=lambda: None)
+    host.scene = None
+    host._active_profile_name = "p1"
+    host._profiles = {"p1": {}}
+    host._suspend_tuning_persist = False
+    persisted: list[str] = []
+    host._persist_tuning_field = lambda field: persisted.append(str(field))
+    host._send_tuning_to_server = lambda: None
+    host.tuning = PhysicsTuning()
+    host.tuning.player_half_height = 1.20
+
+    profiles_mod.on_tuning_change(host, "player_half_height")
+
+    expected_eye = 1.20 * (0.625 / 1.05)
+    assert abs(float(host.tuning.player_eye_height) - float(expected_eye)) < 1e-6
+    assert float(host._profiles["p1"]["player_half_height"]) == 1.20
+    assert abs(float(host._profiles["p1"]["player_eye_height"]) - float(expected_eye)) < 1e-6
+    assert "player_half_height" in persisted
+    assert "player_eye_height" in persisted
+
+
+def test_character_scale_lock_derives_radius_and_step_from_half_height() -> None:
+    host = SimpleNamespace()
+    host._net_connected = False
+    host._net_can_configure = False
+    host._net_authoritative_tuning = {}
+    host.ui = _FakeUI()
+    host.player = SimpleNamespace(apply_hull_settings=lambda: None)
+    host.scene = None
+    host._active_profile_name = "p1"
+    host._profiles = {"p1": {}}
+    host._suspend_tuning_persist = False
+    persisted: list[str] = []
+    host._persist_tuning_field = lambda field: persisted.append(str(field))
+    host._send_tuning_to_server = lambda: None
+    host.tuning = PhysicsTuning(character_scale_lock_enabled=True)
+    host.tuning.player_half_height = 1.30
+
+    profiles_mod.on_tuning_change(host, "player_half_height")
+
+    assert abs(float(host.tuning.player_radius) - (1.30 * (0.42 / 1.05))) < 1e-6
+    assert abs(float(host.tuning.step_height) - (1.30 * (0.55 / 1.05))) < 1e-6
+    assert "player_half_height" in persisted
+    assert "player_eye_height" in persisted
+    assert "player_radius" in persisted
+    assert "step_height" in persisted
