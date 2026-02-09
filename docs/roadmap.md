@@ -26,3 +26,10 @@
 Items temporarily on hold pending further analysis:
 - ~~Baker app~~: map viewer + import manager + lighting bake tool — paused; external editor (TrenchBroom) replaces the editing/preview role.
 - ~~Map format v3~~: entities + triggers + lights + baked chunking — paused; map format direction depends on TrenchBroom integration analysis.
+
+## Milestone 3: Gameplay Feel Rehaul
+- Phase 0: instrumentation and baseline capture (jump success, landing loss, ground flicker, camera jerk)
+- Phase 1: camera pipeline smoothing and readability pass
+- Phase 2: movement transition stability pass (stairs/slope/ground-air handoff)
+- Phase 3: acceleration/friction polish + profile packaging
+- Acceptance gates and execution board tracked in `docs/gameplay-feel-rehaul.md`

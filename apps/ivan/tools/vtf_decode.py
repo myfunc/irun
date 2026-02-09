@@ -177,11 +177,8 @@ def decode_vtf_highres_rgba(path: str | Path) -> tuple[int, int, bytes]:
     p = Path(path)
     blob = p.read_bytes()
     h = parse_vtf_header(blob)
-    if (h.version_major, h.version_minor) != (7, 2):
+    if h.version_major != 7:
         raise ValueError(f"Unsupported VTF version {h.version_major}.{h.version_minor} ({p})")
-    if h.low_format != 0:
-        # This repo's textures appear to have no low-res thumbnail; keep scope small.
-        raise ValueError(f"Unsupported VTF low-res thumbnail format {h.low_format} ({p})")
     if h.mip_count <= 0:
         raise ValueError(f"Bad mip count {h.mip_count} ({p})")
 

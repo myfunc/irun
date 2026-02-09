@@ -90,8 +90,13 @@ def convert_material_textures(*, materials_root: Path, out_root: Path) -> int:
         out = out_root / rel.with_suffix(".png")
         if out.exists() and out.stat().st_mtime >= vtf.stat().st_mtime:
             continue
-        _vtf_to_png(vtf, out)
-        converted += 1
+        try:
+            _vtf_to_png(vtf, out)
+            converted += 1
+        except Exception:
+            # Keep import resilient when a map references exotic/unsupported VTF encodings.
+            # Runtime falls back to checker for missing converted textures.
+            continue
     return converted
 
 
@@ -175,6 +180,44 @@ def parse_vmt(text: str) -> dict[str, str]:
             continue
         i += 1
     return out
+
+
+def _normalize_vmt_ref(s: str) -> str:
+    ref = s.strip().strip('"').replace("\\", "/").strip()
+    if ref.casefold().startswith("materials/"):
+        ref = ref[len("materials/") :]
+    return ref.casefold().removesuffix(".vmt")
+
+
+def _resolve_vmt_kv(
+    *,
+    vmt_path: Path,
+    vmt_index: dict[str, Path],
+    cache: dict[str, dict[str, str]],
+    stack: set[str] | None = None,
+) -> dict[str, str]:
+    key = str(vmt_path).casefold()
+    if key in cache:
+        return cache[key]
+    if stack is None:
+        stack = set()
+    if key in stack:
+        return {}
+    stack.add(key)
+
+    kv = parse_vmt(_read_text_lossy(vmt_path))
+    include_ref = kv.get("include")
+    merged: dict[str, str] = {}
+    if isinstance(include_ref, str) and include_ref.strip():
+        inc = _normalize_vmt_ref(include_ref)
+        inc_path = vmt_index.get(inc)
+        if inc_path and inc_path.exists():
+            merged.update(_resolve_vmt_kv(vmt_path=inc_path, vmt_index=vmt_index, cache=cache, stack=stack))
+
+    merged.update(kv)
+    cache[key] = merged
+    stack.discard(key)
+    return merged
 
 
 def _parse_boolish(s: str | None) -> bool:
@@ -282,6 +325,7 @@ def main() -> None:
     # Best-effort: build VMT index once; we only read VMT metadata for materials actually referenced.
     materials_root = Path(args.materials_root)
     vmt_index = build_vmt_index(materials_root)
+    resolved_vmt_cache: dict[str, dict[str, str]] = {}
     materials_meta: dict[str, dict] = {}
 
     # Per-face lightmap textures (kept small and simple; batching/atlasing can come later).
@@ -299,7 +343,7 @@ def main() -> None:
         if mat_name not in materials_meta:
             vmt_path = vmt_index.get(mat_name.replace("\\", "/").casefold())
             if vmt_path and vmt_path.exists():
-                kv = parse_vmt(_read_text_lossy(vmt_path))
+                kv = _resolve_vmt_kv(vmt_path=vmt_path, vmt_index=vmt_index, cache=resolved_vmt_cache)
                 base = kv.get("$basetexture")
                 meta = {
                     "base_texture": base.strip().strip('"') if isinstance(base, str) and base.strip() else None,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from panda3d.core import (
@@ -732,14 +733,34 @@ class WorldScene:
             return None
         if self._material_texture_index is None:
             self._material_texture_index = self._build_material_texture_index(self._material_texture_root)
+        keys: list[str] = []
         base = None
         if self._materials_meta and isinstance(self._materials_meta.get(material_name), dict):
             base = self._materials_meta.get(material_name, {}).get("base_texture")
         if isinstance(base, str) and base.strip():
-            key = base.replace("\\", "/").casefold()
-        else:
-            key = material_name.replace("\\", "/").casefold()
-        return self._material_texture_index.get(key)
+            keys.append(base.replace("\\", "/").casefold())
+        keys.append(material_name.replace("\\", "/").casefold())
+
+        # Source map compilers often rewrite material names as:
+        #   maps/<mapname>/<material_path>_<x>_<y>_<z>
+        # Try recovering the original material path when direct lookup fails.
+        extra: list[str] = []
+        for k in keys:
+            parts = [p for p in k.split("/") if p]
+            if len(parts) >= 3 and parts[0] == "maps":
+                stripped = "/".join(parts[2:])
+                extra.append(stripped)
+                extra.append(re.sub(r"_-?\d+_-?\d+_-?\d+$", "", stripped))
+            extra.append(re.sub(r"_-?\d+_-?\d+_-?\d+$", "", k))
+        for k in extra:
+            if k and k not in keys:
+                keys.append(k)
+
+        for key in keys:
+            p = self._material_texture_index.get(key)
+            if p is not None:
+                return p
+        return None
 
     @staticmethod
     def _vformat_v3n3c4t2t2() -> GeomVertexFormat:
@@ -1176,6 +1197,10 @@ void main() {
                     pv = paths[i]
                     if isinstance(pv, str) and pv.strip():
                         resolved[i] = resolve_path(pv.strip())
+                # If all referenced lightmap files are missing, skip this face so we don't
+                # bind the lightmap shader with black fallback textures (renders full-black).
+                if not any(isinstance(p, Path) for p in resolved):
+                    continue
                 out[idx] = {"paths": resolved, "styles": list(styles)}
         return out or None
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 import errno
 import os
-import subprocess
 import sys
 import threading
 import time
@@ -12,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from direct.showbase.ShowBase import ShowBase
+from direct.showbase.ShowBaseGlobal import globalClock
 from direct.task import Task
 from panda3d.core import (
     ButtonHandle,
@@ -31,7 +31,7 @@ from ivan.console.control_server import ConsoleControlServer
 from ivan.console.core import CommandContext
 from ivan.console.ivan_bindings import build_client_console
 from ivan.console.line_bus import ThreadSafeLineBus
-from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, resolve_bundle_handle
+from ivan.maps.bundle_io import resolve_bundle_handle
 from ivan.maps.run_metadata import RunMetadata, load_run_metadata
 from ivan.modes.base import ModeContext
 from ivan.modes.loader import load_mode
@@ -39,7 +39,6 @@ from ivan.net import EmbeddedHostServer, MultiplayerClient
 from ivan.physics.collision_world import CollisionWorld
 from ivan.physics.player_controller import PlayerController
 from ivan.physics.tuning import PhysicsTuning
-from ivan.paths import app_root as ivan_app_root
 from ivan.replays import (
     DemoFrame,
     DemoRecording,
@@ -66,6 +65,7 @@ from . import input_system as _input
 from . import menu_flow as _menu
 from . import netcode as _net
 from . import tuning_profiles as _profiles
+from .feel_metrics import FeelMetrics
 from .hooks import EventHooks
 from .input_system import _InputCommand
 from .netcode import _NetPerfStats, _PredictedInput, _PredictedState, _RemotePlayerVisual
@@ -169,6 +169,8 @@ class RunnerDemo(ShowBase):
         self._net_perf = _NetPerfStats()
         self._net_perf_last_publish: float = 0.0
         self._net_perf_text: str = ""
+        self._feel_metrics = FeelMetrics()
+        self._feel_perf_text: str = "feel | collecting..."
         self._embedded_server: EmbeddedHostServer | None = None
         self._open_to_network: bool = False
         # If no explicit CLI connect target is provided, keep last used host/port for fast iteration.
@@ -483,6 +485,9 @@ class RunnerDemo(ShowBase):
     def _open_pause_menu(self) -> None:
         if self._mode != "game":
             return
+        if self._playback_active:
+            self.ui.set_status("Replay lock: press R to exit replay.")
+            return
         self._pause_menu_open = True
         self._debug_menu_open = False
         self._replay_browser_open = False
@@ -515,6 +520,9 @@ class RunnerDemo(ShowBase):
 
     def _toggle_debug_menu(self) -> None:
         if self._mode != "game":
+            return
+        if self._playback_active:
+            self.ui.set_status("Replay lock: press R to exit replay.")
             return
         if self._replay_browser_open:
             self._close_replay_browser()
@@ -549,6 +557,9 @@ class RunnerDemo(ShowBase):
                 return
         if self._mode != "game":
             return
+        if self._playback_active:
+            self.ui.set_status("Replay lock: press R to exit replay.")
+            return
         if self._replay_browser_open:
             self._close_replay_browser()
             return
@@ -562,6 +573,9 @@ class RunnerDemo(ShowBase):
 
     def _toggle_console(self) -> None:
         if self._mode != "game":
+            return
+        if self._playback_active:
+            self.ui.set_status("Replay lock: press R to exit replay.")
             return
         if self._console_open:
             self._close_console()
@@ -599,6 +613,9 @@ class RunnerDemo(ShowBase):
 
     def _open_replay_browser(self) -> None:
         if self._mode != "game":
+            return
+        if self._playback_active:
+            self.ui.set_status("Replay lock: press R to exit replay.")
             return
         self._console_open = False
         try:
@@ -651,6 +668,18 @@ class RunnerDemo(ShowBase):
                 self._start_game(map_json=rec.metadata.map_json, lighting=None)
                 return
         self._do_respawn(from_mode=True)
+
+    def _stop_replay_playback(self, *, reason: str) -> None:
+        was_active = bool(self._playback_active)
+        self._playback_active = False
+        self._playback_frames = None
+        self._playback_index = 0
+        self._playback_look_scale = self._look_input_scale
+        self._mouse_dx_accum = 0.0
+        self._mouse_dy_accum = 0.0
+        self._last_mouse = None
+        if was_active and reason:
+            self.ui.set_status(str(reason))
 
     def _start_new_demo_recording(self) -> None:
         if self.scene is None:
@@ -1006,9 +1035,21 @@ class RunnerDemo(ShowBase):
                 self._net_local_cam_pitch = self._lerp_angle_deg(self._net_local_cam_pitch, pi, blend)
             self.camera.setPos(self._net_local_cam_pos)
             self.camera.setHpr(self._net_local_cam_yaw, self._net_local_cam_pitch, 0)
+            self._feel_metrics.record_camera_sample(
+                pos=self._net_local_cam_pos,
+                yaw=float(self._net_local_cam_yaw),
+                pitch=float(self._net_local_cam_pitch),
+                dt=max(1e-6, float(frame_dt)),
+            )
             return
         self.camera.setPos(c)
         self.camera.setHpr(y, pi, 0)
+        self._feel_metrics.record_camera_sample(
+            pos=c,
+            yaw=float(y),
+            pitch=float(pi),
+            dt=max(1e-6, float(frame_dt)),
+        )
 
     def _connect_multiplayer_if_requested(self) -> None:
         self._disconnect_multiplayer()
@@ -1192,8 +1233,7 @@ class RunnerDemo(ShowBase):
 
     def _sample_replay_input_command(self) -> _InputCommand:
         if not self._playback_frames or self._playback_index >= len(self._playback_frames):
-            self._playback_active = False
-            self.ui.set_status("Replay finished.")
+            self._stop_replay_playback(reason="Replay finished.")
             return _InputCommand()
         frame = self._playback_frames[self._playback_index]
         self._playback_index += 1
@@ -1210,6 +1250,8 @@ class RunnerDemo(ShowBase):
     ) -> None:
         if self.player is None or self.scene is None:
             return
+        pre_grounded = bool(self.player.grounded)
+        pre_vel = LVector3f(self.player.vel)
 
         self._apply_look_delta(
             dx=cmd.look_dx,
@@ -1242,11 +1284,24 @@ class RunnerDemo(ShowBase):
         if self.scene is not None and self.player.pos.z < float(self.scene.kill_z):
             self._do_respawn(from_mode=True)
 
+        self._feel_metrics.record_tick(
+            now=float(globalClock.getFrameTime()),
+            dt=float(self._sim_fixed_dt),
+            jump_pressed=bool(cmd.jump_pressed),
+            pre_grounded=pre_grounded,
+            post_grounded=bool(self.player.grounded),
+            pre_vel=pre_vel,
+            post_vel=LVector3f(self.player.vel),
+        )
+
         if capture_snapshot:
             self._push_sim_snapshot()
 
         if record_demo and self._active_recording is not None and not self._playback_active:
-            append_frame(self._active_recording, cmd.to_demo_frame())
+            append_frame(
+                self._active_recording,
+                cmd.to_demo_frame_with_telemetry(telemetry=self._capture_demo_telemetry(cmd=cmd)),
+            )
         if network_send and self._net_connected and self._net_client is not None and not self._playback_active:
             self._net_seq_counter += 1
             seq = int(self._net_seq_counter)
@@ -1305,6 +1360,60 @@ class RunnerDemo(ShowBase):
         if out.lengthSquared() > 1e-12:
             out.normalize()
         return out
+
+    def _capture_demo_telemetry(self, *, cmd: _InputCommand) -> dict[str, float | int | bool]:
+        """
+        Capture per-tick telemetry for feel tuning.
+
+        Replay still re-simulates from input commands only; telemetry is diagnostic.
+        """
+
+        if self.player is None:
+            return {
+                "t": float(globalClock.getFrameTime()),
+                "yaw": float(self._yaw),
+                "pitch": float(self._pitch),
+                "inp_jp": bool(cmd.jump_pressed),
+                "inp_jh": bool(cmd.jump_held),
+                "inp_ch": bool(cmd.crouch_held),
+                "inp_gp": bool(cmd.grapple_pressed),
+                "inp_nt": bool(cmd.noclip_toggle_pressed),
+                "inp_mf": int(cmd.move_forward),
+                "inp_mr": int(cmd.move_right),
+            }
+
+        pos = self.player.pos
+        vel = self.player.vel
+        hspeed = math.sqrt(float(vel.x) * float(vel.x) + float(vel.y) * float(vel.y))
+        speed = math.sqrt(float(vel.x) * float(vel.x) + float(vel.y) * float(vel.y) + float(vel.z) * float(vel.z))
+        eye_height = float(self.tuning.player_eye_height)
+        if bool(self.player.crouched) and bool(self.tuning.crouch_enabled):
+            eye_height = min(eye_height, float(self.tuning.crouch_eye_height))
+        return {
+            "t": float(globalClock.getFrameTime()),
+            "x": float(pos.x),
+            "y": float(pos.y),
+            "z": float(pos.z),
+            "eye_z": float(pos.z + eye_height),
+            "vx": float(vel.x),
+            "vy": float(vel.y),
+            "vz": float(vel.z),
+            "hs": float(hspeed),
+            "sp": float(speed),
+            "yaw": float(self._yaw),
+            "pitch": float(self._pitch),
+            "grounded": bool(self.player.grounded),
+            "crouched": bool(self.player.crouched),
+            "grapple": bool(self.player.is_grapple_attached()),
+            "noclip": bool(self.tuning.noclip_enabled),
+            "inp_jp": bool(cmd.jump_pressed),
+            "inp_jh": bool(cmd.jump_held),
+            "inp_ch": bool(cmd.crouch_held),
+            "inp_gp": bool(cmd.grapple_pressed),
+            "inp_nt": bool(cmd.noclip_toggle_pressed),
+            "inp_mf": int(cmd.move_forward),
+            "inp_mr": int(cmd.move_right),
+        }
 
     def _fire_grapple(self) -> None:
         if self.player is None or self.collision is None:
@@ -1375,6 +1484,10 @@ class RunnerDemo(ShowBase):
             self._start_new_demo_recording()
 
     def _on_respawn_pressed(self) -> None:
+        if self._playback_active:
+            self._stop_replay_playback(reason="Exited replay.")
+            self._do_respawn(from_mode=True)
+            return
         if self._net_connected and self._net_client is not None:
             self._net_client.send_respawn()
             self._net_pending_inputs.clear()
@@ -1432,7 +1545,13 @@ class RunnerDemo(ShowBase):
 
             frame_dt = min(globalClock.getDt(), 0.25)
             now = float(globalClock.getFrameTime())
-            self._poll_mouse_look_delta()
+            if self._playback_active:
+                # Replay must be driven only by recorded input frames.
+                self._mouse_dx_accum = 0.0
+                self._mouse_dy_accum = 0.0
+                self._last_mouse = None
+            else:
+                self._poll_mouse_look_delta()
 
             if self.scene is not None:
                 self.scene.tick(now=now)
@@ -1447,6 +1566,7 @@ class RunnerDemo(ShowBase):
             wish_dbg = self._wish_direction_from_axes(move_forward=fwd_axis, move_right=right_axis)
 
             if self.mouseWatcherNode is not None:
+                self._feel_perf_text = self._feel_metrics.update_summary(now=now)
                 has_mouse = self.mouseWatcherNode.hasMouse()
                 mx = float(self.mouseWatcherNode.getMouseX()) if has_mouse else 0.0
                 my = float(self.mouseWatcherNode.getMouseY()) if has_mouse else 0.0
@@ -1466,7 +1586,8 @@ class RunnerDemo(ShowBase):
                     f"mode={self._mode} lock={self._pointer_locked} dt={frame_dt:.3f} hasMouse={has_mouse} mouse=({mx:+.2f},{my:+.2f})\n"
                     f"raw WASD={int(raw_w)}{int(raw_a)}{int(raw_s)}{int(raw_d)} ascii WASD={int(asc_w)}{int(asc_a)}{int(asc_s)}{int(asc_d)}\n"
                     f"wish=({wish_dbg.x:+.2f},{wish_dbg.y:+.2f}) pos=({pos.x:+.2f},{pos.y:+.2f},{pos.z:+.2f}) vel=({vel.x:+.2f},{vel.y:+.2f},{vel.z:+.2f}) grounded={int(grounded)}\n"
-                    f"{self._net_perf_text if self._net_perf_text else 'net perf | waiting for samples...'}"
+                    f"{self._net_perf_text if self._net_perf_text else 'net perf | waiting for samples...'}\n"
+                    f"{self._feel_perf_text}"
                 )
             if self._input_debug_until and globalClock.getFrameTime() >= self._input_debug_until:
                 self._input_debug_until = 0.0

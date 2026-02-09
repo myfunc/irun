@@ -32,6 +32,9 @@ class _InputCommand:
         self.noclip_toggle_pressed = bool(noclip_toggle_pressed)
 
     def to_demo_frame(self) -> DemoFrame:
+        return self.to_demo_frame_with_telemetry(telemetry=None)
+
+    def to_demo_frame_with_telemetry(self, *, telemetry: dict[str, float | int | bool] | None) -> DemoFrame:
         return DemoFrame(
             look_dx=self.look_dx,
             look_dy=self.look_dy,
@@ -42,6 +45,7 @@ class _InputCommand:
             crouch_held=self.crouch_held,
             grapple_pressed=self.grapple_pressed,
             noclip_toggle_pressed=self.noclip_toggle_pressed,
+            telemetry=(dict(telemetry) if isinstance(telemetry, dict) else None),
         )
 
     @classmethod
@@ -198,4 +202,3 @@ __all__ = [
     "poll_mouse_look_delta",
     "sample_live_input_command",
 ]
-
