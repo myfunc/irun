@@ -69,6 +69,20 @@ def _migrate_to_invariants(profile: dict[str, float | bool]) -> dict[str, float 
         out["slide_eye_height_mult"] = max(0.40, min(1.0, crouch_eye / stand_eye))
     out["slide_enabled"] = bool(out.get("slide_enabled", out.get("dash_enabled", True)))
     out["coyote_buffer_enabled"] = bool(out.get("coyote_buffer_enabled", out.get("enable_jump_buffer", True)))
+    out["camera_speed_fov_max_add"] = max(
+        0.0,
+        min(
+            30.0,
+            float(out.get("camera_speed_fov_max_add", out.get("camera_speed_fov_gain", 9.0))),
+        ),
+    )
+    legacy_landing_gain = max(0.0, float(out.get("camera_landing_shake_gain", 1.0)))
+    legacy_bhop_gain = max(0.0, float(out.get("camera_bhop_pulse_gain", 0.9)))
+    out["camera_event_gain"] = max(
+        0.0,
+        min(3.0, float(out.get("camera_event_gain", (legacy_landing_gain + legacy_bhop_gain) * 0.5))),
+    )
+    out["camera_tilt_gain"] = max(0.0, min(2.5, float(out.get("camera_tilt_gain", 1.0))))
     legacy_coyote = float(out.get("coyote_time", 0.0))
     legacy_buffer = float(out.get("jump_buffer_time", 0.0))
     out["grace_period"] = max(
@@ -100,6 +114,9 @@ def _migrate_to_invariants(profile: dict[str, float | bool]) -> dict[str, float 
         "crouch_half_height",
         "crouch_eye_height",
         "crouch_enabled",
+        "camera_speed_fov_gain",
+        "camera_landing_shake_gain",
+        "camera_bhop_pulse_gain",
     ):
         out.pop(legacy, None)
     return out

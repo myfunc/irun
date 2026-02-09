@@ -72,7 +72,7 @@ Acceptance:
 - Smoke run remains stable.
 
 ### Phase 1: Camera Feel Rehaul
-Status: `PENDING`
+Status: `IN PROGRESS`
 
 Deliverables:
 - Decoupled camera render shell with critically-damped smoothing policy.
@@ -85,6 +85,28 @@ Deliverables:
 Acceptance:
 - Reduced camera jerk metric vs Phase 0 baseline on same route.
 - No visible camera pop on respawn, pause/unpause, replay start/end.
+
+### Camera Rehaul Subtask (2026-02-09)
+Status: `IN PROGRESS` (execution started)
+
+Scope:
+- Treat camera as an invariant-driven system (same philosophy as movement rehaul).
+- Keep a compact, decoupled camera tuning surface.
+- Remove normalized `0..100` tuning representation from debug UI; show real values and units.
+
+Execution checklist:
+- [x] Write and publish this camera-subtask plan under the global feel rehaul board.
+- [x] Replace split event gains (`landing` + `bhop`) with one core invariant-driven camera event gain.
+- [x] Add one camera tilt gain invariant to scale movement/wallrun/vault tilt response coherently.
+- [x] Keep speed-FOV policy invariant-based:
+  - no widening at/below `Vmax`
+  - widening above `Vmax`
+  - cap at configured max addition by `10x Vmax`
+- [x] Extend F2 diagnostics with camera event internals (`event`, `quality`, `applied_amp`, `blocked_reason`).
+- [x] Convert debug numeric controls to real-unit slider/entry values (no normalized 0..100 entry/slider).
+- [x] Update default-profile migration so old camera fields map forward to new compact fields.
+- [x] Update global docs (`features`, `architecture`, `roadmap`) and brainstorm notes.
+- [x] Update project skill guidance to preserve invariant-first camera/movement design for future features.
 
 ### Phase 2: Movement Stability Rehaul
 Status: `PENDING`
@@ -257,6 +279,21 @@ Completed in follow-up slice:
   - wallrun roll transition now smooths with a snappy response curve (reduces one-frame roll snap/jank).
   - wallrun roll now starts returning to neutral immediately on wallrun exit/jump, avoiding delayed recentering.
   - added gentle movement-relative tilt targets (strafe roll + backpedal pitch) to improve perceived responsiveness.
+- Camera feedback slice (Phase 1 rehaul pass):
+  - `camera_feedback_observer.py` remains the read-only camera feedback layer driven by sim events.
+  - speed FOV stays invariant-driven from horizontal speed vs `Vmax`:
+    - no change at/below `Vmax`, rise above `Vmax`, saturate by `10x Vmax`.
+    - curve is tuned to be stronger in practical `2x-5x` speed windows common in airborne/slide flow.
+  - landing + successful-bhop camera pulses were collapsed into a single event envelope with one shared invariant gain.
+  - camera tilt intensity is now controlled by one explicit invariant gain (movement/wallrun/vault tilt scale).
+  - compact camera controls are now:
+    - `camera_base_fov`
+    - `camera_speed_fov_max_add`
+    - `camera_tilt_gain`
+    - `camera_event_gain`
+    - `camera_feedback_enabled`
+  - observer reset paths include map start/respawn/network reconnect to avoid stale camera states.
+  - `F2` diagnostics now include camera event internals (`cam_event`, `quality`, `applied_amp`, `blocked_reason`).
 - Air-gain decoupling pass:
   - removed direct air gain scalars from active tuning (`max_air_speed`, `jump_accel`, `air_control`, `air_counter_strafe_brake`).
   - introduced two core invariants:
@@ -303,7 +340,7 @@ Completed in follow-up slice:
 
 Still pending:
 - Capture initial baseline datasets (3 runs per route) using `docs/gameplay-baseline-checklist.md`.
-- Start Phase 1 camera pipeline pass (bounded FOV + landing response) behind explicit tuning params.
+- Continue Phase 1 camera pass with optional audio/VFX event cues and final balancing of feedback gains.
 - Start Phase 2 movement stability pass (step/slope/ground-air transitions) against baseline metrics.
 - Reintroduce dash as a separate movement mode after the current invariant baseline pass; keep slide as non-boost hold-based momentum preservation.
 
@@ -318,7 +355,7 @@ Still pending:
 2. Start Phase 1 camera pipeline pass behind explicit tuning params.
 
 ## Rehaul Board Snapshot
-- Overall status: `Phase 0 active`, `Phase 1 ready-to-start after baselines`.
+- Overall status: `Phase 0 active`, `Phase 1 active` (camera invariant pass in progress).
 - What is complete:
   - feel-metrics overlay in gameplay (`F2`)
   - replay data expansion (v3 frames with movement/camera/state telemetry + raw held inputs)
@@ -327,9 +364,13 @@ Still pending:
   - replay telemetry export summaries with landing/camera metrics
   - replay comparator utility (latest vs previous deltas)
   - in-game Feel Session export/compare/feedback loop
+  - camera invariant surface compacted (`camera_base_fov`, `camera_speed_fov_max_add`, `camera_tilt_gain`, `camera_event_gain`)
+  - camera event feedback unified under one shared envelope/gain path
+  - debug numeric controls switched to real-unit values (no normalized 0..100)
 - What is next:
   - baseline capture pack for Route A/B/C (3 runs each)
-  - camera smoothing/FOV response slice with measurable before/after
+  - camera balancing pass on top of compact invariants using route telemetry exports
+  - optional camera audio/VFX cues once baseline camera tuning stabilizes
 - Why this sequence matters:
   - we now have objective data and deterministic replays before camera/movement retuning
   - every future tuning slice can be validated against the same recorded inputs

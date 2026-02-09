@@ -37,6 +37,7 @@ See: `docs/ui-kit.md`.
   - Computes gentle motion-relative tilt targets and smooths them with a snappy exponential response.
   - Applies visual roll/pitch offsets only; simulation authority remains in movement solver/controller.
 - `apps/ivan/src/ivan/game/camera_height_observer.py`: read-only eye-height smoothing observer (slide/vault transitions)
+- `apps/ivan/src/ivan/game/camera_feedback_observer.py`: read-only movement feedback observer (speed FOV + unified event envelope for landing/bhop pulses)
 - `apps/ivan/src/ivan/game/animation_observer.py`: read-only visual offset observer (camera bob/root-motion layer)
   - `apps/ivan/src/ivan/game/menu_flow.py`: main menu controller + import worker glue
   - `apps/ivan/src/ivan/game/grapple_rope.py`: grapple rope rendering helper
@@ -57,9 +58,10 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/physics/player_controller_surf.py`: Air/surf behavior mixin (air steer, surf redirect, wall/surf contact probes)
 - `apps/ivan/src/ivan/physics/player_controller_collision.py`: Collision and step-slide mixin (sweep, snap, graybox fallback)
 - `apps/ivan/src/ivan/physics/collision_world.py`: Bullet collision query world (convex sweeps against static geometry)
-- `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (CS-style grouped boxes, collapsible sections, scrollable content, normalized sliders, profile dropdown/save)
+- `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (CS-style grouped boxes, collapsible sections, scrollable content, real-unit sliders/entries, profile dropdown/save)
 - `apps/ivan/src/ivan/ui/main_menu.py`: main menu controller (bundle list + import flow + video settings)
 - `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game ESC menu (Resume/Map Selector/Key Bindings/Back/Quit) and keybinding controls
+  - Menu page uses a two-column action layout to keep all actions visible at gameplay resolutions.
   - Includes a Feel Session tab with route radio options (`A/B/C`), replay export, and feedback-driven tuning tweaks.
 - `apps/ivan/src/ivan/ui/replay_browser_ui.py`: in-game replay browser overlay (UI kit list menu)
 - `apps/ivan/src/ivan/ui/replay_input_ui.py`: in-game replay input HUD (UI kit panel) for recorded command visualization
@@ -159,6 +161,7 @@ See: `docs/ui-kit.md`.
   - `F2` input debug overlay includes rolling gameplay-feel telemetry (for movement/camera tuning passes).
   - Gameplay movement step supports optional noclip mode, optional autojump queueing, surf behavior on configured slanted surfaces, and grapple-rope constraint movement.
   - Grapple targeting uses collision-world ray queries (`ray_closest`) from camera center.
+  - Camera feedback effects are read-only and isolated behind compact camera invariants (`camera_feedback_enabled`, `camera_base_fov`, `camera_speed_fov_max_add`, `camera_tilt_gain`, `camera_event_gain`).
 
 ## Rendering Notes
 - Baker (paused) shares Ivan's scene builder (`ivan.world.scene.WorldScene`) to keep map preview WYSIWYG.

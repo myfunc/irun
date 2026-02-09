@@ -18,7 +18,14 @@ class PhysicsTuning:
     slide_enabled: bool = True
     harness_camera_smoothing_enabled: bool = True
     harness_animation_root_motion_enabled: bool = False
+    camera_feedback_enabled: bool = True
     character_scale_lock_enabled: bool = False
+
+    # Camera feel invariants (read-only observer; never writes gameplay velocity/state).
+    camera_base_fov: float = 96.0
+    camera_speed_fov_max_add: float = 9.0
+    camera_tilt_gain: float = 1.0
+    camera_event_gain: float = 1.0
 
     jump_height: float = 1.48
     max_ground_speed: float = 6.643

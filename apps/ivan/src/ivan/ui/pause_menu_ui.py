@@ -43,8 +43,8 @@ class PauseMenuUI:
                 pass
 
         panel_top = 0.95
-        panel_bottom = -0.70
-        panel_width = 0.88
+        panel_bottom = -0.86
+        panel_width = min(1.28, max(0.96, aspect_ratio * 0.70))
         right = aspect_ratio - 0.02
         left = right - panel_width
 
@@ -100,7 +100,7 @@ class PauseMenuUI:
             w=content_w,
             tab_h=tab_h,
             page_h=page_h,
-            labels=["Menu", "Key Bindings", "Multiplayer", "Feel Session"],
+            labels=["Menu", "Keys", "Net", "Feel"],
             active=0,
         )
 
@@ -133,18 +133,23 @@ class PauseMenuUI:
             pos=(0.0, 0, theme.pad),
             text_wordwrap=22,
         )
-        btn_h = 0.13
+        btn_h = 0.12
         btn_w = content_w
 
-        # Main page buttons (stacked).
+        # Main page buttons (2-column grid to keep everything visible on smaller windows).
         y0 = page_h - theme.pad - btn_h / 2.0
-        gap = theme.gap + 0.03
+        row_gap = theme.gap + 0.02
+        row_step = btn_h + row_gap
+        col_gap = theme.gap
+        col_w = (btn_w - col_gap) * 0.5
+        left_x = col_w * 0.5
+        right_x = col_w + col_gap + col_w * 0.5
         self._btn_resume = Button.build(
             parent=self._tabs.page(0),
             theme=theme,
-            x=btn_w / 2.0,
+            x=left_x,
             y=y0,
-            w=btn_w,
+            w=col_w,
             h=btn_h,
             label="Resume",
             on_click=on_resume,
@@ -152,9 +157,9 @@ class PauseMenuUI:
         self._btn_map_selector = Button.build(
             parent=self._tabs.page(0),
             theme=theme,
-            x=btn_w / 2.0,
-            y=y0 - gap - btn_h,
-            w=btn_w,
+            x=right_x,
+            y=y0,
+            w=col_w,
             h=btn_h,
             label="Map Selector",
             on_click=on_map_selector,
@@ -167,9 +172,9 @@ class PauseMenuUI:
         self._btn_keybindings = Button.build(
             parent=self._tabs.page(0),
             theme=theme,
-            x=btn_w / 2.0,
-            y=y0 - (gap + btn_h) * 2,
-            w=btn_w,
+            x=left_x,
+            y=y0 - row_step,
+            w=col_w,
             h=btn_h,
             label="Key Bindings",
             on_click=_open_keys,
@@ -177,9 +182,9 @@ class PauseMenuUI:
         self._btn_replays = Button.build(
             parent=self._tabs.page(0),
             theme=theme,
-            x=btn_w / 2.0,
-            y=y0 - (gap + btn_h) * 3,
-            w=btn_w,
+            x=right_x,
+            y=y0 - row_step,
+            w=col_w,
             h=btn_h,
             label="Replays",
             on_click=on_open_replays,
@@ -187,9 +192,9 @@ class PauseMenuUI:
         self._btn_multiplayer = Button.build(
             parent=self._tabs.page(0),
             theme=theme,
-            x=btn_w / 2.0,
-            y=y0 - (gap + btn_h) * 4,
-            w=btn_w,
+            x=left_x,
+            y=y0 - row_step * 2.0,
+            w=col_w,
             h=btn_h,
             label="Multiplayer",
             on_click=self.show_multiplayer,
@@ -197,9 +202,9 @@ class PauseMenuUI:
         self._btn_feel = Button.build(
             parent=self._tabs.page(0),
             theme=theme,
-            x=btn_w / 2.0,
-            y=y0 - (gap + btn_h) * 5,
-            w=btn_w,
+            x=right_x,
+            y=y0 - row_step * 2.0,
+            w=col_w,
             h=btn_h,
             label="Feel Session",
             on_click=lambda: (on_open_feel_session(), self.show_feel_session()),
@@ -207,9 +212,9 @@ class PauseMenuUI:
         self._btn_back_to_menu = Button.build(
             parent=self._tabs.page(0),
             theme=theme,
-            x=btn_w / 2.0,
-            y=y0 - (gap + btn_h) * 6,
-            w=btn_w,
+            x=left_x,
+            y=y0 - row_step * 3.0,
+            w=col_w,
             h=btn_h,
             label="Back to Main Menu",
             on_click=on_back_to_menu,
@@ -217,20 +222,22 @@ class PauseMenuUI:
         self._btn_quit = Button.build(
             parent=self._tabs.page(0),
             theme=theme,
-            x=btn_w / 2.0,
-            y=y0 - (gap + btn_h) * 7,
-            w=btn_w,
+            x=right_x,
+            y=y0 - row_step * 3.0,
+            w=col_w,
             h=btn_h,
             label="Quit",
             on_click=on_quit,
         )
+        open_network_h = btn_h * 0.55
+        open_network_y = max(theme.pad + open_network_h / 2.0, y0 - row_step * 4.0)
         self._open_network_checkbox = Checkbox.build(
             parent=self._tabs.page(0),
             theme=theme,
             x=btn_w / 2.0,
-            y=max(theme.pad + 0.06, y0 - (gap + btn_h) * 7.7),
+            y=open_network_y,
             w=btn_w,
-            h=btn_h * 0.55,
+            h=open_network_h,
             label="Open To Network",
             checked=False,
             on_change=lambda checked: on_toggle_open_network(bool(checked)),

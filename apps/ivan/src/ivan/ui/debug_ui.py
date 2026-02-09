@@ -346,9 +346,9 @@ class DebugUI:
                 minimum=low,
                 maximum=high,
                 on_change=lambda val, f=field: self._set_tuning_from_ui(f, float(val)),
-                normalized_slider=True,
-                normalized_entry=True,
-                precision=3 if high <= 3.0 else 2,
+                normalized_slider=False,
+                normalized_entry=False,
+                precision=self._precision_for_range(low=low, high=high),
             )
             numeric[field] = ctrl
             tip = self.FIELD_HELP.get(field)
@@ -470,6 +470,17 @@ class DebugUI:
         if field in self.FIELD_LABELS:
             return self.FIELD_LABELS[field]
         return field.replace("_", " ")
+
+    @staticmethod
+    def _precision_for_range(*, low: float, high: float) -> int:
+        span = abs(float(high) - float(low))
+        if span <= 0.5:
+            return 4
+        if span <= 4.0:
+            return 3
+        if span <= 40.0:
+            return 2
+        return 1
 
     def _on_profile_select_click(self, name: str) -> None:
         self._on_profile_select(str(name))
