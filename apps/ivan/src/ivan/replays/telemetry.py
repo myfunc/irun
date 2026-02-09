@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -282,6 +283,8 @@ def export_replay_telemetry(
     *,
     replay_path: Path,
     out_dir: Path | None = None,
+    route_tag: str | None = None,
+    comment: str | None = None,
 ) -> ReplayTelemetryExport:
     src = Path(replay_path).expanduser().resolve()
     rec = load_replay(src)
@@ -331,6 +334,27 @@ def export_replay_telemetry(
             writer.writerow(row)
 
     summary = _summary(rec)
+    now = float(time.time())
+    tag = str(route_tag).strip() if isinstance(route_tag, str) and str(route_tag).strip() else None
+    note = str(comment).strip() if isinstance(comment, str) and str(comment).strip() else None
+    history: list[dict[str, Any]] = []
+    if summary_path.exists():
+        try:
+            prev = json.loads(summary_path.read_text(encoding="utf-8"))
+            if isinstance(prev, dict) and isinstance(prev.get("export_history"), list):
+                for row in list(prev.get("export_history") or []):
+                    if isinstance(row, dict):
+                        history.append(dict(row))
+        except Exception:
+            history = []
+    entry: dict[str, Any] = {"exported_at_unix": now}
+    if tag:
+        entry["route_tag"] = tag
+    if note:
+        entry["comment"] = note[:800]
+    history.append(entry)
+    summary["export_metadata"] = dict(entry)
+    summary["export_history"] = history[-200:]
     summary_path.write_text(json.dumps(summary, ensure_ascii=True, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
     return ReplayTelemetryExport(
@@ -342,8 +366,18 @@ def export_replay_telemetry(
     )
 
 
-def export_latest_replay_telemetry(*, out_dir: Path | None = None) -> ReplayTelemetryExport:
+def export_latest_replay_telemetry(
+    *,
+    out_dir: Path | None = None,
+    route_tag: str | None = None,
+    comment: str | None = None,
+) -> ReplayTelemetryExport:
     replays = list_replays()
     if not replays:
         raise ValueError("No replay files found")
-    return export_replay_telemetry(replay_path=replays[0], out_dir=out_dir)
+    return export_replay_telemetry(
+        replay_path=replays[0],
+        out_dir=out_dir,
+        route_tag=route_tag,
+        comment=comment,
+    )

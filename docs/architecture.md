@@ -48,6 +48,7 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/ui/replay_input_ui.py`: in-game replay input HUD (UI kit panel) for recorded command visualization
 - `apps/ivan/src/ivan/replays/demo.py`: input-demo storage (record/save/load/list) using repository-local storage under `apps/ivan/replays/`
 - `apps/ivan/src/ivan/replays/telemetry.py`: replay telemetry export pipeline (CSV tick dump + JSON summary metrics)
+  - Export summary keeps append-only export metadata history (route tags + feel comments) per replay summary file.
 - `apps/ivan/src/ivan/replays/compare.py`: replay comparison pipeline (auto-export latest+previous and produce metric/tuning deltas)
 - `apps/ivan/src/ivan/game/feel_feedback.py`: rule-based free-text feedback interpreter for tuning suggestions
 - `apps/ivan/src/ivan/net/server.py`: authoritative multiplayer server loop (TCP bootstrap + UDP input/snapshots)
