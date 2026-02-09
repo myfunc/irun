@@ -59,13 +59,22 @@ class PlayerControllerActionsMixin:
                 view_h.normalize()
             else:
                 view_h = LVector3f(forward)
-            # Keep a guaranteed peel-away component from the wall while biasing jump direction to camera view.
-            jump_dir = view_h * 0.72 + away * 0.28
+            # Keep view-biased wallrun jumps, but guarantee a stronger peel-away distance from the wall.
+            jump_dir = view_h * 0.62 + away * 0.38
             if jump_dir.lengthSquared() > 1e-12:
                 jump_dir.normalize()
             else:
                 jump_dir = LVector3f(away)
             boost = jump_dir * wjb
+            min_away_speed = wjb * 0.34
+            away_speed = float(boost.dot(away))
+            if away_speed < min_away_speed:
+                boost += away * (min_away_speed - away_speed)
+            # Cap overshoot after enforcing minimum peel-away so walljump feel remains stable.
+            boost_len = math.sqrt(float(boost.x) * float(boost.x) + float(boost.y) * float(boost.y))
+            max_boost_len = wjb * 1.15
+            if boost_len > max_boost_len and boost_len > 1e-9:
+                boost *= max_boost_len / boost_len
         else:
             boost = away * wjb + forward * (wjb * 0.45)
         self._set_horizontal_velocity(
@@ -325,6 +334,9 @@ class PlayerControllerActionsMixin:
         return float((start + (end - start) * frac).z)
 
     def _apply_vault(self, *, yaw_deg: float, edge_z: float | None = None) -> None:
+        pre_hx = float(self.vel.x)
+        pre_hy = float(self.vel.y)
+        pre_hspeed = math.sqrt(pre_hx * pre_hx + pre_hy * pre_hy)
         h_rad = math.radians(float(yaw_deg))
         cam_forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0)
         if cam_forward.lengthSquared() > 1e-12:
@@ -342,8 +354,11 @@ class PlayerControllerActionsMixin:
             else:
                 forward = LVector3f(wall_in)
 
+        height_boost = max(0.0, float(self.tuning.vault_height_boost))
+        vault_up_scale = 0.48 + min(0.35, height_boost * 0.22)
+        vault_up = self._jump_up_speed() * float(self.tuning.vault_jump_multiplier) * vault_up_scale
         self._set_vertical_velocity(
-            max(float(self.vel.z), self._jump_up_speed() * float(self.tuning.vault_jump_multiplier)),
+            max(float(self.vel.z), float(vault_up)),
             source=MotionWriteSource.IMPULSE,
             reason="vault.vertical",
         )
@@ -354,29 +369,49 @@ class PlayerControllerActionsMixin:
         )
         # Queue a short mantle assist so vault clears the edge smoothly instead of teleporting.
         if edge_z is not None:
-            pop_z = max(0.14, min(0.42, float(self.tuning.jump_height) * 0.20))
-            target_center_z = float(edge_z) + float(self.player_half.z) + 0.03 + pop_z
+            pop_z = max(0.04, min(0.30, 0.06 + height_boost * 0.55))
+            target_center_z = float(edge_z) + float(self.player_half.z) + 0.02 + pop_z
             dz = max(0.0, target_center_z - float(self.pos.z))
         else:
-            dz = max(0.0, float(self.player_half.z) * 0.10)
-        mantle_forward = LVector3f(forward.x, forward.y, 0.0) * max(0.28, float(self.player_half.x) * 1.95)
+            dz = max(0.0, min(0.24, float(self.player_half.z) * 0.04 + height_boost * 0.20))
+        mantle_forward = LVector3f(forward.x, forward.y, 0.0) * max(0.42, float(self.player_half.x) * 2.45)
         mantle_delta = LVector3f(0.0, 0.0, max(0.0, float(dz))) + LVector3f(mantle_forward)
-        self._queue_vault_assist(delta=mantle_delta, duration=0.24, vertical_first=True)
+        self._queue_vault_assist(delta=mantle_delta, duration=0.32, vertical_first=True)
 
-        max_vault_hspeed = float(self._motion_solver.air_speed(speed_scale=1.0)) * 1.6
-        hspeed = math.sqrt(self.vel.x * self.vel.x + self.vel.y * self.vel.y)
+        # Preserve carried horizontal momentum across vault and add only a modest forward gain.
+        hspeed = math.sqrt(float(self.vel.x) * float(self.vel.x) + float(self.vel.y) * float(self.vel.y))
+        min_gain = min(0.45, max(0.12, float(self.tuning.vault_forward_boost) * 0.35))
+        min_post_hspeed = pre_hspeed + min_gain
+        if hspeed < min_post_hspeed and hspeed > 1e-9:
+            s = min_post_hspeed / hspeed
+            self._set_horizontal_velocity(
+                x=float(self.vel.x) * s,
+                y=float(self.vel.y) * s,
+                source=MotionWriteSource.SOLVER,
+                reason="vault.hspeed_preserve",
+            )
+            hspeed = min_post_hspeed
+        max_vault_hspeed = max(
+            pre_hspeed + max(0.70, float(self.tuning.vault_forward_boost) * 0.95),
+            float(self._motion_solver.air_speed(speed_scale=1.0)) * 2.6,
+        )
         if hspeed > max_vault_hspeed and hspeed > 1e-9:
             s = max_vault_hspeed / hspeed
             self._set_horizontal_velocity(
                 x=float(self.vel.x) * s,
                 y=float(self.vel.y) * s,
                 source=MotionWriteSource.SOLVER,
-                reason="vault.hspeed_cap",
+                reason="vault.hspeed_soft_cap",
             )
 
         self._vault_cooldown_timer = 0.0
         self._vault_camera_timer = self._vault_camera_duration()
         self._vault_exit_airborne_pending = True
+        self._vault_collision_ignore_timer = 0.12
+        self._vault_collision_ignore_normal = LVector3f(self._wall_normal.x, self._wall_normal.y, 0.0)
+        if self._vault_collision_ignore_normal.lengthSquared() > 1e-12:
+            self._vault_collision_ignore_normal.normalize()
+        self._vault_collision_ignore_point = LVector3f(self._wall_contact_point)
         self.grounded = False
         self._wall_contact_timer = 999.0
         self._wall_normal = LVector3f(0, 0, 0)
@@ -386,6 +421,9 @@ class PlayerControllerActionsMixin:
 
     def _safe_translate(self, delta: LVector3f) -> None:
         if delta.lengthSquared() <= 1e-12:
+            return
+        if self._is_vault_collision_paused():
+            self._vault_pause_translate(delta)
             return
         if self.collision is None:
             self.pos += delta
@@ -406,7 +444,7 @@ class PlayerControllerActionsMixin:
             return
         dur = max(1e-3, float(duration))
         # Apply a tiny immediate nudge for responsiveness, then smooth the rest.
-        instant = total * 0.06
+        instant = total * 0.04
         self._safe_translate(instant)
         remain = total - instant
         if remain.lengthSquared() <= 1e-12:
@@ -414,14 +452,16 @@ class PlayerControllerActionsMixin:
             self._vault_assist_vel = LVector3f(0, 0, 0)
             return
 
+        self._vault_collision_pause_timer = max(float(self._vault_collision_pause_timer), dur + 0.06)
+
         if vertical_first:
             up = LVector3f(0.0, 0.0, max(0.0, float(remain.z)))
             planar = LVector3f(float(remain.x), float(remain.y), min(0.0, float(remain.z)))
             up_len = float(up.length())
             planar_len = float(planar.length())
             if up_len > 1e-6 and planar_len > 1e-6:
-                self._vault_assist_queue.append((up, dur * 0.60))
-                self._vault_assist_queue.append((planar, dur * 0.40))
+                self._vault_assist_queue.append((up, dur * 0.42))
+                self._vault_assist_queue.append((planar, dur * 0.58))
             elif up_len > 1e-6:
                 self._vault_assist_queue.append((up, dur))
             elif planar_len > 1e-6:

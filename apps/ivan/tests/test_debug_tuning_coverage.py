@@ -26,6 +26,7 @@ def test_debug_ui_exposes_curated_invariant_first_controls() -> None:
     assert "slide_stop_t90" in covered
     assert "grace_period" in covered
     assert "vault_max_ledge_height" in covered
+    assert "vault_height_boost" in covered
     assert "vault_forward_boost" in covered
     assert "player_half_height" in covered
     assert "slide_enabled" in covered

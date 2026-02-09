@@ -250,6 +250,7 @@ Completed in follow-up slice:
   - `wallrun_enabled` is restored in the compact debug surface for live iteration.
   - camera now applies slight roll tilt away from the wall while wallrun is active (read-only observer effect).
   - wallrun jump now biases launch direction toward camera forward heading while retaining wall peel-away behavior.
+  - wallrun jump now guarantees a minimum opposite-wall horizontal component so wallrun exits gain consistent peel-away distance.
   - wallrun descent now uses invariant timing (`wallrun_sink_t90`) via solver response instead of per-feature velocity clamps.
 - Camera animation responsiveness pass:
   - introduced `camera_tilt_observer.py` as a read-only camera animation layer.
@@ -274,9 +275,13 @@ Completed in follow-up slice:
   - this preserves current feel safety while allowing better consistency across slow/fast movement contexts.
 - Vault ceiling + camera/exit polish:
   - vault max obstacle height cap increased to `3x` previous cap (slider range raised to `7.5`).
+  - added `vault_height_boost` slider for explicit vault vertical tuning without re-coupling jump invariants.
   - vault camera pitch now follows a smooth dip/recover envelope (no instant snap on start frame).
   - vault completion now applies a small guaranteed airborne pop to keep combo flow after mantle.
   - airborne jump buffering can now convert to vault on late wall contact while still within grace.
+  - vault horizontal handling now preserves carried speed and applies only a small additive forward gain (no hard reset toward low caps).
+  - vault vertical impulse and exit pop were reduced, and mantle assist timing is slower + more forward-weighted for less teleport-like upward motion.
+  - vault assist now temporarily relaxes only the active vaulted-obstacle collision plane to prevent snagging, while still honoring new blocker collisions ahead.
 - Unified command ingestion via motion intent:
   - both client sim tick and authoritative server tick now call `PlayerController.step_with_intent(...)`.
   - jump/slide/wish direction are routed through one intent contract before solver/collision.
