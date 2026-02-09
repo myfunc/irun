@@ -150,7 +150,7 @@ class MultiplayerServer:
             {
                 "surf_enabled": True,
                 "autojump_enabled": True,
-                "enable_jump_buffer": True,
+                "coyote_buffer_enabled": True,
                 "jump_height": 1.0108081703186036,
                 "jump_apex_time": 0.22585349306495618,
                 "max_ground_speed": 6.622355737686157,
@@ -160,7 +160,7 @@ class MultiplayerServer:
                 "air_gain_t90": 0.9 / 31.738659286499026,
                 "wallrun_sink_t90": 0.22,
                 "mouse_sensitivity": 0.09978364143371583,
-                "jump_buffer_time": 0.2329816741943359,
+                "grace_period": 0.2329816741943359,
                 "wall_jump_cooldown": 0.9972748947143555,
                 "surf_accel": 23.521632385253906,
                 "surf_gravity_scale": 0.33837084770202636,

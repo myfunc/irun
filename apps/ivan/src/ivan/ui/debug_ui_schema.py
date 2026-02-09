@@ -10,9 +10,11 @@ NUMERIC_CONTROLS: list[tuple[str, float, float]] = [
     ("wallrun_sink_t90", 0.03, 1.20),
     ("jump_height", 0.2, 4.0),
     ("jump_apex_time", 0.08, 1.20),
-    ("jump_buffer_time", 0.0, 0.35),
-    ("coyote_time", 0.0, 0.35),
+    ("grace_period", 0.0, 0.35),
     ("slide_stop_t90", 0.10, 8.00),
+    ("vault_max_ledge_height", 0.40, 7.50),
+    ("vault_forward_boost", 0.00, 4.00),
+    ("player_half_height", 0.70, 1.60),
 ]
 
 TOGGLE_CONTROLS: list[str] = [
@@ -20,9 +22,11 @@ TOGGLE_CONTROLS: list[str] = [
     "coyote_buffer_enabled",
     "custom_friction_enabled",
     "slide_enabled",
+    "vault_enabled",
     "wallrun_enabled",
     "harness_camera_smoothing_enabled",
     "harness_animation_root_motion_enabled",
+    "character_scale_lock_enabled",
     "surf_enabled",
 ]
 
@@ -38,14 +42,16 @@ GROUPS: list[tuple[str, list[str], list[str]]] = [
             "wallrun_sink_t90",
             "jump_height",
             "jump_apex_time",
-            "jump_buffer_time",
-            "coyote_time",
+            "grace_period",
             "slide_stop_t90",
+            "vault_max_ledge_height",
+            "vault_forward_boost",
         ],
         [
             "autojump_enabled",
             "coyote_buffer_enabled",
             "slide_enabled",
+            "vault_enabled",
             "custom_friction_enabled",
             "wallrun_enabled",
         ],
@@ -63,6 +69,15 @@ GROUPS: list[tuple[str, list[str], list[str]]] = [
             "harness_animation_root_motion_enabled",
         ],
     ),
+    (
+        "Character",
+        [
+            "player_half_height",
+        ],
+        [
+            "character_scale_lock_enabled",
+        ],
+    ),
 ]
 
 FIELD_LABELS: dict[str, str] = {
@@ -74,9 +89,11 @@ FIELD_LABELS: dict[str, str] = {
     "wallrun_sink_t90": "wallrun sink time to 90%",
     "jump_height": "jump height",
     "jump_apex_time": "jump apex time",
-    "jump_buffer_time": "input buffer",
-    "coyote_time": "coyote time",
+    "grace_period": "grace period",
     "slide_stop_t90": "slide stop time to 90%",
+    "vault_max_ledge_height": "vault max obstacle height",
+    "vault_forward_boost": "vault speed boost",
+    "player_half_height": "player half height",
 }
 
 FIELD_HELP: dict[str, str] = {
@@ -88,13 +105,17 @@ FIELD_HELP: dict[str, str] = {
     "wallrun_sink_t90": "Lower: wallrun vertical sink stabilizes faster. Higher: slower sink response and floatier wallrun.",
     "jump_height": "Lower: shorter hop height. Higher: higher jump apex.",
     "jump_apex_time": "Lower: shorter time to jump apex (snappier pop). Higher: longer float to apex.",
-    "jump_buffer_time": "Lower: tighter jump timing before landing. Higher: more forgiving early jump presses.",
-    "coyote_time": "Lower: less late-jump forgiveness after leaving ground. Higher: more forgiving coyote window.",
+    "grace_period": "Lower: tighter shared leniency distance for jump buffer/coyote/vault timing. Higher: wider distance-derived grace window (time scales from speed, but never below base).",
     "slide_stop_t90": "Lower: slide momentum bleeds faster on ground. Higher: slide preserves carried speed longer before decelerating.",
+    "vault_max_ledge_height": "Lower: only low obstacles can be vaulted. Higher: taller obstacles remain vaultable (up to 3x previous height cap).",
+    "vault_forward_boost": "Lower: weaker forward carry when vault triggers. Higher: stronger forward push while vaulting.",
+    "player_half_height": "Lower: shorter player hull. Higher: taller player hull; eye height auto-scales to keep camera proportion.",
     "autojump_enabled": "Lower (OFF): jump requires press timing each hop. Higher (ON): holding jump auto-queues grounded hops.",
     "coyote_buffer_enabled": "Lower (OFF): disable coyote + buffered leniency windows. Higher (ON): enable forgiving jump windows.",
     "custom_friction_enabled": "Lower (OFF): skip custom ground friction for isolation tests. Higher (ON): use normal friction model.",
     "slide_enabled": "Lower (OFF): shift slide action disabled. Higher (ON): shift engages powerslide with low profile hull.",
+    "vault_enabled": "Lower (OFF): disable vault trigger checks. Higher (ON): jump near front ledges can convert into vault clearance.",
+    "character_scale_lock_enabled": "Lower (OFF): radius/step stay independent. Higher (ON): radius+step auto-derive from player half height.",
     "wallrun_enabled": "Lower (OFF): wallrun behavior disabled. Higher (ON): run along valid wall contacts with camera tilt + wallrun jump behavior.",
     "surf_enabled": "Lower (OFF): disable surf behavior entirely. Higher (ON): enable surf logic on surfable ramp normals.",
     "harness_camera_smoothing_enabled": "Lower (OFF): disable camera smoothing in harness mode. Higher (ON): enable camera smoothing.",

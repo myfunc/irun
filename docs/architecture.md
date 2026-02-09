@@ -33,10 +33,11 @@ See: `docs/ui-kit.md`.
   - `apps/ivan/src/ivan/game/determinism.py`: per-tick quantized state hashing + rolling determinism trace buffer
 - `apps/ivan/src/ivan/game/camera_observer.py`: read-only camera smoothing observer over solved simulation state
   - Also smooths read-only camera roll targets (used for wallrun engagement tilt) without mutating simulation.
- - `apps/ivan/src/ivan/game/camera_tilt_observer.py`: read-only movement/wallrun camera tilt observer
+- `apps/ivan/src/ivan/game/camera_tilt_observer.py`: read-only movement/wallrun camera tilt observer
   - Computes gentle motion-relative tilt targets and smooths them with a snappy exponential response.
   - Applies visual roll/pitch offsets only; simulation authority remains in movement solver/controller.
-  - `apps/ivan/src/ivan/game/animation_observer.py`: read-only visual offset observer (camera bob/root-motion layer)
+- `apps/ivan/src/ivan/game/camera_height_observer.py`: read-only eye-height smoothing observer (slide/vault transitions)
+- `apps/ivan/src/ivan/game/animation_observer.py`: read-only visual offset observer (camera bob/root-motion layer)
   - `apps/ivan/src/ivan/game/menu_flow.py`: main menu controller + import worker glue
   - `apps/ivan/src/ivan/game/grapple_rope.py`: grapple rope rendering helper
   - `apps/ivan/src/ivan/game/feel_metrics.py`: rolling gameplay-feel telemetry (jump/landing/ground flicker/camera jerk proxies)
@@ -94,6 +95,8 @@ See: `docs/ui-kit.md`.
   - `PlayerController` now uses `MotionSolver` for derived ground run, ground coasting damping, jump takeoff speed, air gain/cap, wallrun sink response, and gravity
   - gameplay and authoritative server ticks now feed movement through `MotionIntent` (`step_with_intent`) instead of ad-hoc feature velocity calls
   - slide invariant (`slide_stop_t90`) derives grounded slide speed decay; slide is hold-driven, preserves carried speed, and owns low-profile hull state while active
+  - shared leniency invariant (`grace_period`) drives jump buffer, coyote window, and vault grace checks from one slider, with runtime distance-derivation (`grace_distance = grace_period * Vmax`) for speed-aware grace timing
+  - optional character scale lock derives geometry-facing values (`player_radius`, `step_height`) from `player_half_height` while keeping motion feel invariants independent
   - debug tuning UI is intentionally narrow: invariant-first controls plus harness isolation toggles (legacy direct scalars and niche sliders are hidden)
   - legacy direct run/gravity tuning fields are migrated to invariants and no longer part of active tuning schema
   - legacy air gain scalars are migrated (`max_air_speed`, `jump_accel`, `air_control`, `air_counter_strafe_brake`) and removed from active tuning schema

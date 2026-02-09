@@ -20,9 +20,10 @@ def _make_controller(tuning: PhysicsTuning) -> PlayerController:
 
 
 class _FakeHit:
-    def __init__(self, has_hit: bool, normal: LVector3f) -> None:
+    def __init__(self, has_hit: bool, normal: LVector3f, hit_pos: LVector3f | None = None) -> None:
         self._has_hit = has_hit
         self._normal = LVector3f(normal)
+        self._hit_pos = LVector3f(hit_pos) if hit_pos is not None else None
 
     def hasHit(self) -> bool:
         return self._has_hit
@@ -33,6 +34,11 @@ class _FakeHit:
     def getHitFraction(self) -> float:
         return 0.5
 
+    def getHitPos(self) -> LVector3f:
+        if self._hit_pos is None:
+            return LVector3f(0.0, 0.0, 0.0)
+        return LVector3f(self._hit_pos)
+
 
 class _FakeCollision:
     def update_player_sweep_shape(self, *, player_radius: float, player_half_height: float) -> None:
@@ -41,8 +47,25 @@ class _FakeCollision:
     def sweep_closest(self, from_pos: LVector3f, to_pos: LVector3f):
         d = LVector3f(to_pos - from_pos)
         if abs(d.x) > 0.001 or abs(d.y) > 0.001:
-            return _FakeHit(True, LVector3f(-1.0, 0.0, 0.0))
+            return _FakeHit(True, LVector3f(-1.0, 0.0, 0.0), LVector3f(to_pos))
         return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
+
+
+class _FakeRayCollision:
+    def __init__(self, *, normal: LVector3f, hit_pos: LVector3f) -> None:
+        self._normal = LVector3f(normal)
+        self._hit_pos = LVector3f(hit_pos)
+
+    def update_player_sweep_shape(self, *, player_radius: float, player_half_height: float) -> None:
+        _ = player_radius, player_half_height
+
+    def sweep_closest(self, from_pos: LVector3f, to_pos: LVector3f):
+        _ = from_pos, to_pos
+        return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
+
+    def ray_closest(self, from_pos: LVector3f, to_pos: LVector3f):
+        _ = from_pos, to_pos
+        return _FakeHit(True, self._normal, self._hit_pos)
 
 
 def test_all_numeric_debug_controls_exist_have_tooltips_and_are_wired() -> None:
@@ -237,7 +260,7 @@ def test_wallrun_jump_biases_to_camera_forward_direction() -> None:
         walljump_enabled=True,
         wall_jump_cooldown=0.0,
         wall_jump_boost=7.5,
-        enable_jump_buffer=False,
+        coyote_buffer_enabled=False,
     )
     ctrl = _make_controller(tuning)
     ctrl.grounded = False
@@ -333,10 +356,85 @@ def test_walljump_not_allowed_while_grounded_even_with_wall_contact() -> None:
     assert not ctrl.has_wall_for_jump()
 
 
+def test_vault_front_check_requires_facing_wall() -> None:
+    ctrl = _make_controller(PhysicsTuning(vault_enabled=True))
+    ctrl._wall_normal = LVector3f(0.0, 1.0, 0.0)
+    assert not ctrl._is_vault_wall_in_front(yaw_deg=0.0)
+
+    ctrl._wall_normal = LVector3f(0.0, -1.0, 0.0)
+    assert ctrl._is_vault_wall_in_front(yaw_deg=0.0)
+
+
+def test_find_vault_edge_height_uses_walkable_ray_hits() -> None:
+    ctrl = PlayerController(
+        tuning=PhysicsTuning(vault_enabled=True),
+        spawn_point=LVector3f(0, 0, 3),
+        aabbs=[],
+        collision=_FakeRayCollision(
+            normal=LVector3f(0.0, 0.0, 1.0),
+            hit_pos=LVector3f(0.0, 0.0, 2.55),
+        ),
+    )
+    ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
+
+    edge = ctrl._find_vault_edge_height(yaw_deg=0.0)
+    assert edge is not None
+    assert abs(float(edge) - 2.55) < 1e-5
+
+
+def test_apply_vault_adds_up_and_forward_clearance() -> None:
+    ctrl = _make_controller(PhysicsTuning(vault_enabled=True, vault_forward_boost=1.0))
+    ctrl.pos = LVector3f(0.0, 0.0, 3.0)
+    ctrl.vel = LVector3f(0.0, 0.0, 0.0)
+
+    ctrl._apply_vault(yaw_deg=0.0)
+    assert ctrl._vault_assist_timer > 0.0
+    start_pos = LVector3f(ctrl.pos)
+    ctrl.step(dt=0.06, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+    assert ctrl.pos.y > start_pos.y
+    assert ctrl.pos.z > start_pos.z
+    assert ctrl.vel.y > 0.0
+    assert ctrl.vel.z > 0.0
+
+
+def test_vault_height_cap_allows_taller_obstacles_than_previous_limit() -> None:
+    ctrl = PlayerController(
+        tuning=PhysicsTuning(vault_enabled=True, vault_max_ledge_height=7.5),
+        spawn_point=LVector3f(0, 0, 3),
+        aabbs=[],
+        collision=_FakeRayCollision(
+            normal=LVector3f(0.0, 0.0, 1.0),
+            hit_pos=LVector3f(0.0, 0.0, 5.60),
+        ),
+    )
+    ctrl.grounded = False
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(0.0, -1.0, 0.0)
+    ctrl._wall_contact_point = LVector3f(0.0, 0.0, 2.2)
+
+    assert ctrl._try_vault(yaw_deg=0.0)
+    assert ctrl.vault_debug_status().startswith("vault ok:")
+
+
+def test_vault_camera_pitch_curve_is_smooth_not_instant_snap() -> None:
+    ctrl = _make_controller(PhysicsTuning(vault_enabled=True))
+    duration = float(ctrl._vault_camera_duration())
+    ctrl._vault_camera_timer = duration
+    start_pitch = float(ctrl.vault_camera_pitch_deg())
+    ctrl._vault_camera_timer = duration * 0.5
+    mid_pitch = float(ctrl.vault_camera_pitch_deg())
+    ctrl._vault_camera_timer = 0.0
+    end_pitch = float(ctrl.vault_camera_pitch_deg())
+
+    assert abs(start_pitch) < 1e-6
+    assert mid_pitch < -0.5
+    assert abs(end_pitch) < 1e-6
+
+
 def test_coyote_jump_window_allows_late_jump_when_enabled() -> None:
     tuning = PhysicsTuning(
         coyote_buffer_enabled=True,
-        coyote_time=0.12,
+        grace_period=0.12,
         jump_height=1.2,
         jump_apex_time=0.30,
     )
@@ -350,6 +448,63 @@ def test_coyote_jump_window_allows_late_jump_when_enabled() -> None:
 
     ctrl.queue_jump()
     ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+    assert ctrl.vel.z > 0.0
+
+
+def test_airborne_jump_buffer_can_convert_to_vault_on_late_wall_contact() -> None:
+    ctrl = PlayerController(
+        tuning=PhysicsTuning(
+            vault_enabled=True,
+            coyote_buffer_enabled=True,
+            grace_period=0.12,
+            walljump_enabled=False,
+        ),
+        spawn_point=LVector3f(0, 0, 3),
+        aabbs=[],
+        collision=_FakeRayCollision(
+            normal=LVector3f(0.0, 0.0, 1.0),
+            hit_pos=LVector3f(0.0, 0.0, 2.55),
+        ),
+    )
+    ctrl.grounded = False
+    ctrl._wall_contact_timer = 999.0
+    ctrl._wall_normal = LVector3f(0.0, 0.0, 0.0)
+
+    ctrl.queue_jump()
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+    assert ctrl.vault_debug_status().startswith("vault fail:")
+
+    # Late wall contact should still consume the same buffered jump as a vault.
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(0.0, -1.0, 0.0)
+    ctrl._wall_contact_point = LVector3f(0.0, 0.0, 2.2)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+    assert ctrl.vault_debug_status().startswith("vault ok:")
+
+
+def test_airborne_vault_can_trigger_without_coyote_window() -> None:
+    ctrl = PlayerController(
+        tuning=PhysicsTuning(
+            vault_enabled=True,
+            coyote_buffer_enabled=False,
+            walljump_enabled=False,
+        ),
+        spawn_point=LVector3f(0, 0, 3),
+        aabbs=[],
+        collision=_FakeRayCollision(
+            normal=LVector3f(0.0, 0.0, 1.0),
+            hit_pos=LVector3f(0.0, 0.0, 2.55),
+        ),
+    )
+    ctrl.grounded = False
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(0.0, -1.0, 0.0)
+    ctrl._wall_contact_point = LVector3f(0.0, 0.0, 2.2)
+
+    ctrl.queue_jump()
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+
+    assert ctrl.vault_debug_status().startswith("vault ok:")
     assert ctrl.vel.z > 0.0
 
 
@@ -450,7 +605,7 @@ def test_ground_jump_tick_preserves_horizontal_speed() -> None:
         PhysicsTuning(
             custom_friction_enabled=True,
             ground_stop_t90=0.05,
-            enable_jump_buffer=False,
+            coyote_buffer_enabled=False,
         )
     )
     ctrl.grounded = True
@@ -470,7 +625,7 @@ def test_ground_jump_tick_preserves_horizontal_speed_with_move_input() -> None:
             run_t90=0.06,
             ground_stop_t90=0.05,
             max_ground_speed=6.0,
-            enable_jump_buffer=False,
+            coyote_buffer_enabled=False,
         )
     )
     ctrl.grounded = True
@@ -487,7 +642,7 @@ def test_corner_jump_uses_ground_jump_not_walljump() -> None:
     ctrl = _make_controller(
         PhysicsTuning(
             walljump_enabled=True,
-            enable_jump_buffer=False,
+            coyote_buffer_enabled=False,
             wall_jump_boost=7.0,
         )
     )
@@ -511,7 +666,7 @@ def test_ground_jump_does_not_reapply_in_air_on_next_frame() -> None:
             autojump_enabled=True,
             walljump_enabled=True,
             wall_jump_boost=7.0,
-            enable_jump_buffer=False,
+            coyote_buffer_enabled=False,
         )
     )
 

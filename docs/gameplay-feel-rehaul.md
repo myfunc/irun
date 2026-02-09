@@ -205,7 +205,7 @@ Completed in this slice:
   - `air_speed_mult`, `air_gain_t90`
   - `wallrun_sink_t90`
   - `slide_stop_t90`
-  - `coyote_time`
+  - `grace_period` (shared jump-buffer/coyote/vault leniency window)
 - Wired `PlayerController` to consume `MotionSolver` for:
   - ground run response (derived model)
   - ground coasting damping derived from stop timing invariant
@@ -262,6 +262,21 @@ Completed in follow-up slice:
     - `air_speed_mult` -> derived `air_speed = Vmax * air_speed_mult`
     - `air_gain_t90` -> derived `air_accel = 0.9 / air_gain_t90`
   - this keeps bhop gain behavior coupled to one speed-scale axis and one timing axis, with no hidden overlap sliders.
+- Vault reliability pass:
+  - vault can now trigger from airborne jump intents (not only grounded/coyote-like timing paths).
+  - low-obstacle "stepable" rejection is now grounded-only to preserve in-air flow vaulting.
+  - mantle assist changed to phased clearance (up then forward) with longer smoothing window to prevent "vault ok" states that fail to clear the obstacle.
+  - ledge probe now samples contact-point and player-origin columns with near/outside offsets to reduce false `no ledge top` failures.
+- Grace-window distance pass:
+  - jump-buffer/coyote/vault grace now uses one distance-derived runtime window:
+    - `grace_distance = grace_period * Vmax`
+    - effective grace time scales with horizontal speed and is clamped to never be less forgiving than the old fixed `grace_period` baseline.
+  - this preserves current feel safety while allowing better consistency across slow/fast movement contexts.
+- Vault ceiling + camera/exit polish:
+  - vault max obstacle height cap increased to `3x` previous cap (slider range raised to `7.5`).
+  - vault camera pitch now follows a smooth dip/recover envelope (no instant snap on start frame).
+  - vault completion now applies a small guaranteed airborne pop to keep combo flow after mantle.
+  - airborne jump buffering can now convert to vault on late wall contact while still within grace.
 - Unified command ingestion via motion intent:
   - both client sim tick and authoritative server tick now call `PlayerController.step_with_intent(...)`.
   - jump/slide/wish direction are routed through one intent contract before solver/collision.

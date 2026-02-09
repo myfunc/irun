@@ -92,3 +92,27 @@ def test_wallrun_sink_derivation_uses_jump_takeoff_and_t90() -> None:
 
     assert cfg.derived.wallrun_sink_speed < 0.0
     assert cfg.derived.wallrun_sink_k > 0.0
+
+
+def test_grace_distance_derives_from_period_and_vmax() -> None:
+    tuning = PhysicsTuning(
+        max_ground_speed=10.0,
+        grace_period=0.12,
+    )
+    cfg = derive_motion_config(tuning=tuning)
+    assert math.isclose(cfg.invariants.grace_distance, 1.2, rel_tol=1e-6)
+
+
+def test_distance_based_grace_time_is_backward_safe() -> None:
+    solver = MotionSolver.from_tuning(
+        tuning=PhysicsTuning(
+            max_ground_speed=8.0,
+            grace_period=0.10,
+        )
+    )
+    base = solver.grace_time_for_speed(horizontal_speed=8.0)
+    slow = solver.grace_time_for_speed(horizontal_speed=1.0)
+    fast = solver.grace_time_for_speed(horizontal_speed=20.0)
+    assert base >= 0.10
+    assert slow >= base
+    assert fast >= base

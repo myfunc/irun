@@ -15,6 +15,7 @@ Keep movement feel stable under tuning changes by exposing only a small set of d
 - Preserve carried momentum only on successful hop transitions: bypass ground run/friction on consumed ground-jump ticks, but keep normal grounded run convergence toward `Vmax`.
 - Camera and animation layers are read-only observers of solved motion.
 - Keep debug tuning compact. Add a slider only when it represents a true independent invariant.
+- If character size must be iterated, prefer an optional scale-lock path that derives geometry-facing values (`player_radius`, `step_height`, eye height) from `player_half_height` without coupling core feel invariants.
 - For wallrun UX, prefer read-only camera roll indication and camera-forward-biased wallrun jumps without adding extra scalar clutter.
 - Wallrun camera roll should recover toward neutral immediately when wallrun ends (including wallrun jump), while keeping the transition smooth and snappy.
 - When adding/refactoring movement features, remove redundant legacy scalars from active tuning and route behavior through existing invariants wherever possible.
@@ -34,8 +35,7 @@ Keep movement feel stable under tuning changes by exposing only a small set of d
 - `jump_height`
 - `jump_apex_time`
 - `slide_stop_t90`
-- `jump_buffer_time`
-- `coyote_time`
+- `grace_period` (shared jump-buffer + coyote + vault leniency)
 
 ## Derivations
 - `g = 2 * jump_height / (jump_apex_time^2)`
@@ -45,6 +45,8 @@ Keep movement feel stable under tuning changes by exposing only a small set of d
 - `air_speed = max_ground_speed * air_speed_mult`
 - `air_accel = 0.9 / air_gain_t90` (linear Quake-style air acceleration target)
 - `slide_damp_k = ln(10) / slide_stop_t90`
+- `grace_distance = grace_period * max_ground_speed`
+- runtime grace time for jump-buffer/coyote/vault should be speed-aware from `grace_distance`, but backward-safe (never less forgiving than base `grace_period`)
 
 ## Implementation checklist
 1. Put invariants and derived constants in `physics/motion/config.py`.
