@@ -16,13 +16,12 @@ class TuningAdjustment:
 
 _BOUNDS: dict[str, tuple[float, float]] = {
     "max_ground_speed": (3.0, 40.0),
-    "max_air_speed": (3.0, 45.0),
-    "ground_accel": (5.0, 140.0),
-    "jump_accel": (1.0, 140.0),
+    "run_t90": (0.03, 1.2),
+    "ground_stop_t90": (0.03, 1.2),
+    "air_speed_mult": (0.5, 4.0),
+    "air_gain_t90": (0.03, 1.2),
+    "wallrun_sink_t90": (0.03, 1.2),
     "surf_accel": (0.0, 120.0),
-    "air_control": (0.0, 1.0),
-    "air_counter_strafe_brake": (0.0, 90.0),
-    "friction": (0.0, 25.0),
     "step_height": (0.0, 1.2),
     "ground_snap_dist": (0.0, 0.6),
     "mouse_sensitivity": (0.02, 0.40),
@@ -121,23 +120,22 @@ def suggest_adjustments(
 
     if intent_speed_fast:
         set_mul("max_ground_speed", 0.95, "feedback: speed too fast")
-        set_mul("max_air_speed", 0.95, "feedback: speed too fast")
+        set_mul("air_speed_mult", 0.95, "feedback: speed too fast")
     if intent_speed_slow:
         set_mul("max_ground_speed", 1.05, "feedback: speed too slow")
-        set_mul("max_air_speed", 1.05, "feedback: speed too slow")
+        set_mul("air_speed_mult", 1.05, "feedback: speed too slow")
 
     if intent_accel_fast:
-        set_mul("ground_accel", 0.90, "feedback: acceleration too fast")
-        set_mul("jump_accel", 0.92, "feedback: acceleration too fast")
+        set_mul("run_t90", 1.08, "feedback: acceleration too fast")
+        set_mul("air_gain_t90", 1.08, "feedback: acceleration too fast")
         set_mul("surf_accel", 0.93, "feedback: acceleration too fast")
     if intent_accel_slow:
-        set_mul("ground_accel", 1.08, "feedback: acceleration too weak")
-        set_mul("jump_accel", 1.06, "feedback: acceleration too weak")
+        set_mul("run_t90", 0.93, "feedback: acceleration too weak")
+        set_mul("air_gain_t90", 0.93, "feedback: acceleration too weak")
 
     if intent_smooth:
         set_add("ground_snap_dist", +0.015, "feedback: smoothness")
         set_add("step_height", +0.030, "feedback: smoothness")
-        set_mul("air_counter_strafe_brake", 0.92, "feedback: smoothness")
         # Optional metric-aware scaling, but only when smoothness intent is present.
         if isinstance(metrics.get("ground_flicker_per_min"), (int, float)) and float(metrics["ground_flicker_per_min"]) >= 45.0:
             set_add("ground_snap_dist", +0.010, "feedback+metric: high ground flicker")
@@ -146,16 +144,16 @@ def suggest_adjustments(
             set_mul("mouse_sensitivity", 0.96, "feedback+metric: high camera jerk")
 
     if intent_landing_harsh:
-        set_mul("friction", 0.94, "feedback: landing speed loss")
-        set_mul("air_control", 1.04, "feedback: landing speed loss")
+        set_mul("ground_stop_t90", 1.07, "feedback: landing speed loss")
+        set_mul("air_gain_t90", 0.96, "feedback: landing speed loss")
         if isinstance(metrics.get("landing_speed_loss_avg"), (int, float)) and float(metrics["landing_speed_loss_avg"]) >= 1.0:
-            set_mul("friction", 0.95, "feedback+metric: landing loss confirmed")
-            set_mul("air_control", 1.03, "feedback+metric: landing loss confirmed")
+            set_mul("ground_stop_t90", 1.05, "feedback+metric: landing loss confirmed")
+            set_mul("air_gain_t90", 0.97, "feedback+metric: landing loss confirmed")
 
     if intent_air_steer_weak:
-        set_mul("air_control", 1.06, "feedback: weak air steering")
+        set_mul("air_gain_t90", 0.94, "feedback: weak air steering")
     if intent_air_steer_strong:
-        set_mul("air_control", 0.94, "feedback: too much air steering")
+        set_mul("air_gain_t90", 1.06, "feedback: too much air steering")
 
     if intent_mouse_fast:
         set_mul("mouse_sensitivity", 0.95, "feedback: look too fast")

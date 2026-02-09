@@ -6,6 +6,8 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class RunConfig:
     smoke: bool = False
+    # Boot directly into the deterministic movement feel harness map.
+    feel_harness: bool = False
     # Optional screenshot output path in smoke mode (offscreen render).
     # Useful for verifying map/material changes in CI or scripted checks.
     smoke_screenshot: str | None = None

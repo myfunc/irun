@@ -101,6 +101,7 @@ class MultiplayerClient:
             "mr": max(-1, min(1, int(cmd.get("mr") or 0))),
             "jp": bool(cmd.get("jp")),
             "jh": bool(cmd.get("jh")),
+            "dp": bool(cmd.get("dp")),
             "ch": bool(cmd.get("ch")),
             "gp": bool(cmd.get("gp")),
         }

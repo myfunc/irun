@@ -29,16 +29,32 @@ See: `docs/ui-kit.md`.
   - `apps/ivan/src/ivan/game/netcode.py`: client prediction/reconciliation + remote interpolation helpers
   - `apps/ivan/src/ivan/game/tuning_profiles.py`: tuning profile defaults + persistence helpers
   - `apps/ivan/src/ivan/game/input_system.py`: mouse/keyboard sampling + input command helpers
+  - `apps/ivan/src/ivan/game/feel_diagnostics.py`: rolling frame/tick diagnostics buffer and JSON dump utility for movement feel analysis
+  - `apps/ivan/src/ivan/game/determinism.py`: per-tick quantized state hashing + rolling determinism trace buffer
+- `apps/ivan/src/ivan/game/camera_observer.py`: read-only camera smoothing observer over solved simulation state
+  - Also smooths read-only camera roll targets (used for wallrun engagement tilt) without mutating simulation.
+ - `apps/ivan/src/ivan/game/camera_tilt_observer.py`: read-only movement/wallrun camera tilt observer
+  - Computes gentle motion-relative tilt targets and smooths them with a snappy exponential response.
+  - Applies visual roll/pitch offsets only; simulation authority remains in movement solver/controller.
+  - `apps/ivan/src/ivan/game/animation_observer.py`: read-only visual offset observer (camera bob/root-motion layer)
   - `apps/ivan/src/ivan/game/menu_flow.py`: main menu controller + import worker glue
   - `apps/ivan/src/ivan/game/grapple_rope.py`: grapple rope rendering helper
   - `apps/ivan/src/ivan/game/feel_metrics.py`: rolling gameplay-feel telemetry (jump/landing/ground flicker/camera jerk proxies)
 - `apps/ivan/src/ivan/maps/catalog.py`: runtime catalog helpers for shipped bundles and GoldSrc-like map discovery
 - `apps/ivan/src/ivan/state.py`: small persistent user state (last launched map, last game dir/mod, tuning profiles + active profile snapshot, display/video settings)
 - `apps/ivan/src/ivan/world/scene.py`: Scene building, external map-bundle loading (`--map`), spawn point/yaw
+  - Includes an optional deterministic feel-harness scene (`--feel-harness`) with flat/slope/step/wall/ledge + moving-platform fixtures.
 - `apps/ivan/src/ivan/maps/steam.py`: Steam library scanning helpers (manual Half-Life auto-detect)
 - `apps/ivan/src/ivan/maps/goldsrc_compile.py`: GoldSrc compiler resolver/helpers (`hlcsg`/`hlbsp`/`hlvis`/`hlrad`) used by TrenchBroom import flow
 - `apps/ivan/src/ivan/physics/tuning.py`: Tunable movement/physics parameters (exposed via debug/admin UI)
-- `apps/ivan/src/ivan/physics/player_controller.py`: Kinematic character controller (Quake3-style step + slide)
+- `apps/ivan/src/ivan/physics/motion/`: Invariant-based motion configuration and solver layer
+  - `config.py`: designer invariants + derived runtime constants (`MotionConfig`)
+  - `solver.py`: authority for derived run/jump/gravity/ground-damping operations
+  - `intent.py`, `state.py`: motion pipeline contracts for staged refactor
+- `apps/ivan/src/ivan/physics/player_controller.py`: Kinematic character controller orchestration (intent -> mode -> solver -> collision)
+- `apps/ivan/src/ivan/physics/player_controller_actions.py`: Player action mixin (jump variants, vault, grapple, crouch, friction)
+- `apps/ivan/src/ivan/physics/player_controller_surf.py`: Air/surf behavior mixin (air steer, surf redirect, wall/surf contact probes)
+- `apps/ivan/src/ivan/physics/player_controller_collision.py`: Collision and step-slide mixin (sweep, snap, dash sweep, graybox fallback)
 - `apps/ivan/src/ivan/physics/collision_world.py`: Bullet collision query world (convex sweeps against static geometry)
 - `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (CS-style grouped boxes, collapsible sections, scrollable content, normalized sliders, profile dropdown/save)
 - `apps/ivan/src/ivan/ui/main_menu.py`: main menu controller (bundle list + import flow + video settings)
@@ -73,6 +89,18 @@ See: `docs/ui-kit.md`.
 - Repo root helper: `./runapp ivan` (recommended for quick iteration)
 - The game loop is driven by Panda3D's task manager.
 - Movement simulation runs at a fixed `60 Hz` tick to support deterministic input replay.
+- Movement refactor rollout is staged:
+  - active movement tuning is invariant-first: run, stop damping, jump, air gain/cap, wallrun sink, and dash are derived from timing/target invariants
+  - `PlayerController` now uses `MotionSolver` for derived ground run, ground coasting damping, jump takeoff speed, air gain/cap, wallrun sink response, and gravity
+  - gameplay and authoritative server ticks now feed movement through `MotionIntent` (`step_with_intent`) instead of ad-hoc feature velocity calls
+  - dash invariants (`dash_distance`, `dash_duration`) derive dash speed; runtime can switch between dash sweep and discrete collision (`dash_sweep_enabled`)
+  - debug tuning UI is intentionally narrow: invariant-first controls plus harness isolation toggles (legacy direct scalars and niche sliders are hidden)
+  - legacy direct run/gravity tuning fields are migrated to invariants and no longer part of active tuning schema
+  - legacy air gain scalars are migrated (`max_air_speed`, `jump_accel`, `air_control`, `air_counter_strafe_brake`) and removed from active tuning schema
+- Feel diagnostics:
+  - `F2` overlay now includes frame-time p95, sim steps per frame, motion state, accel, contacts, floor/wall normals, leniency timers, and determinism hash status.
+  - `F10` dumps the rolling 2-5 second diagnostics buffer to `apps/ivan/replays/telemetry_exports/*_feel_rolling.json`.
+  - `F11` dumps rolling determinism trace hashes to `apps/ivan/replays/telemetry_exports/*_det_trace.json`.
 - Multiplayer networking:
   - TCP bootstrap for join/session token assignment.
   - Bootstrap welcome includes server map reference (`map_json`) so connecting clients can auto-load matching content.
@@ -137,7 +165,7 @@ See: `docs/ui-kit.md`.
 - If a face references missing lightmap files at runtime, IVAN skips lightmap shading for that face and falls back to base-texture rendering (avoids full-black output for partial bundles).
 - Optional visibility culling:
   - GoldSrc bundles can use BSP PVS (VISIBILITY + leaf face lists) to avoid rendering world geometry behind walls.
-  - Currently disabled by default; can be toggled at runtime via debug setting `vis_culling_enabled`.
+  - Currently disabled by default; `vis_culling_enabled` is available in tuning/profile data (not in the compact invariant debug menu).
   - The runtime stores a derived cache next to the bundle as `visibility.goldsrc.json` (directory bundle) or next to the extracted cache (packed bundle).
 - Per-map run options can be stored in:
   - directory bundles: `<bundle>/run.json`

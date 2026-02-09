@@ -35,3 +35,14 @@ Items temporarily on hold pending further analysis:
 - Phase 2: movement transition stability pass (stairs/slope/ground-air handoff)
 - Phase 3: acceleration/friction polish + profile packaging
 - Acceptance gates and execution board tracked in `docs/gameplay-feel-rehaul.md`
+
+### Movement Refactor Integration Order (Active)
+- 1) Ground-only invariant run wiring (`MotionConfig` + derived run model): **completed (staged)**
+- 2) Jump derivation (`H_jump`, `T_apex`) replacing direct jump-speed tuning: **completed (staged)**
+- 3) Air control through motion solver authority: **completed (staged)**
+- 3a) Air-gain invariant collapse (`air_speed_mult`, `air_gain_t90`) with legacy air scalar removal from active tuning: **completed (staged)**
+- 4) Dash sweep/cast path + runtime harness toggle: **completed (staged)**
+- 5) Camera read-only integration on top of solved motion: **completed (staged)**
+- 6) Animation read-only integration + determinism/HUD validation: **completed (staged)**
+- 7) Controller ownership split (intent ingestion + module boundaries): **completed (staged)**
+- 8) Wallrun feel pass (tilt direction, camera-biased jump, invariant sink timing): **completed (staged)**

@@ -7,9 +7,9 @@ from ivan.physics.tuning import PhysicsTuning
 def test_suggest_adjustments_reacts_to_fast_and_accel_feedback() -> None:
     tuning = PhysicsTuning(
         max_ground_speed=10.0,
-        max_air_speed=12.0,
-        ground_accel=30.0,
-        jump_accel=20.0,
+        air_speed_mult=1.2,
+        run_t90=0.20,
+        air_gain_t90=0.20,
         surf_accel=50.0,
     )
 
@@ -21,9 +21,10 @@ def test_suggest_adjustments_reacts_to_fast_and_accel_feedback() -> None:
 
     changed = {a.field: a for a in adjustments}
     assert "max_ground_speed" in changed
-    assert "ground_accel" in changed
+    assert "run_t90" in changed
+    assert "air_gain_t90" in changed
     assert changed["max_ground_speed"].after < changed["max_ground_speed"].before
-    assert changed["ground_accel"].after < changed["ground_accel"].before
+    assert changed["run_t90"].after > changed["run_t90"].before
 
 
 def test_suggest_adjustments_uses_metrics_for_smoothness_bias() -> None:

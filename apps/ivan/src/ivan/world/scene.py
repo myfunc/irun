@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import math
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from panda3d.core import (
@@ -33,6 +35,18 @@ from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, resolve_bundle_handle_path
 from ivan.paths import app_root as ivan_app_root
 from ivan.world.lightstyles import lightstyle_pattern_is_animated, lightstyle_pattern_scale
 from ivan.world.goldsrc_visibility import GoldSrcBspVis, load_or_build_visibility_cache
+
+
+@dataclass
+class _MovingBlock:
+    aabb_index: int
+    node: object
+    base_center: LVector3f
+    half: LVector3f
+    axis: LVector3f
+    amplitude: float
+    speed_hz: float
+    phase: float
 
 
 class WorldScene:
@@ -78,6 +92,8 @@ class WorldScene:
         self._vis_initial_world_face_flags: bytearray | None = None
         self._map_json_path: Path | None = None
         self._map_payload: dict | None = None
+        self._moving_blocks: list[_MovingBlock] = []
+        self._collision_updater = None
 
     @property
     def map_id(self) -> str:
@@ -87,10 +103,18 @@ class WorldScene:
     def course(self) -> dict | None:
         return self._course
 
+    def set_collision_updater(self, updater) -> None:
+        self._collision_updater = updater
+
     def build(self, *, cfg, loader, render, camera) -> None:
         self._world_root_np = render
         self._camera_np = camera
         self._build_lighting(render)
+        self._moving_blocks = []
+
+        if bool(getattr(cfg, "feel_harness", False)):
+            self._build_feel_harness_scene(loader=loader, render=render)
+            return
 
         # 1) Explicit map (CLI/config)
         if getattr(cfg, "map_json", None):
@@ -155,6 +179,10 @@ class WorldScene:
         # 2) Visibility culling (GoldSrc PVS) - only updates when camera leaf changes.
         if self._vis_enabled:
             self._tick_visibility()
+
+        # 3) Deterministic moving-platform updates for feel harness scenarios.
+        if self._moving_blocks:
+            self._tick_moving_blocks(now=now)
 
     def set_visibility_enabled(self, enabled: bool) -> None:
         """
@@ -456,6 +484,75 @@ class WorldScene:
 
         self._add_block(loader=loader, render=render, pos=(8, 56, 1.6), half=(2.5, 8.0, 0.4), color=(0.45, 0.3, 0.18, 1))
 
+    def _build_feel_harness_scene(self, *, loader, render) -> None:
+        """Minimal deterministic movement harness: flat/slope/step/wall/ledge/moving platform."""
+
+        self._map_id = "feel_harness"
+        self.spawn_point = LVector3f(0.0, 0.0, 1.9)
+        self.spawn_yaw = 0.0
+        self.kill_z = -20.0
+
+        # Flat ground.
+        self._add_block(loader=loader, render=render, pos=(0.0, 10.0, -1.5), half=(28.0, 24.0, 1.5), color=(0.18, 0.2, 0.24, 1.0))
+        # Small step.
+        self._add_block(loader=loader, render=render, pos=(-5.0, 5.0, 0.25), half=(1.0, 1.0, 0.25), color=(0.26, 0.42, 0.55, 1.0))
+        # Wall.
+        self._add_block(loader=loader, render=render, pos=(6.0, 6.0, 2.0), half=(0.45, 3.0, 2.0), color=(0.24, 0.48, 0.7, 1.0))
+        # Ledge block.
+        self._add_block(loader=loader, render=render, pos=(0.0, 18.0, 1.25), half=(3.0, 2.0, 1.25), color=(0.23, 0.45, 0.34, 1.0))
+        # Slope approximation via stepped blocks.
+        slope_start = -10.0
+        for i in range(8):
+            h = 0.10 + 0.10 * float(i)
+            self._add_block(
+                loader=loader,
+                render=render,
+                pos=(slope_start + float(i) * 1.15, 12.0, h * 0.5),
+                half=(0.58, 2.0, h * 0.5),
+                color=(0.34, 0.36, 0.4, 1.0),
+            )
+
+        # Moving platform: deterministic sinusoid along X axis.
+        idx, node = self._add_block(
+            loader=loader,
+            render=render,
+            pos=(0.0, 24.0, 0.5),
+            half=(1.8, 1.8, 0.25),
+            color=(0.55, 0.32, 0.2, 1.0),
+        )
+        axis = LVector3f(1.0, 0.0, 0.0)
+        axis.normalize()
+        self._moving_blocks.append(
+            _MovingBlock(
+                aabb_index=int(idx),
+                node=node,
+                base_center=LVector3f(0.0, 24.0, 0.5),
+                half=LVector3f(1.8, 1.8, 0.25),
+                axis=axis,
+                amplitude=2.4,
+                speed_hz=0.25,
+                phase=0.0,
+            )
+        )
+
+    def _tick_moving_blocks(self, *, now: float) -> None:
+        for b in self._moving_blocks:
+            phase = (float(now) * float(b.speed_hz) * math.tau) + float(b.phase)
+            offset = float(math.sin(phase)) * float(b.amplitude)
+            center = LVector3f(b.base_center + (b.axis * offset))
+            try:
+                b.node.setPos(center)
+            except Exception:
+                pass
+            box = AABB(minimum=center - b.half, maximum=center + b.half)
+            if 0 <= int(b.aabb_index) < len(self.aabbs):
+                self.aabbs[int(b.aabb_index)] = box
+            if self._collision_updater is not None:
+                try:
+                    self._collision_updater(index=int(b.aabb_index), box=box)
+                except Exception:
+                    pass
+
     def _add_block(
         self,
         *,
@@ -464,7 +561,7 @@ class WorldScene:
         pos: tuple[float, float, float],
         half: tuple[float, float, float],
         color,
-    ) -> None:
+    ) -> tuple[int, object]:
         model = loader.loadModel("models/box")
         model.reparentTo(render)
         model.setPos(*pos)
@@ -474,6 +571,7 @@ class WorldScene:
         p = LVector3f(*pos)
         h = LVector3f(*half)
         self.aabbs.append(AABB(minimum=p - h, maximum=p + h))
+        return (len(self.aabbs) - 1, model)
 
     def _try_load_external_map(self, *, cfg, map_json: Path, loader, render, camera) -> bool:
         map_json = self._resolve_map_bundle_path(map_json)

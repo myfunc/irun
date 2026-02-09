@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import math
 
 from ivan.physics.tuning import PhysicsTuning
 from ivan.state import IvanState, update_state
@@ -10,6 +11,54 @@ def to_persisted_value(value: object) -> float | bool:
     if isinstance(value, bool):
         return value
     return float(value)
+
+
+def _migrate_to_invariants(profile: dict[str, float | bool]) -> dict[str, float | bool]:
+    out = dict(profile)
+    g = max(
+        0.001,
+        float(
+            out.get(
+                "gravity",
+                (2.0 * float(out.get("jump_height", 1.48)))
+                / (max(1e-4, float(out.get("jump_apex_time", 0.351))) ** 2),
+            )
+        ),
+    )
+    h = max(0.01, float(out.get("jump_height", 1.48)))
+    ga = max(0.001, float(out.get("ground_accel", math.log(10.0) / max(1e-4, float(out.get("run_t90", 0.24))))))
+    gf = max(
+        0.001,
+        float(out.get("friction", math.log(10.0) / max(1e-4, float(out.get("ground_stop_t90", 0.22))))),
+    )
+    vmax = max(0.01, float(out.get("max_ground_speed", 6.643)))
+    legacy_air_speed = max(0.01, float(out.get("max_air_speed", vmax * float(out.get("air_speed_mult", 1.695)))))
+    legacy_air_accel = max(
+        0.001,
+        float(out.get("jump_accel", 0.9 / max(1e-4, float(out.get("air_gain_t90", 0.24))))),
+    )
+    out["jump_apex_time"] = math.sqrt((2.0 * h) / g)
+    out["run_t90"] = max(0.03, min(1.2, math.log(10.0) / ga))
+    out["ground_stop_t90"] = max(0.03, min(1.2, math.log(10.0) / gf))
+    out["air_speed_mult"] = max(0.50, min(4.0, legacy_air_speed / vmax))
+    out["air_gain_t90"] = max(0.03, min(1.2, 0.9 / legacy_air_accel))
+    out["wallrun_sink_t90"] = max(0.03, min(1.2, float(out.get("wallrun_sink_t90", 0.22))))
+    out["coyote_buffer_enabled"] = True
+    out["custom_friction_enabled"] = True
+    for legacy in (
+        "invariant_motion_enabled",
+        "run_tfull",
+        "run_use_tfull",
+        "gravity",
+        "ground_accel",
+        "friction",
+        "max_air_speed",
+        "jump_accel",
+        "air_control",
+        "air_counter_strafe_brake",
+    ):
+        out.pop(legacy, None)
+    return out
 
 
 def build_default_profiles() -> dict[str, dict[str, float | bool]]:
@@ -26,15 +75,14 @@ def build_default_profiles() -> dict[str, dict[str, float | bool]]:
             "surf_enabled": True,
             "autojump_enabled": True,
             "enable_jump_buffer": True,
-            "gravity": 39.6196435546875,
             "jump_height": 1.0108081703186036,
+            "jump_apex_time": math.sqrt((2.0 * 1.0108081703186036) / 39.6196435546875),
             "max_ground_speed": 6.622355737686157,
-            "max_air_speed": 6.845157165527343,
-            "ground_accel": 49.44859447479248,
-            "jump_accel": 31.738659286499026,
-            "friction": 13.672204017639162,
-            "air_control": 0.24100000381469727,
-            "air_counter_strafe_brake": 23.000001525878908,
+            "run_t90": max(0.03, min(1.2, math.log(10.0) / 49.44859447479248)),
+            "ground_stop_t90": max(0.03, min(1.2, math.log(10.0) / 13.672204017639162)),
+            "air_speed_mult": 6.845157165527343 / 6.622355737686157,
+            "air_gain_t90": 0.9 / 31.738659286499026,
+            "wallrun_sink_t90": 0.22,
             "mouse_sensitivity": 0.09978364143371583,
             "jump_buffer_time": 0.2329816741943359,
             "wall_jump_cooldown": 0.9972748947143555,
@@ -58,11 +106,10 @@ def build_default_profiles() -> dict[str, dict[str, float | bool]]:
             "surf_enabled": False,
             "autojump_enabled": True,
             "enable_jump_buffer": True,
-            "jump_accel": 34.0,
-            "max_air_speed": 14.0,
-            "air_control": 0.30,
-            "air_counter_strafe_brake": 18.0,
-            "friction": 4.8,
+            "run_t90": max(0.03, min(1.2, math.log(10.0) / 34.0)),
+            "ground_stop_t90": max(0.03, min(1.2, math.log(10.0) / 4.8)),
+            "air_speed_mult": 14.0 / float(base.max_ground_speed),
+            "air_gain_t90": 0.9 / 34.0,
         }
     )
 
@@ -72,31 +119,26 @@ def build_default_profiles() -> dict[str, dict[str, float | bool]]:
             "surf_enabled": True,
             "autojump_enabled": False,
             "enable_jump_buffer": False,
-            "jump_accel": 10.0,
-            "max_air_speed": 22.0,
-            "air_control": 0.10,
-            "air_counter_strafe_brake": 9.0,
+            "run_t90": max(0.03, min(1.2, math.log(10.0) / 10.0)),
+            "ground_stop_t90": max(0.03, min(1.2, math.log(10.0) / 3.8)),
+            "air_speed_mult": 22.0 / float(base.max_ground_speed),
+            "air_gain_t90": 0.9 / 10.0,
             "surf_accel": 70.0,
             "surf_gravity_scale": 0.82,
             "surf_min_normal_z": 0.05,
             "surf_max_normal_z": 0.76,
-            "friction": 3.8,
         }
     )
 
     surf_sky2_server = dict(snap)
     surf_sky2_server.update(
         {
-            # Approximation of publicly listed surf_ski_2/surf_sky_2 server cvars:
-            # sv_accelerate 5, sv_airaccelerate 100, sv_friction 4, sv_maxspeed 900, sv_gravity 800.
-            "gravity": 24.0,
+            # Approximation of publicly listed surf_ski_2/surf_sky_2 server cvars mapped to invariants.
             "max_ground_speed": 23.90,
-            "max_air_speed": 23.90,
-            "ground_accel": 5.0,
-            "jump_accel": 3.0,
-            "friction": 4.0,
-            "air_control": 0.10,
-            "air_counter_strafe_brake": 8.0,
+            "run_t90": max(0.03, min(1.2, math.log(10.0) / 5.0)),
+            "ground_stop_t90": max(0.03, min(1.2, math.log(10.0) / 4.0)),
+            "air_speed_mult": 1.0,
+            "air_gain_t90": 0.9 / 3.0,
             "surf_enabled": True,
             "surf_accel": 10.0,
             "surf_gravity_scale": 1.0,
@@ -109,6 +151,13 @@ def build_default_profiles() -> dict[str, dict[str, float | bool]]:
             "vault_enabled": False,
         }
     )
+
+    surf_bhop_c2 = _migrate_to_invariants(surf_bhop_c2)
+    surf_bhop = _migrate_to_invariants(surf_bhop)
+    bhop = _migrate_to_invariants(bhop)
+    surf = _migrate_to_invariants(surf)
+    surf_sky2_server = _migrate_to_invariants(surf_sky2_server)
+
     return {
         "surf_bhop_c2": surf_bhop_c2,
         "surf_bhop": surf_bhop,
@@ -128,6 +177,11 @@ def load_profiles_from_state(host, state: IvanState) -> None:
     host._profiles = {name: dict(values) for name, values in host._default_profiles.items()}
     for name, values in state.tuning_profiles.items():
         host._profiles[name] = dict(values)
+
+    for profile in host._profiles.values():
+        migrated = _migrate_to_invariants(profile)
+        profile.clear()
+        profile.update(migrated)
 
     active = state.active_tuning_profile or "surf_bhop_c2"
     if active not in host._profiles:

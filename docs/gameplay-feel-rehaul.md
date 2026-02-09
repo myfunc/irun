@@ -192,6 +192,90 @@ Validation completed:
 - Replay format/telemetry/comparison tests pass (`test_replay_demo.py`, `test_replay_telemetry_export.py`, `test_replay_compare.py`).
 - Runtime smoke runs pass in menu boot and map boot paths.
 
+## Invariant Motion Refactor Progress (2026-02-09)
+Status: `IN PROGRESS` (core invariants active, authority hardening still staged)
+
+Completed in this slice:
+- Added a dedicated movement package: `apps/ivan/src/ivan/physics/motion/`
+  - `MotionConfig` now holds one object with designer invariants + derived constants.
+  - Added derivation formulas for jump/run/dash constants.
+- Added new tuning invariants (debug/profile/persistence compatible):
+  - `run_t90`, `ground_stop_t90`
+  - `jump_apex_time`
+  - `air_speed_mult`, `air_gain_t90`
+  - `wallrun_sink_t90`
+  - `dash_distance`, `dash_duration`
+  - `coyote_time`
+- Wired `PlayerController` to consume `MotionSolver` for:
+  - ground run response (derived model)
+  - ground coasting damping derived from stop timing invariant
+  - gravity application
+  - jump takeoff speed derivation
+  - coyote-time jump consume path
+- Removed legacy direct run/gravity tuning fields from active tuning schema.
+
+Completed in follow-up slice:
+- Added initial dash mode integration:
+  - input command path includes `dash_pressed` (record/replay + network packet wiring).
+  - dash parameters are invariant-driven (`dash_distance`, `dash_duration` -> derived speed).
+  - dash collision supports sweep/cast path (`dash_sweep_enabled`) with runtime fallback path.
+- Added deterministic feel harness bootstrap (`--feel-harness`):
+  - flat, slope approximation, step, wall, ledge, and moving platform fixtures.
+  - runtime harness toggles exposed in debug UI for subsystem isolation.
+- Expanded on-screen diagnostics + rolling logs:
+  - frame p95, sim step count, state, velocity/accel, contacts, floor/wall normals, leniency windows.
+  - `F10` JSON dump of rolling (2-5s) diagnostics buffer.
+  - deterministic state hashing in HUD (`F2`) and trace dump (`F11`).
+- Added regression tests for:
+  - invariant derivation formulas (`test_motion_config.py`)
+  - coyote window behavior and dash sweep stopping conditions.
+- Reduced debug tuning menu to a compact invariant-first control set:
+  - removed redundant direct-scalar sliders from runtime tuning surface.
+  - surf debug section is now toggle-only (`surf_enabled`) with no surf scalar sliders.
+  - invariant mode is now default-on and default profiles are migrated to invariant timing fields.
+  - debug panel internals were split into `debug_ui.py` + `debug_ui_schema.py` to keep file ownership scoped and avoid oversized UI modules.
+- Fixed Vmax authority regression:
+  - ground friction now damps only coasting (no movement input), so changing `max_ground_speed` reliably changes terminal ground speed under held input.
+- Fixed bunnyhop landing/takeoff carry regression:
+  - normal grounded run shaping converges horizontal speed toward `Vmax` again (prevents persistent overspeed running).
+  - grounded jump-consume tick now bypasses ground run + coasting damping to preserve successful hop timing momentum.
+  - `autojump_enabled` is restored in the compact debug surface.
+- Wallrun UX pass:
+  - `wallrun_enabled` is restored in the compact debug surface for live iteration.
+  - camera now applies slight roll tilt away from the wall while wallrun is active (read-only observer effect).
+  - wallrun jump now biases launch direction toward camera forward heading while retaining wall peel-away behavior.
+  - wallrun descent now uses invariant timing (`wallrun_sink_t90`) via solver response instead of per-feature velocity clamps.
+- Camera animation responsiveness pass:
+  - introduced `camera_tilt_observer.py` as a read-only camera animation layer.
+  - wallrun roll transition now smooths with a snappy response curve (reduces one-frame roll snap/jank).
+  - wallrun roll now starts returning to neutral immediately on wallrun exit/jump, avoiding delayed recentering.
+  - added gentle movement-relative tilt targets (strafe roll + backpedal pitch) to improve perceived responsiveness.
+- Air-gain decoupling pass:
+  - removed direct air gain scalars from active tuning (`max_air_speed`, `jump_accel`, `air_control`, `air_counter_strafe_brake`).
+  - introduced two core invariants:
+    - `air_speed_mult` -> derived `air_speed = Vmax * air_speed_mult`
+    - `air_gain_t90` -> derived `air_accel = 0.9 / air_gain_t90`
+  - this keeps bhop gain behavior coupled to one speed-scale axis and one timing axis, with no hidden overlap sliders.
+- Unified command ingestion via motion intent:
+  - both client sim tick and authoritative server tick now call `PlayerController.step_with_intent(...)`.
+  - jump/dash/crouch/wish direction are routed through one intent contract before solver/collision.
+- Split oversized controller file into ownership modules (all under 500 LOC):
+  - orchestration (`player_controller.py`)
+  - actions (`player_controller_actions.py`)
+  - surf/air/wall probes (`player_controller_surf.py`)
+  - collision/sweep/step-slide (`player_controller_collision.py`)
+- Integrated read-only observer layers:
+  - `camera_observer.py` handles camera shell smoothing from solved motion only.
+  - `animation_observer.py` applies optional visual bob/root-motion offsets without mutating movement state.
+- Replay determinism validation now runs during playback:
+  - recorded telemetry includes per-tick deterministic state hash.
+  - playback compares expected vs simulated hash and reports mismatch counts on exit.
+
+Still pending:
+- Motion authority hardening (state machine + solver priorities) to enforce “non-solver velocity writes only for explicit impulses” contract.
+- Harden dash state behavior and add dedicated dash mode telemetry thresholds.
+- Optional CLI/automation wrapper for determinism verification across repeated replay runs.
+
 ## Why This Helps Future Phases
 - Phase 0 baselining: replay telemetry gives us a stable per-tick data source to compare tuning passes, not just subjective feel.
 - Phase 1 camera work: camera-angle and input data in demos lets us quantify camera response quality against identical inputs.

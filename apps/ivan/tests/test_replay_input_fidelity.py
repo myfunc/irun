@@ -13,6 +13,7 @@ def test_input_command_roundtrip_preserves_raw_held_states() -> None:
         move_right=-1,
         jump_pressed=True,
         jump_held=True,
+        dash_pressed=True,
         crouch_held=False,
         grapple_pressed=True,
         noclip_toggle_pressed=False,
@@ -35,6 +36,7 @@ def test_input_command_roundtrip_preserves_raw_held_states() -> None:
     assert replay_cmd.look_dy == -7
     assert replay_cmd.move_forward == 1
     assert replay_cmd.move_right == -1
+    assert replay_cmd.dash_pressed is True
     assert replay_cmd.key_w_held is True
     assert replay_cmd.key_a_held is True
     assert replay_cmd.key_s_held is False

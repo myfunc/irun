@@ -31,6 +31,7 @@ class CollisionWorld:
         self._bworld.setGravity(LVector3f(0, 0, 0))
 
         self._static_bodies: list[BulletRigidBodyNode] = []
+        self._graybox_nodes: list[object] = []
         self._player_sweep_shape = None
         self.update_player_sweep_shape(player_radius=player_radius, player_half_height=player_half_height)
 
@@ -65,6 +66,7 @@ class CollisionWorld:
             np.setPos(float(center.x), float(center.y), float(center.z))
             self._bworld.attachRigidBody(body)
             self._static_bodies.append(body)
+            self._graybox_nodes.append(np)
 
     def update_player_sweep_shape(self, *, player_radius: float, player_half_height: float) -> None:
         radius = float(player_radius)
@@ -84,3 +86,16 @@ class CollisionWorld:
 
     def ray_closest(self, from_pos: LVector3f, to_pos: LVector3f):
         return self._bworld.rayTestClosest(from_pos, to_pos, BitMask32.allOn())
+
+    def update_graybox_block(self, *, index: int, box: AABB) -> None:
+        """Update transform for a graybox static body (used by feel-harness moving platform)."""
+
+        i = int(index)
+        if i < 0 or i >= len(self._graybox_nodes):
+            return
+        half = (box.maximum - box.minimum) * 0.5
+        center = box.minimum + half
+        try:
+            self._graybox_nodes[i].setPos(float(center.x), float(center.y), float(center.z))
+        except Exception:
+            return
