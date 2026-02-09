@@ -1266,6 +1266,16 @@ class RunnerDemo(ShowBase):
                 crouch_held=bool(cmd.crouch_held),
                 look_dx=int(cmd.look_dx),
                 look_dy=int(cmd.look_dy),
+                key_w_held=bool(cmd.key_w_held),
+                key_a_held=bool(cmd.key_a_held),
+                key_s_held=bool(cmd.key_s_held),
+                key_d_held=bool(cmd.key_d_held),
+                arrow_up_held=bool(cmd.arrow_up_held),
+                arrow_down_held=bool(cmd.arrow_down_held),
+                arrow_left_held=bool(cmd.arrow_left_held),
+                arrow_right_held=bool(cmd.arrow_right_held),
+                mouse_left_held=bool(cmd.mouse_left_held),
+                mouse_right_held=bool(cmd.mouse_right_held),
             )
 
         self._apply_look_delta(
@@ -1395,6 +1405,16 @@ class RunnerDemo(ShowBase):
                 "inp_nt": bool(cmd.noclip_toggle_pressed),
                 "inp_mf": int(cmd.move_forward),
                 "inp_mr": int(cmd.move_right),
+                "inp_kw": bool(cmd.key_w_held),
+                "inp_ka": bool(cmd.key_a_held),
+                "inp_ks": bool(cmd.key_s_held),
+                "inp_kd": bool(cmd.key_d_held),
+                "inp_au": bool(cmd.arrow_up_held),
+                "inp_ad": bool(cmd.arrow_down_held),
+                "inp_al": bool(cmd.arrow_left_held),
+                "inp_ar": bool(cmd.arrow_right_held),
+                "inp_m1": bool(cmd.mouse_left_held),
+                "inp_m2": bool(cmd.mouse_right_held),
             }
 
         pos = self.player.pos
@@ -1428,6 +1448,16 @@ class RunnerDemo(ShowBase):
             "inp_nt": bool(cmd.noclip_toggle_pressed),
             "inp_mf": int(cmd.move_forward),
             "inp_mr": int(cmd.move_right),
+            "inp_kw": bool(cmd.key_w_held),
+            "inp_ka": bool(cmd.key_a_held),
+            "inp_ks": bool(cmd.key_s_held),
+            "inp_kd": bool(cmd.key_d_held),
+            "inp_au": bool(cmd.arrow_up_held),
+            "inp_ad": bool(cmd.arrow_down_held),
+            "inp_al": bool(cmd.arrow_left_held),
+            "inp_ar": bool(cmd.arrow_right_held),
+            "inp_m1": bool(cmd.mouse_left_held),
+            "inp_m2": bool(cmd.mouse_right_held),
         }
 
     def _fire_grapple(self) -> None:
@@ -1499,7 +1529,7 @@ class RunnerDemo(ShowBase):
             self._start_new_demo_recording()
 
     def _on_respawn_pressed(self) -> None:
-        if self._playback_active:
+        if bool(getattr(self, "_playback_active", False)):
             self._stop_replay_playback(reason="Exited replay.")
             self._do_respawn(from_mode=True)
             return

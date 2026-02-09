@@ -69,3 +69,6 @@ def test_load_replay_v2_reads_frame_telemetry(tmp_path: Path) -> None:
     assert rec.frames[0].crouch_held is True
     assert isinstance(rec.frames[0].telemetry, dict)
     assert rec.frames[0].telemetry["yaw"] == 90.0
+    # v2 compatibility: if raw held-state bits are missing, fallback is derived from axes.
+    assert rec.frames[0].key_d_held is True
+    assert rec.frames[0].key_a_held is False

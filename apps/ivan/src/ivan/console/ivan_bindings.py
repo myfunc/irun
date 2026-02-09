@@ -6,6 +6,7 @@ from typing import Any
 
 from ivan.console.core import CommandContext, Console
 from ivan.physics.tuning import PhysicsTuning
+from ivan.replays.telemetry import export_latest_replay_telemetry, export_replay_telemetry
 
 
 def _read_exec_lines(path: Path) -> list[str]:
@@ -75,6 +76,37 @@ def build_client_console(runner: Any) -> Console:
     def _cmd_disconnect(_ctx: CommandContext, _argv: list[str]) -> list[str]:
         runner._on_disconnect_server_from_menu()  # noqa: SLF001
         return ["disconnect"]
+
+    def _cmd_replay_export_latest(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        out_dir = Path(str(argv[0])) if argv else None
+        try:
+            result = export_latest_replay_telemetry(out_dir=out_dir)
+        except Exception as e:
+            return [f"error: {e}"]
+        return [
+            f"source: {result.source_demo}",
+            f"csv: {result.csv_path}",
+            f"summary: {result.summary_path}",
+            f"ticks: {result.tick_count} (telemetry: {result.telemetry_tick_count})",
+        ]
+
+    def _cmd_replay_export(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        if not argv:
+            return ["usage: replay_export <replay_path> [out_dir]"]
+        replay_path = Path(str(argv[0]))
+        if not replay_path.is_absolute():
+            replay_path = Path.cwd() / replay_path
+        out_dir = Path(str(argv[1])) if len(argv) >= 2 else None
+        try:
+            result = export_replay_telemetry(replay_path=replay_path, out_dir=out_dir)
+        except Exception as e:
+            return [f"error: {e}"]
+        return [
+            f"source: {result.source_demo}",
+            f"csv: {result.csv_path}",
+            f"summary: {result.summary_path}",
+            f"ticks: {result.tick_count} (telemetry: {result.telemetry_tick_count})",
+        ]
 
     def _registry() -> dict[str, Any]:
         # Treat these as "entities" for now. We'll extend once map v3 entities exist.
@@ -230,6 +262,16 @@ def build_client_console(runner: Any) -> Console:
     con.register_command(name="exec", help="Execute a .cfg-like script file.", handler=_cmd_exec)
     con.register_command(name="connect", help="Connect to a multiplayer server.", handler=_cmd_connect)
     con.register_command(name="disconnect", help="Disconnect from multiplayer.", handler=_cmd_disconnect)
+    con.register_command(
+        name="replay_export_latest",
+        help="Export telemetry (CSV + JSON summary) for latest replay.",
+        handler=_cmd_replay_export_latest,
+    )
+    con.register_command(
+        name="replay_export",
+        help="Export telemetry (CSV + JSON summary) for a replay path.",
+        handler=_cmd_replay_export,
+    )
     con.register_command(name="ent_list", help="List registered entities/objects.", handler=_cmd_ent_list)
     con.register_command(name="ent_get", help="Get a property by path (dot-separated).", handler=_cmd_ent_get)
     con.register_command(name="ent_set", help="Set a property by path using JSON value.", handler=_cmd_ent_set)
