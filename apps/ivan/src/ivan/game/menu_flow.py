@@ -57,6 +57,7 @@ def enter_main_menu(host) -> None:
         on_start_map_json=host._start_game,
         on_import_bsp=host._start_import_from_request,
         on_quit=host.userExit,
+        on_apply_video=host._apply_video_settings,
     )
 
 

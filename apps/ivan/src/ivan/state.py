@@ -21,6 +21,10 @@ class IvanState:
     time_trials: dict[str, dict] | None = None
     tuning_profiles: dict[str, dict[str, float | bool]] = field(default_factory=dict)
     active_tuning_profile: str | None = None
+    # Display / video settings (persisted across sessions).
+    fullscreen: bool = False
+    window_width: int = 1280
+    window_height: int = 720
 
 
 def state_dir() -> Path:
@@ -89,6 +93,11 @@ def load_state() -> IvanState:
 
     active_tuning_profile = payload.get("active_tuning_profile")
     active_name = str(active_tuning_profile) if isinstance(active_tuning_profile, str) and active_tuning_profile.strip() else None
+
+    fs = payload.get("fullscreen")
+    ww = payload.get("window_width")
+    wh = payload.get("window_height")
+
     return IvanState(
         last_map_json=str(lm) if isinstance(lm, str) and lm.strip() else None,
         last_game_root=str(gr) if isinstance(gr, str) and gr.strip() else None,
@@ -99,6 +108,9 @@ def load_state() -> IvanState:
         time_trials=dict(tt) if isinstance(tt, dict) else None,
         tuning_profiles=tuning_profiles,
         active_tuning_profile=active_name,
+        fullscreen=bool(fs) if isinstance(fs, bool) else False,
+        window_width=int(ww) if isinstance(ww, int) and 320 <= int(ww) <= 7680 else 1280,
+        window_height=int(wh) if isinstance(wh, int) and 240 <= int(wh) <= 4320 else 720,
     )
 
 
@@ -120,6 +132,9 @@ def save_state(state: IvanState) -> None:
                 "time_trials": state.time_trials,
                 "tuning_profiles": state.tuning_profiles,
                 "active_tuning_profile": state.active_tuning_profile,
+                "fullscreen": state.fullscreen,
+                "window_width": int(state.window_width),
+                "window_height": int(state.window_height),
             },
             indent=2,
             sort_keys=True,
@@ -140,6 +155,9 @@ def update_state(
     tuning_overrides: dict[str, float | bool] | None = None,
     tuning_profiles: dict[str, dict[str, float | bool]] | None = None,
     active_tuning_profile: str | None = None,
+    fullscreen: bool | None = None,
+    window_width: int | None = None,
+    window_height: int | None = None,
 ) -> None:
     s = load_state()
     merged_tuning = dict(s.tuning_overrides)
@@ -160,6 +178,9 @@ def update_state(
             time_trials=s.time_trials,
             tuning_profiles=merged_profiles,
             active_tuning_profile=final_active_profile,
+            fullscreen=bool(fullscreen) if fullscreen is not None else s.fullscreen,
+            window_width=int(window_width) if window_width is not None else s.window_width,
+            window_height=int(window_height) if window_height is not None else s.window_height,
         )
     )
 
@@ -214,6 +235,9 @@ def set_time_trial_course_override(*, map_id: str, course: dict | None) -> None:
             time_trials=root,
             tuning_profiles=s.tuning_profiles,
             active_tuning_profile=s.active_tuning_profile,
+            fullscreen=s.fullscreen,
+            window_width=s.window_width,
+            window_height=s.window_height,
         )
     )
 
@@ -284,6 +308,9 @@ def record_time_trial_run(
             time_trials=root,
             tuning_profiles=s.tuning_profiles,
             active_tuning_profile=s.active_tuning_profile,
+            fullscreen=s.fullscreen,
+            window_width=s.window_width,
+            window_height=s.window_height,
         )
     )
     return (new_pb, last, rank_info)

@@ -10,6 +10,7 @@ from panda3d.core import (
     CompassEffect,
     DepthOffsetAttrib,
     DirectionalLight,
+    Filename,
     Geom,
     GeomNode,
     GeomTriangles,
@@ -302,7 +303,7 @@ class WorldScene:
             p = paths[i]
             if isinstance(p, Path) and p.exists():
                 try:
-                    t = loader.loadTexture(str(p))
+                    t = loader.loadTexture(Filename.fromOsSpecific(str(p)))
                 except Exception:
                     t = None
                 if t is not None:
@@ -951,7 +952,7 @@ void main() {
             tex: Texture | None = None
             tex_path = self._resolve_material_texture_path(material_name=mat_name)
             if tex_path and tex_path.exists():
-                tex = loader.loadTexture(str(tex_path))
+                tex = loader.loadTexture(Filename.fromOsSpecific(str(tex_path)))
                 if tex is not None:
                     tex.setWrapU(Texture.WM_repeat)
                     tex.setWrapV(Texture.WM_repeat)
@@ -992,7 +993,7 @@ void main() {
                 for i in range(4):
                     p = paths[i]
                     if (not defer) and isinstance(p, Path) and p.exists():
-                        t = loader.loadTexture(str(p))
+                        t = loader.loadTexture(Filename.fromOsSpecific(str(p)))
                         if t is not None:
                             t.setWrapU(Texture.WM_clamp)
                             t.setWrapV(Texture.WM_clamp)
@@ -1091,7 +1092,7 @@ void main() {
             card = root.attachNewNode(cm.generate())
             card.setPos(*pos)
             card.setHpr(*hpr)
-            tex = loader.loadTexture(str(tex_path))
+            tex = loader.loadTexture(Filename.fromOsSpecific(str(tex_path)))
             if tex is not None:
                 tex.setWrapU(Texture.WM_clamp)
                 tex.setWrapV(Texture.WM_clamp)

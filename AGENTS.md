@@ -44,6 +44,12 @@ Naming convention:
   - `pyproject.toml`
   - `docs/architecture.md`
 
+## Map Bundles
+- Maps **must** be packed as `.irunmap` (zip archive) by default.
+- Directory bundles are only used during development/debugging if the user explicitly requests it.
+- All import pipelines and tools should produce `.irunmap` output unless overridden.
+- Level editing is done in an external editor (TrenchBroom); map conversion/import tooling lives in this repo.
+
 ## Repository Defaults
 - Applications live under `apps/`.
 - Python apps use a `src/` layout inside their app folder.

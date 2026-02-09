@@ -32,14 +32,14 @@ See: `docs/ui-kit.md`.
   - `apps/ivan/src/ivan/game/menu_flow.py`: main menu controller + import worker glue
   - `apps/ivan/src/ivan/game/grapple_rope.py`: grapple rope rendering helper
 - `apps/ivan/src/ivan/maps/catalog.py`: runtime catalog helpers for shipped bundles and GoldSrc-like map discovery
-- `apps/ivan/src/ivan/state.py`: small persistent user state (last launched map, last game dir/mod, tuning profiles + active profile snapshot)
+- `apps/ivan/src/ivan/state.py`: small persistent user state (last launched map, last game dir/mod, tuning profiles + active profile snapshot, display/video settings)
 - `apps/ivan/src/ivan/world/scene.py`: Scene building, external map-bundle loading (`--map`), spawn point/yaw
 - `apps/ivan/src/ivan/maps/steam.py`: Steam library scanning helpers (manual Half-Life auto-detect)
 - `apps/ivan/src/ivan/physics/tuning.py`: Tunable movement/physics parameters (exposed via debug/admin UI)
 - `apps/ivan/src/ivan/physics/player_controller.py`: Kinematic character controller (Quake3-style step + slide)
 - `apps/ivan/src/ivan/physics/collision_world.py`: Bullet collision query world (convex sweeps against static geometry)
 - `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (CS-style grouped boxes, collapsible sections, scrollable content, normalized sliders, profile dropdown/save)
-- `apps/ivan/src/ivan/ui/main_menu.py`: main menu controller (bundle list + import flow)
+- `apps/ivan/src/ivan/ui/main_menu.py`: main menu controller (bundle list + import flow + video settings)
 - `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game ESC menu (Resume/Map Selector/Key Bindings/Back/Quit) and keybinding controls
 - `apps/ivan/src/ivan/ui/replay_browser_ui.py`: in-game replay browser overlay (UI kit list menu)
 - `apps/ivan/src/ivan/replays/demo.py`: input-demo storage (record/save/load/list) using repository-local storage under `apps/ivan/replays/`
@@ -89,6 +89,10 @@ See: `docs/ui-kit.md`.
     - Protocol: request `{"line":"echo hi","role":"client","origin":"mcp"}` -> response `{"ok":true,"out":["hi"]}`.
   - Dedicated server process also starts a localhost control bridge on `IRUN_IVAN_SERVER_CONSOLE_PORT` (default `39001`).
   - `ivan-mcp` runs an MCP stdio server (Python 3.9, no deps) that exposes a single tool: `console_exec`.
+- Display/window:
+  - Default: windowed 1280x720 on all platforms (Windows + macOS). Window is user-resizable.
+  - Display settings (fullscreen, resolution) persist in `~/.irun/ivan/state.json` and are applied on startup.
+  - Main menu "Video Settings" screen allows switching between windowed presets and fullscreen at runtime.
 - In-game UI/input split:
   - `Esc` opens gameplay menu and unlocks cursor.
   - `` ` `` opens debug/admin tuning menu and unlocks cursor.
@@ -98,7 +102,7 @@ See: `docs/ui-kit.md`.
   - Grapple targeting uses collision-world ray queries (`ray_closest`) from camera center.
 
 ## Rendering Notes
-- Baker shares Ivan's scene builder (`ivan.world.scene.WorldScene`) to keep map preview WYSIWYG.
+- Baker (paused) shares Ivan's scene builder (`ivan.world.scene.WorldScene`) to keep map preview WYSIWYG.
 - Baker adds a viewer-only post-process view transform (tonemap + gamma) toggled via `1`/`2`/`3`.
 - Texture sizing: IVAN disables Panda3D's default power-of-two rescaling for textures (`textures-power-2 none`).
   - Reason: imported GoldSrc maps commonly reference non-power-of-two textures; automatic rescaling breaks BSP UV mapping.
@@ -119,15 +123,20 @@ See: `docs/ui-kit.md`.
 - `bsp_tool`: BSP parsing for IVAN map import pipelines (Source + GoldSrc branches)
 - `Pillow`: image IO used by map import tools (VTF/WAD -> PNG)
 
-## Maps (Planned: Format v3)
+## Maps
 Maps are distributed as **map bundles** rooted at a `map.json` manifest plus adjacent assets (textures/resources).
 
+**Default distribution format is `.irunmap`** (packed zip archive). Directory bundles are only used during development/debugging when explicitly requested.
+
 Bundle storage formats:
-- **Directory bundle**: `<bundle>/map.json` plus folders like `materials/`, `lightmaps/`, `resources/`.
-- **Packed bundle**: a single `.irunmap` file (zip archive) containing `map.json` at the archive root plus the same folder layout.
+- **Directory bundle** (dev only): `<bundle>/map.json` plus folders like `materials/`, `lightmaps/`, `resources/`.
+- **Packed bundle** (default): a single `.irunmap` file (zip archive) containing `map.json` at the archive root plus the same folder layout.
   - Runtime extracts `.irunmap` bundles to a local cache under `~/.irun/ivan/cache/bundles/<hash>/` before loading assets.
 
-Planned format v3 extends the current v2 triangle bundles with:
+Level editing uses **TrenchBroom** as the external editor. Integration analysis and conversion tooling are tracked separately.
+
+### Map Format v3 (Paused)
+Format v3 is on hold pending TrenchBroom integration analysis. The planned extensions were:
 - **Entities**: triggers, spawners, buttons, ladders, movers, lights (engine-agnostic model).
 - **Course logic**: start/finish/checkpoints driven by trigger entities.
 - **Chunking**: baked geometry split into chunks for future streaming (initially still loaded eagerly).
