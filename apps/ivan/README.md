@@ -170,29 +170,34 @@ Panel layout:
   - Saving a custom profile updates only that active profile in place.
 
 Numeric settings include normalized sliders + entry fields for precise tuning:
-- Gravity, jump height, ground/air acceleration target speeds
-- Ground acceleration, jump acceleration (bunnyhop/strafe), friction, air control
-- Air counter-strafe brake strength
-- Mouse sensitivity, crouch speed/height/camera
-- Wall jump boost + cooldown, vault jump/speed/ledge window, jump buffer time
-- Grapple hook range, attach boost, post-attach auto-shorten speed/time, rope pull strength, rope min/max length, rope thickness
-- Noclip fly speed
-- Surf acceleration / gravity scale / surfable slope-normal range (inspired by public CS surf server settings)
+- `max_ground_speed` (Vmax)
+- `run_t90`
+- `ground_stop_t90`
+- `air_speed_mult`
+- `air_gain_t90`
+- `wallrun_sink_t90`
+- `jump_height`
+- `jump_apex_time`
+- `jump_buffer_time`
+- `coyote_time`
+- `dash_distance`
+- `dash_duration`
 
 Boolean toggles are shown inline as labeled rows with `ON/OFF` buttons:
-- Jump buffer
 - Autojump (hold jump to keep hopping)
-- Noclip
-- Surf
-- Wall jump
-- Wallrun (toggle only, prototype hook)
-- Vault (toggle only)
-- Crouch
-- Grapple hook
+- Coyote/buffer enable
+- Custom friction enable
+- Dash enable
+- Dash sweep enable
+- Wallrun enable
+- Surf enable
+- Harness camera smoothing enable
+- Harness animation/root-motion enable
 
 Movement notes:
-- Counter-strafe braking in air decelerates horizontal speed based on `air_counter_strafe_brake` without hidden hardcoded bonus deceleration.
-- Default `air_counter_strafe_brake` is `23.0`.
+- Air speed and bunnyhop gain are controlled by two invariants:
+  - `air_speed_mult` (`air_speed = max_ground_speed * air_speed_mult`)
+  - `air_gain_t90` (`air_accel = 0.9 / air_gain_t90`)
 - Repeated wall-jumps are controlled by `wall_jump_cooldown` (default: `1.0s`).
 - Wall-jump is airborne-only: it cannot trigger while grounded, even if the player is touching a wall.
 - Autojump only queues while grounded; holding jump in fully airborne states will not trigger wall-jump retries.
@@ -200,7 +205,8 @@ Movement notes:
 - Clicking LMB while already attached detaches the grapple.
 - On grapple attach, a one-shot boost is applied toward the rope direction (`grapple_attach_boost`).
 - After attach, rope also auto-shortens for a short configurable window (`grapple_attach_shorten_speed`, `grapple_attach_shorten_time`) for a seamless pull-in feel.
-- Wallrun is lateral; vertical climb gain is capped.
+- Wallrun camera tilts away from the active wall side.
+- Wallrun vertical sink is timing-driven (`wallrun_sink_t90`) instead of direct velocity clamps.
 - `vault_enabled` is OFF by default. If enabled, pressing jump again near a ledge can trigger a vault: feet must be below ledge top, vault jump is higher than normal, and a small forward speed boost is applied.
 - Step risers are filtered out for wall-contact detection to reduce jitter and accidental wall-state hits on stairs/steps.
 - Surf prototype uses GoldSrc-like air movement on steep ramps: wish direction is projected to ramp plane, then normal air acceleration + collision clipping drive surf movement.

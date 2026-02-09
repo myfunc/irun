@@ -45,3 +45,7 @@ apps/ivan/assets/maps/*.wa_
 
 # Local compiler binaries
 apps/ivan/tools/bin/sdhlt/
+
+# Replay artifacts (local tooling output)
+apps/ivan/replays/*.ivan_demo.json
+apps/ivan/replays/telemetry_exports/

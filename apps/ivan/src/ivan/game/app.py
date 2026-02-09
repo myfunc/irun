@@ -38,6 +38,7 @@ from ivan.modes.base import ModeContext
 from ivan.modes.loader import load_mode
 from ivan.net import EmbeddedHostServer, MultiplayerClient
 from ivan.physics.collision_world import CollisionWorld
+from ivan.physics.motion.intent import MotionIntent
 from ivan.physics.player_controller import PlayerController
 from ivan.physics.tuning import PhysicsTuning
 from ivan.replays import (
@@ -69,7 +70,12 @@ from . import input_system as _input
 from . import menu_flow as _menu
 from . import netcode as _net
 from . import tuning_profiles as _profiles
+from .animation_observer import AnimationObserver
+from .camera_observer import CameraObserver
+from .camera_tilt_observer import CameraTiltObserver, motion_tilt_targets
+from .determinism import DeterminismTrace, deterministic_state_hash
 from .feel_metrics import FeelMetrics
+from .feel_diagnostics import RollingFeelDiagnostics
 from .feel_feedback import apply_adjustments as _apply_feedback_adjustments
 from .feel_feedback import suggest_adjustments as _suggest_feel_adjustments
 from .hooks import EventHooks
@@ -131,6 +137,7 @@ class RunnerDemo(ShowBase):
         self._mouse_dx_accum: float = 0.0
         self._mouse_dy_accum: float = 0.0
         self._prev_jump_down: bool = False
+        self._prev_dash_down: bool = False
         self._prev_grapple_down: bool = False
         self._prev_noclip_toggle_down: bool = False
         self._prev_demo_save_down: bool = False
@@ -166,17 +173,25 @@ class RunnerDemo(ShowBase):
         self._net_reconcile_decay_hz: float = 22.0
         self._net_local_cam_shell_enabled: bool = True
         self._net_local_cam_smooth_hz: float = 28.0
-        self._net_local_cam_ready: bool = False
-        self._net_local_cam_pos = LVector3f(0, 0, 0)
-        self._net_local_cam_yaw: float = 0.0
-        self._net_local_cam_pitch: float = 0.0
         self._net_cfg_apply_pending_version: int = 0
         self._net_cfg_apply_sent_at: float = 0.0
         self._net_perf = _NetPerfStats()
         self._net_perf_last_publish: float = 0.0
         self._net_perf_text: str = ""
+        self._camera_observer = CameraObserver()
+        self._camera_tilt_observer = CameraTiltObserver()
+        self._animation_observer = AnimationObserver()
         self._feel_metrics = FeelMetrics()
+        self._feel_diag = RollingFeelDiagnostics(tick_rate_hz=self._sim_tick_rate_hz)
+        self._det_trace = DeterminismTrace(tick_rate_hz=self._sim_tick_rate_hz)
+        self._det_trace_hash: str = "0" * 16
+        self._playback_last_frame: DemoFrame | None = None
+        self._playback_det_checked: int = 0
+        self._playback_det_mismatch: int = 0
         self._feel_perf_text: str = "feel | collecting..."
+        self._physics_steps_this_frame: int = 0
+        self._last_sim_vel = LVector3f(0, 0, 0)
+        self._last_input_time: float = 0.0
         self._embedded_server: EmbeddedHostServer | None = None
         self._open_to_network: bool = False
         # If no explicit CLI connect target is provided, keep last used host/port for fast iteration.
@@ -285,9 +300,10 @@ class RunnerDemo(ShowBase):
 
         # Boot behavior:
         # - --map: run immediately (useful for fast iteration)
+        # - --feel-harness: boot directly into deterministic feel harness scene
         # - smoke: keep existing fast boot path (offscreen)
         # - otherwise: start in the main menu (can still Quick Start a bundled map)
-        if self.cfg.map_json or self.cfg.smoke:
+        if self.cfg.map_json or self.cfg.smoke or bool(self.cfg.feel_harness):
             self._start_game(map_json=self.cfg.map_json)
         else:
             self._enter_main_menu()
@@ -356,6 +372,8 @@ class RunnerDemo(ShowBase):
         self.accept("r", lambda: self._safe_call("input.respawn", self._on_respawn_pressed))
         self.accept("f2", self.input_debug.toggle)
         self.accept("f3", self.error_console.toggle)
+        self.accept("f10", lambda: self._safe_call("feel.dump", self._dump_feel_rolling_log))
+        self.accept("f11", lambda: self._safe_call("determinism.dump", self._dump_determinism_trace))
         self.accept("shift-f3", lambda: self._safe_call("errors.clear", self._clear_errors))
         self.accept("arrow_up", lambda: self._menu_nav_press(-1))
         self.accept("arrow_down", lambda: self._menu_nav_press(1))
@@ -659,6 +677,28 @@ class RunnerDemo(ShowBase):
         self.pause_ui.set_feel_status(msg)
         self.ui.set_status(msg)
 
+    def _dump_feel_rolling_log(self) -> None:
+        stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime(time.time()))
+        out_dir = Path(__file__).resolve().parents[3] / "replays" / "telemetry_exports"
+        out = out_dir / f"{stamp}_feel_rolling.json"
+        try:
+            self._feel_diag.dump_json(out_path=out)
+        except Exception as e:
+            self.ui.set_status(f"Feel log dump failed: {e}")
+            return
+        self.ui.set_status(f"Feel log dumped: {out.name}")
+
+    def _dump_determinism_trace(self) -> None:
+        stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime(time.time()))
+        out_dir = Path(__file__).resolve().parents[3] / "replays" / "telemetry_exports"
+        out = out_dir / f"{stamp}_det_trace.json"
+        try:
+            self._det_trace.dump_json(out_path=out)
+        except Exception as e:
+            self.ui.set_status(f"Determinism dump failed: {e}")
+            return
+        self.ui.set_status(f"Determinism trace dumped: {out.name}")
+
     def _feel_apply_feedback(self, route_tag: str, feedback_text: str) -> None:
         text = str(feedback_text or "").strip()
         tag = str(route_tag or "").strip()
@@ -748,6 +788,9 @@ class RunnerDemo(ShowBase):
         self._playback_index = 0
         self._playback_active = True
         self._playback_look_scale = max(1, int(rec.metadata.look_scale))
+        self._playback_last_frame = None
+        self._playback_det_checked = 0
+        self._playback_det_mismatch = 0
         self._active_recording = None
         self.replay_browser_ui.hide()
         self._replay_browser_open = False
@@ -769,12 +812,18 @@ class RunnerDemo(ShowBase):
         self._playback_frames = None
         self._playback_index = 0
         self._playback_look_scale = self._look_input_scale
+        self._playback_last_frame = None
         self._mouse_dx_accum = 0.0
         self._mouse_dy_accum = 0.0
         self._last_mouse = None
         self.replay_input_ui.hide()
         if was_active and reason:
-            self.ui.set_status(str(reason))
+            if self._playback_det_checked > 0:
+                self.ui.set_status(
+                    f"{reason} | determinism: checked={self._playback_det_checked} mismatches={self._playback_det_mismatch}"
+                )
+            else:
+                self.ui.set_status(str(reason))
 
     def _start_new_demo_recording(self) -> None:
         if self.scene is None:
@@ -893,6 +942,7 @@ class RunnerDemo(ShowBase):
             lighting_cfg = lighting if isinstance(lighting, dict) else run_meta.lighting
             cfg = RunConfig(
                 smoke=self.cfg.smoke,
+                feel_harness=bool(self.cfg.feel_harness),
                 map_json=cfg_map_json,
                 hl_root=self.cfg.hl_root,
                 hl_mod=self.cfg.hl_mod,
@@ -918,6 +968,7 @@ class RunnerDemo(ShowBase):
                 player_half_height=float(self.tuning.player_half_height),
                 render=self.world_root,
             )
+            self.scene.set_collision_updater(self.collision.update_graybox_block)
 
             self.player = PlayerController(
                 tuning=self.tuning,
@@ -926,6 +977,7 @@ class RunnerDemo(ShowBase):
                 collision=self.collision,
             )
             self._local_hp = 100
+            self._camera_tilt_observer.reset()
             self._sim_state_ready = False
             self._push_sim_snapshot()
             self._render_interpolated_state(alpha=1.0)
@@ -935,6 +987,7 @@ class RunnerDemo(ShowBase):
             if not self._playback_active:
                 self._playback_look_scale = self._look_input_scale
             self._prev_jump_down = False
+            self._prev_dash_down = False
             self._prev_grapple_down = False
             self._prev_noclip_toggle_down = False
             self._prev_demo_save_down = False
@@ -1113,36 +1166,78 @@ class RunnerDemo(ShowBase):
         c = self._lerp_vec(self._sim_prev_cam_pos, self._sim_curr_cam_pos, a)
         y = self._lerp_angle_deg(self._sim_prev_yaw, self._sim_curr_yaw, a)
         pi = self._lerp_angle_deg(self._sim_prev_pitch, self._sim_curr_pitch, a)
+        if not bool(self.tuning.harness_camera_smoothing_enabled):
+            c = LVector3f(self._sim_curr_cam_pos)
+            y = float(self._sim_curr_yaw)
+            pi = float(self._sim_curr_pitch)
         if self._net_connected:
             p += self._net_reconcile_pos_offset
         self.player_node.setPos(p)
-        if self._net_connected and self._net_local_cam_shell_enabled:
-            if not self._net_local_cam_ready:
-                self._net_local_cam_pos = LVector3f(c)
-                self._net_local_cam_yaw = float(y)
-                self._net_local_cam_pitch = float(pi)
-                self._net_local_cam_ready = True
-            else:
-                dt = max(0.0, float(frame_dt))
-                blend = 1.0 - math.exp(-max(0.0, float(self._net_local_cam_smooth_hz)) * dt) if dt > 0.0 else 1.0
-                self._net_local_cam_pos = self._lerp_vec(self._net_local_cam_pos, c, blend)
-                self._net_local_cam_yaw = self._lerp_angle_deg(self._net_local_cam_yaw, y, blend)
-                self._net_local_cam_pitch = self._lerp_angle_deg(self._net_local_cam_pitch, pi, blend)
-            self.camera.setPos(self._net_local_cam_pos)
-            self.camera.setHpr(self._net_local_cam_yaw, self._net_local_cam_pitch, 0)
-            self._feel_metrics.record_camera_sample(
-                pos=self._net_local_cam_pos,
-                yaw=float(self._net_local_cam_yaw),
-                pitch=float(self._net_local_cam_pitch),
-                dt=max(1e-6, float(frame_dt)),
+        use_shell = self._net_connected and self._net_local_cam_shell_enabled and bool(self.tuning.harness_camera_smoothing_enabled)
+        wallrun_roll = 0.0
+        move_roll = 0.0
+        move_pitch = 0.0
+        if self.player is not None:
+            if self.player.is_wallrunning():
+                wallrun_roll = float(self.player.wallrun_camera_roll_deg(yaw_deg=float(y)))
+            move_tilt = motion_tilt_targets(
+                vel=LVector3f(self.player.vel),
+                yaw_deg=float(y),
+                reference_speed=max(1.0, float(self.tuning.max_ground_speed)),
             )
-            return
-        self.camera.setPos(c)
-        self.camera.setHpr(y, pi, 0)
+            move_roll = float(move_tilt.roll)
+            move_pitch = float(move_tilt.pitch)
+        if abs(wallrun_roll) > 0.01:
+            # Keep wallrun indication dominant; movement tilt remains subtle while on-wall.
+            move_roll *= 0.35
+            move_pitch *= 0.50
+        target_roll = float(wallrun_roll + move_roll)
+        target_pitch = float(move_pitch)
+        tilt_pose = self._camera_tilt_observer.observe(
+            dt=float(frame_dt),
+            target_roll=float(target_roll),
+            target_pitch=float(target_pitch),
+            enabled=bool(self.tuning.harness_camera_smoothing_enabled),
+            roll_base_hz=16.0,
+            roll_boost_hz_per_deg=2.1,
+            pitch_base_hz=11.0,
+            pitch_boost_hz_per_deg=1.1,
+        )
+        if use_shell:
+            pose = self._camera_observer.observe(
+                target_pos=LVector3f(c),
+                target_yaw=float(y),
+                target_pitch=float(pi),
+                dt=float(frame_dt),
+                smoothing_enabled=True,
+                smoothing_hz=float(self._net_local_cam_smooth_hz),
+                target_roll=0.0,
+            )
+            cam_pos = LVector3f(pose.pos)
+            cam_yaw = float(pose.yaw)
+            cam_pitch = float(pose.pitch) + float(tilt_pose.pitch)
+            cam_roll = float(tilt_pose.roll)
+        else:
+            self._camera_observer.reset()
+            cam_pos = LVector3f(c)
+            cam_yaw = float(y)
+            cam_pitch = float(pi) + float(tilt_pose.pitch)
+            cam_roll = float(tilt_pose.roll)
+
+        hspeed = 0.0
+        if self.player is not None:
+            hspeed = math.sqrt(float(self.player.vel.x) ** 2 + float(self.player.vel.y) ** 2)
+        cam_pos.z += self._animation_observer.camera_bob_offset_z(
+            enabled=bool(self.tuning.harness_animation_root_motion_enabled),
+            time_s=float(globalClock.getFrameTime()),
+            horizontal_speed=float(hspeed),
+        )
+        self.camera.setPos(cam_pos)
+        self.camera.setHpr(cam_yaw, cam_pitch, cam_roll)
         self._feel_metrics.record_camera_sample(
-            pos=c,
-            yaw=float(y),
-            pitch=float(pi),
+            pos=cam_pos,
+            yaw=float(cam_yaw),
+            pitch=float(cam_pitch),
             dt=max(1e-6, float(frame_dt)),
         )
 
@@ -1202,7 +1297,8 @@ class RunnerDemo(ShowBase):
             self._net_reconcile_pos_offset = LVector3f(0, 0, 0)
             self._net_reconcile_yaw_offset = 0.0
             self._net_reconcile_pitch_offset = 0.0
-            self._net_local_cam_ready = False
+            self._camera_observer.reset()
+            self._camera_tilt_observer.reset()
             self._net_cfg_apply_pending_version = 0
             self._net_cfg_apply_sent_at = 0.0
             self._net_perf.reset()
@@ -1332,6 +1428,7 @@ class RunnerDemo(ShowBase):
             return _InputCommand()
         frame = self._playback_frames[self._playback_index]
         self._playback_index += 1
+        self._playback_last_frame = frame
         return _InputCommand.from_demo_frame(frame, look_scale=self._playback_look_scale)
 
     def _simulate_input_tick(
@@ -1382,22 +1479,43 @@ class RunnerDemo(ShowBase):
             self._toggle_noclip()
         if cmd.grapple_pressed:
             self._on_grapple_primary_down()
-        if cmd.jump_pressed:
-            self.player.queue_jump()
 
         wish = self._wish_direction_from_axes(move_forward=cmd.move_forward, move_right=cmd.move_right)
         crouching = bool(cmd.crouch_held)
+        jump_requested = bool(cmd.jump_pressed)
+        if (
+            int(cmd.move_forward) != 0
+            or int(cmd.move_right) != 0
+            or bool(cmd.jump_pressed)
+            or bool(cmd.jump_held)
+            or bool(cmd.dash_pressed)
+            or bool(cmd.crouch_held)
+            or bool(cmd.grapple_pressed)
+            or int(cmd.look_dx) != 0
+            or int(cmd.look_dy) != 0
+        ):
+            self._last_input_time = float(globalClock.getFrameTime())
 
         if self.tuning.autojump_enabled and cmd.jump_held and self.player.grounded:
             # Autojump is for chained grounded hops; don't feed airborne wall-jump retries.
-            self.player.queue_jump()
+            jump_requested = True
 
         if self.tuning.noclip_enabled:
             self._step_noclip(dt=self._sim_fixed_dt, wish_dir=wish, jump_held=bool(cmd.jump_held), crouching=crouching)
         else:
             if not bool(self.tuning.grapple_enabled):
                 self.player.detach_grapple()
-            self.player.step(dt=self._sim_fixed_dt, wish_dir=wish, yaw_deg=self._yaw, crouching=crouching)
+            self.player.step_with_intent(
+                dt=self._sim_fixed_dt,
+                intent=MotionIntent(
+                    wish_dir=LVector3f(wish),
+                    crouching=bool(crouching),
+                    jump_requested=bool(jump_requested),
+                    dash_requested=bool(cmd.dash_pressed),
+                ),
+                yaw_deg=self._yaw,
+                pitch_deg=self._pitch,
+            )
 
         if self.scene is not None and self.player.pos.z < float(self.scene.kill_z):
             self._do_respawn(from_mode=True)
@@ -1411,6 +1529,46 @@ class RunnerDemo(ShowBase):
             pre_vel=pre_vel,
             post_vel=LVector3f(self.player.vel),
         )
+        now_tick = float(globalClock.getFrameTime())
+        accel = (LVector3f(self.player.vel) - LVector3f(self._last_sim_vel)) / max(1e-6, float(self._sim_fixed_dt))
+        self._last_sim_vel = LVector3f(self.player.vel)
+        self._feel_diag.record_tick(
+            t=now_tick,
+            state=self.player.motion_state_name(),
+            pos=LVector3f(self.player.pos),
+            vel=LVector3f(self.player.vel),
+            accel=LVector3f(accel),
+            contact_count=self.player.contact_count(),
+            floor_normal=self.player.ground_normal(),
+            wall_normal=self.player.wall_normal(),
+            jump_buffer_left=self.player.jump_buffer_left(),
+            coyote_left=self.player.coyote_left(),
+            last_input_age=max(0.0, now_tick - float(self._last_input_time)),
+            inp_mf=int(cmd.move_forward),
+            inp_mr=int(cmd.move_right),
+            inp_jp=bool(cmd.jump_pressed),
+            inp_jh=bool(cmd.jump_held),
+            inp_dp=bool(cmd.dash_pressed),
+        )
+        tick_hash = deterministic_state_hash(
+            pos=LVector3f(self.player.pos),
+            vel=LVector3f(self.player.vel),
+            yaw_deg=float(self._yaw),
+            pitch_deg=float(self._pitch),
+            grounded=bool(self.player.grounded),
+            state=self.player.motion_state_name(),
+            contact_count=self.player.contact_count(),
+            jump_buffer_left=self.player.jump_buffer_left(),
+            coyote_left=self.player.coyote_left(),
+        )
+        self._det_trace_hash = self._det_trace.record(t=now_tick, tick_hash=tick_hash)
+        if self._playback_active and self._playback_last_frame is not None:
+            tm = self._playback_last_frame.telemetry if isinstance(self._playback_last_frame.telemetry, dict) else None
+            exp_hash = str(tm.get("det_h") or "") if tm else ""
+            if exp_hash:
+                self._playback_det_checked += 1
+                if exp_hash != tick_hash:
+                    self._playback_det_mismatch += 1
 
         if capture_snapshot:
             self._push_sim_snapshot()
@@ -1436,20 +1594,11 @@ class RunnerDemo(ShowBase):
                     "mr": int(cmd.move_right),
                     "jp": bool(cmd.jump_pressed),
                     "jh": bool(cmd.jump_held),
+                    "dp": bool(cmd.dash_pressed),
                     "ch": bool(cmd.crouch_held),
                     "gp": bool(cmd.grapple_pressed),
                 },
             )
-
-    def _queue_jump(self) -> None:
-        if (
-            self.player is not None
-            and self._mode == "game"
-            and not self._pause_menu_open
-            and not self._debug_menu_open
-            and not self._console_open
-        ):
-            self.player.queue_jump()
 
     def _on_grapple_primary_down(self) -> None:
         if (
@@ -1487,12 +1636,25 @@ class RunnerDemo(ShowBase):
         """
 
         if self.player is None:
+            det_h = deterministic_state_hash(
+                pos=LVector3f(0, 0, 0),
+                vel=LVector3f(0, 0, 0),
+                yaw_deg=float(self._yaw),
+                pitch_deg=float(self._pitch),
+                grounded=False,
+                state="none",
+                contact_count=0,
+                jump_buffer_left=0.0,
+                coyote_left=0.0,
+            )
             return {
                 "t": float(globalClock.getFrameTime()),
                 "yaw": float(self._yaw),
                 "pitch": float(self._pitch),
+                "det_h": str(det_h),
                 "inp_jp": bool(cmd.jump_pressed),
                 "inp_jh": bool(cmd.jump_held),
+                "inp_dp": bool(cmd.dash_pressed),
                 "inp_ch": bool(cmd.crouch_held),
                 "inp_gp": bool(cmd.grapple_pressed),
                 "inp_nt": bool(cmd.noclip_toggle_pressed),
@@ -1517,6 +1679,17 @@ class RunnerDemo(ShowBase):
         eye_height = float(self.tuning.player_eye_height)
         if bool(self.player.crouched) and bool(self.tuning.crouch_enabled):
             eye_height = min(eye_height, float(self.tuning.crouch_eye_height))
+        det_h = deterministic_state_hash(
+            pos=LVector3f(pos),
+            vel=LVector3f(vel),
+            yaw_deg=float(self._yaw),
+            pitch_deg=float(self._pitch),
+            grounded=bool(self.player.grounded),
+            state=self.player.motion_state_name(),
+            contact_count=self.player.contact_count(),
+            jump_buffer_left=self.player.jump_buffer_left(),
+            coyote_left=self.player.coyote_left(),
+        )
         return {
             "t": float(globalClock.getFrameTime()),
             "x": float(pos.x),
@@ -1530,12 +1703,14 @@ class RunnerDemo(ShowBase):
             "sp": float(speed),
             "yaw": float(self._yaw),
             "pitch": float(self._pitch),
+            "det_h": str(det_h),
             "grounded": bool(self.player.grounded),
             "crouched": bool(self.player.crouched),
             "grapple": bool(self.player.is_grapple_attached()),
             "noclip": bool(self.tuning.noclip_enabled),
             "inp_jp": bool(cmd.jump_pressed),
             "inp_jh": bool(cmd.jump_held),
+            "inp_dp": bool(cmd.dash_pressed),
             "inp_ch": bool(cmd.crouch_held),
             "inp_gp": bool(cmd.grapple_pressed),
             "inp_nt": bool(cmd.noclip_toggle_pressed),
@@ -1613,7 +1788,11 @@ class RunnerDemo(ShowBase):
         self._net_reconcile_pos_offset = LVector3f(0, 0, 0)
         self._net_reconcile_yaw_offset = 0.0
         self._net_reconcile_pitch_offset = 0.0
-        self._net_local_cam_ready = False
+        self._camera_observer.reset()
+        self._camera_tilt_observer.reset()
+        self._det_trace.reset()
+        self._det_trace_hash = "0" * 16
+        self._last_sim_vel = LVector3f(0, 0, 0)
         self._sim_state_ready = False
         self._push_sim_snapshot()
         self._render_interpolated_state(alpha=1.0)
@@ -1687,6 +1866,7 @@ class RunnerDemo(ShowBase):
 
             frame_dt = min(globalClock.getDt(), 0.25)
             now = float(globalClock.getFrameTime())
+            self._feel_diag.record_frame_dt(dt_s=float(frame_dt))
             if self._playback_active:
                 if not self.replay_input_ui.is_visible():
                     self.replay_input_ui.show()
@@ -1727,11 +1907,28 @@ class RunnerDemo(ShowBase):
                 pos = self.player.pos if self.player is not None else LVector3f(0, 0, 0)
                 vel = self.player.vel if self.player is not None else LVector3f(0, 0, 0)
                 grounded = bool(self.player.grounded) if self.player is not None else False
+                accel = (
+                    (LVector3f(vel) - LVector3f(self._last_sim_vel)) / max(1e-6, float(self._sim_fixed_dt))
+                    if self.player is not None
+                    else LVector3f(0, 0, 0)
+                )
+                floor_n = self.player.ground_normal() if self.player is not None else LVector3f(0, 0, 1)
+                wall_n = self.player.wall_normal() if self.player is not None else LVector3f(0, 0, 0)
+                contacts = int(self.player.contact_count()) if self.player is not None else 0
+                jump_buf = float(self.player.jump_buffer_left()) if self.player is not None else 0.0
+                coyote = float(self.player.coyote_left()) if self.player is not None else 0.0
+                state_name = self.player.motion_state_name() if self.player is not None else "none"
+                last_input_age = max(0.0, float(now) - float(self._last_input_time))
                 self.input_debug.set_text(
                     "input debug (F2)\n"
                     f"mode={self._mode} lock={self._pointer_locked} dt={frame_dt:.3f} hasMouse={has_mouse} mouse=({mx:+.2f},{my:+.2f})\n"
+                    f"fps={1.0/max(1e-6,float(frame_dt)):.1f} frame_p95={self._feel_diag.frame_p95_ms():.2f}ms sim={self._sim_tick_rate_hz}hz steps={self._physics_steps_this_frame}\n"
+                    f"det_hash={self._det_trace_hash[:12]} det_samples={self._det_trace.sample_count()} replay_det={self._playback_det_checked}/{self._playback_det_mismatch}\n"
                     f"raw WASD={int(raw_w)}{int(raw_a)}{int(raw_s)}{int(raw_d)} ascii WASD={int(asc_w)}{int(asc_a)}{int(asc_s)}{int(asc_d)}\n"
-                    f"wish=({wish_dbg.x:+.2f},{wish_dbg.y:+.2f}) pos=({pos.x:+.2f},{pos.y:+.2f},{pos.z:+.2f}) vel=({vel.x:+.2f},{vel.y:+.2f},{vel.z:+.2f}) grounded={int(grounded)}\n"
+                    f"state={state_name} wish=({wish_dbg.x:+.2f},{wish_dbg.y:+.2f}) pos=({pos.x:+.2f},{pos.y:+.2f},{pos.z:+.2f})\n"
+                    f"vel=({vel.x:+.2f},{vel.y:+.2f},{vel.z:+.2f}) accel=({accel.x:+.2f},{accel.y:+.2f},{accel.z:+.2f}) grounded={int(grounded)} contacts={contacts}\n"
+                    f"floor_n=({floor_n.x:+.2f},{floor_n.y:+.2f},{floor_n.z:+.2f}) wall_n=({wall_n.x:+.2f},{wall_n.y:+.2f},{wall_n.z:+.2f})\n"
+                    f"last_input_age={last_input_age:.3f}s jump_buf={jump_buf:.3f}s coyote={coyote:.3f}s\n"
                     f"{self._net_perf_text if self._net_perf_text else 'net perf | waiting for samples...'}\n"
                     f"{self._feel_perf_text}"
                 )
@@ -1741,6 +1938,7 @@ class RunnerDemo(ShowBase):
 
             self._sim_accumulator = min(0.25, self._sim_accumulator + frame_dt)
             self._poll_network_snapshot()
+            steps = 0
             while self._sim_accumulator >= self._sim_fixed_dt:
                 cmd = (
                     self._sample_replay_input_command()
@@ -1749,6 +1947,8 @@ class RunnerDemo(ShowBase):
                 )
                 self._simulate_input_tick(cmd=cmd, menu_open=menu_open)
                 self._sim_accumulator -= self._sim_fixed_dt
+                steps += 1
+            self._physics_steps_this_frame = int(steps)
             if self._net_connected:
                 decay = math.exp(-max(0.0, float(self._net_reconcile_decay_hz)) * max(0.0, float(frame_dt)))
                 self._net_reconcile_pos_offset *= float(decay)
@@ -1795,7 +1995,7 @@ class RunnerDemo(ShowBase):
             self.ui.set_health(self._local_hp)
             self.ui.set_status(
                 f"speed: {hspeed:.2f} | z-vel: {self.player.vel.z:.2f} | grounded: {self.player.grounded} | "
-                f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()} | "
+                f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()} | dash: {self.player.is_dashing()} | "
                 f"grapple: {self.player.is_grapple_attached()} | hp: {self._local_hp} | net: {self._net_connected} | "
                 f"rec: {self._active_recording is not None} | replay: {self._playback_active}"
             )
@@ -1872,6 +2072,7 @@ def run(
     *,
     smoke: bool = False,
     smoke_screenshot: str | None = None,
+    feel_harness: bool = False,
     map_json: str | None = None,
     hl_root: str | None = None,
     hl_mod: str = "valve",
@@ -1883,6 +2084,7 @@ def run(
         RunConfig(
             smoke=smoke,
             smoke_screenshot=smoke_screenshot,
+            feel_harness=feel_harness,
             map_json=map_json,
             hl_root=hl_root,
             hl_mod=hl_mod,

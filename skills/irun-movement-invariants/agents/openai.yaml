@@ -1,0 +1,5 @@
+# Optional UI metadata. Keep in sync with SKILL.md.
+display_name: IVAN Movement Invariants
+short_description: Keep movement tuning invariant-first and decoupled.
+default_prompt: |
+  Refactor this IVAN movement/physics change using invariant-first tuning with derived constants and solver authority. Keep debug sliders minimal, route actions through intent, keep camera/animation read-only, and update docs/tests with the same change.
