@@ -25,7 +25,7 @@ def test_load_replay_accepts_v1_payload(tmp_path: Path) -> None:
                 "map_json": None,
                 "tuning": {},
             },
-            "frames": [{"dx": 1, "dy": -2, "mf": 1, "mr": 0, "jp": True, "jh": True, "ch": False, "gp": False, "nt": False}],
+            "frames": [{"dx": 1, "dy": -2, "mf": 1, "mr": 0, "jp": True, "jh": True, "sp": False, "gp": False, "nt": False}],
         },
     )
     rec = load_replay(p)
@@ -56,7 +56,7 @@ def test_load_replay_v2_reads_frame_telemetry(tmp_path: Path) -> None:
                     "mr": 1,
                     "jp": False,
                     "jh": False,
-                    "ch": True,
+                    "sp": True,
                     "gp": False,
                     "nt": False,
                     "tm": {"x": 1.0, "y": 2.0, "z": 3.0, "yaw": 90.0, "grounded": True},
@@ -66,7 +66,7 @@ def test_load_replay_v2_reads_frame_telemetry(tmp_path: Path) -> None:
     )
     rec = load_replay(p)
     assert len(rec.frames) == 1
-    assert rec.frames[0].crouch_held is True
+    assert rec.frames[0].slide_pressed is True
     assert isinstance(rec.frames[0].telemetry, dict)
     assert rec.frames[0].telemetry["yaw"] == 90.0
     # v2 compatibility: if raw held-state bits are missing, fallback is derived from axes.
@@ -97,7 +97,7 @@ def test_load_replay_v3_marks_raw_inputs_available_even_when_all_false(tmp_path:
                     "mr": 0,
                     "jp": False,
                     "jh": False,
-                    "ch": False,
+                    "sp": False,
                     "gp": False,
                     "nt": False,
                     "kw": False,

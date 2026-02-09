@@ -20,10 +20,9 @@ class DemoFrame:
     move_right: int
     jump_pressed: bool
     jump_held: bool
-    crouch_held: bool
+    slide_pressed: bool
     grapple_pressed: bool
     noclip_toggle_pressed: bool
-    dash_pressed: bool = False
     key_w_held: bool = False
     key_a_held: bool = False
     key_s_held: bool = False
@@ -124,8 +123,9 @@ def save_recording(rec: DemoRecording) -> Path:
                 "mr": int(f.move_right),
                 "jp": bool(f.jump_pressed),
                 "jh": bool(f.jump_held),
-                "dp": bool(f.dash_pressed),
-                "ch": bool(f.crouch_held),
+                "sp": bool(f.slide_pressed),
+                # Backward-compatible alias for older tools.
+                "dp": bool(f.slide_pressed),
                 "gp": bool(f.grapple_pressed),
                 "nt": bool(f.noclip_toggle_pressed),
                 "kw": bool(f.key_w_held),
@@ -190,8 +190,7 @@ def load_replay(path: Path) -> DemoRecording:
                 move_right=max(-1, min(1, int(row.get("mr") or 0))),
                 jump_pressed=bool(row.get("jp")),
                 jump_held=bool(row.get("jh")),
-                dash_pressed=bool(row.get("dp")),
-                crouch_held=bool(row.get("ch")),
+                slide_pressed=bool(row.get("sp")) or bool(row.get("dp")),
                 grapple_pressed=bool(row.get("gp")),
                 noclip_toggle_pressed=bool(row.get("nt")),
                 # v3+ explicit held states for accurate replay HUD.

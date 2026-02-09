@@ -23,12 +23,10 @@ def test_debug_ui_exposes_curated_invariant_first_controls() -> None:
     assert "wallrun_sink_t90" in covered
     assert "jump_height" in covered
     assert "jump_apex_time" in covered
-    assert "dash_distance" in covered
-    assert "dash_duration" in covered
+    assert "slide_stop_t90" in covered
     assert "coyote_time" in covered
     assert "jump_buffer_time" in covered
-    assert "dash_enabled" in covered
-    assert "dash_sweep_enabled" in covered
+    assert "slide_enabled" in covered
     assert "autojump_enabled" in covered
     assert "wallrun_enabled" in covered
     assert "surf_enabled" in covered

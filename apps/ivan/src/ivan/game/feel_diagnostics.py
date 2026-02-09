@@ -36,7 +36,7 @@ class FeelTickSample:
     inp_mr: int
     inp_jp: bool
     inp_jh: bool
-    inp_dp: bool
+    inp_sp: bool
 
 
 class RollingFeelDiagnostics:
@@ -74,7 +74,7 @@ class RollingFeelDiagnostics:
         inp_mr: int,
         inp_jp: bool,
         inp_jh: bool,
-        inp_dp: bool,
+        inp_sp: bool,
     ) -> None:
         speed = float((LVector3f(vel)).length())
         self._samples.append(
@@ -105,7 +105,7 @@ class RollingFeelDiagnostics:
                 inp_mr=int(inp_mr),
                 inp_jp=bool(inp_jp),
                 inp_jh=bool(inp_jh),
-                inp_dp=bool(inp_dp),
+                inp_sp=bool(inp_sp),
             )
         )
 

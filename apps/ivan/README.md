@@ -72,13 +72,13 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 
 ## Controls
 - `WASD`: move (US layout). On RU layout you can use `ЦФЫВ`. Arrow keys also work.
-- `C` (hold): crouch
+- `Shift` (hold): slide (low-profile hull; release to exit)
 - `Space`: jump
 - `R`: reset to spawn
 - `Esc`: opens the in-game menu (Resume / Map Selector / Key Bindings / Back to Main Menu / Quit); in the main menu it acts as back/quit
 - `Esc -> Replays`: open replay browser and load an input-demo file
   - while replay playback is active, input is locked; press `R` to exit replay and respawn
-  - replay playback shows an input HUD (movement/jump/crouch/mouse directions)
+  - replay playback shows an input HUD (movement/jump/slide/mouse directions)
 - `` ` `` (tilde/backtick): opens the debug/admin tuning menu
 - `F`: save current demo recording (recording window starts on respawn and ends when saved)
 - `F4`: toggle the in-game console
@@ -180,15 +180,13 @@ Numeric settings include normalized sliders + entry fields for precise tuning:
 - `jump_apex_time`
 - `jump_buffer_time`
 - `coyote_time`
-- `dash_distance`
-- `dash_duration`
+- `slide_stop_t90`
 
 Boolean toggles are shown inline as labeled rows with `ON/OFF` buttons:
 - Autojump (hold jump to keep hopping)
 - Coyote/buffer enable
 - Custom friction enable
-- Dash enable
-- Dash sweep enable
+- Slide enable
 - Wallrun enable
 - Surf enable
 - Harness camera smoothing enable
@@ -198,6 +196,13 @@ Movement notes:
 - Air speed and bunnyhop gain are controlled by two invariants:
   - `air_speed_mult` (`air_speed = max_ground_speed * air_speed_mult`)
   - `air_gain_t90` (`air_accel = 0.9 / air_gain_t90`)
+- Slide feel is controlled by one independent invariant:
+  - `slide_stop_t90` (how slowly slide preserves carried ground speed while held)
+- Slide behavior:
+  - `Shift` is hold-based: press/hold to stay in slide, release to exit slide immediately.
+  - Slide does not apply an entry speed boost; it preserves existing horizontal speed and decays it using `slide_stop_t90`.
+  - Keyboard strafe input is ignored while sliding; heading is controlled by camera yaw (mouse look).
+  - Jump can be triggered while sliding and exits slide on takeoff.
 - Repeated wall-jumps are controlled by `wall_jump_cooldown` (default: `1.0s`).
 - Wall-jump is airborne-only: it cannot trigger while grounded, even if the player is touching a wall.
 - Autojump only queues while grounded; holding jump in fully airborne states will not trigger wall-jump retries.

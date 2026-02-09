@@ -52,9 +52,9 @@ See: `docs/ui-kit.md`.
   - `solver.py`: authority for derived run/jump/gravity/ground-damping operations
   - `intent.py`, `state.py`: motion pipeline contracts for staged refactor
 - `apps/ivan/src/ivan/physics/player_controller.py`: Kinematic character controller orchestration (intent -> mode -> solver -> collision)
-- `apps/ivan/src/ivan/physics/player_controller_actions.py`: Player action mixin (jump variants, vault, grapple, crouch, friction)
+- `apps/ivan/src/ivan/physics/player_controller_actions.py`: Player action mixin (jump variants, vault, grapple, slide hull, friction)
 - `apps/ivan/src/ivan/physics/player_controller_surf.py`: Air/surf behavior mixin (air steer, surf redirect, wall/surf contact probes)
-- `apps/ivan/src/ivan/physics/player_controller_collision.py`: Collision and step-slide mixin (sweep, snap, dash sweep, graybox fallback)
+- `apps/ivan/src/ivan/physics/player_controller_collision.py`: Collision and step-slide mixin (sweep, snap, graybox fallback)
 - `apps/ivan/src/ivan/physics/collision_world.py`: Bullet collision query world (convex sweeps against static geometry)
 - `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (CS-style grouped boxes, collapsible sections, scrollable content, normalized sliders, profile dropdown/save)
 - `apps/ivan/src/ivan/ui/main_menu.py`: main menu controller (bundle list + import flow + video settings)
@@ -90,10 +90,10 @@ See: `docs/ui-kit.md`.
 - The game loop is driven by Panda3D's task manager.
 - Movement simulation runs at a fixed `60 Hz` tick to support deterministic input replay.
 - Movement refactor rollout is staged:
-  - active movement tuning is invariant-first: run, stop damping, jump, air gain/cap, wallrun sink, and dash are derived from timing/target invariants
+  - active movement tuning is invariant-first: run, stop damping, jump, air gain/cap, wallrun sink, and slide are derived from timing/target invariants
   - `PlayerController` now uses `MotionSolver` for derived ground run, ground coasting damping, jump takeoff speed, air gain/cap, wallrun sink response, and gravity
   - gameplay and authoritative server ticks now feed movement through `MotionIntent` (`step_with_intent`) instead of ad-hoc feature velocity calls
-  - dash invariants (`dash_distance`, `dash_duration`) derive dash speed; runtime can switch between dash sweep and discrete collision (`dash_sweep_enabled`)
+  - slide invariant (`slide_stop_t90`) derives grounded slide speed decay; slide is hold-driven, preserves carried speed, and owns low-profile hull state while active
   - debug tuning UI is intentionally narrow: invariant-first controls plus harness isolation toggles (legacy direct scalars and niche sliders are hidden)
   - legacy direct run/gravity tuning fields are migrated to invariants and no longer part of active tuning schema
   - legacy air gain scalars are migrated (`max_air_speed`, `jump_accel`, `air_control`, `air_counter_strafe_brake`) and removed from active tuning schema
@@ -138,6 +138,8 @@ See: `docs/ui-kit.md`.
 - CLI telemetry export:
   - `python -m ivan --export-latest-replay-telemetry [--replay-telemetry-out <dir>]` exports latest replay metrics and exits.
   - `python -m ivan --compare-latest-replays [--replay-telemetry-out <dir>] [--replay-route-tag A]` auto-exports latest+previous and writes comparison JSON.
+  - `python -m ivan --verify-latest-replay-determinism [--determinism-runs N] [--replay-telemetry-out <dir>]` re-simulates latest replay offline multiple times and emits a determinism report JSON.
+  - `python -m ivan --verify-replay-determinism <path> [--determinism-runs N] [--replay-telemetry-out <dir>]` runs the same determinism check for a specific replay file.
 - Display/window:
   - Default: windowed 1280x720 on all platforms (Windows + macOS). Window is user-resizable.
   - Display settings (fullscreen, resolution) persist in `~/.irun/ivan/state.json` and are applied on startup.

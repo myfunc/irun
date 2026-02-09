@@ -13,8 +13,7 @@ def test_input_command_roundtrip_preserves_raw_held_states() -> None:
         move_right=-1,
         jump_pressed=True,
         jump_held=True,
-        dash_pressed=True,
-        crouch_held=False,
+        slide_pressed=True,
         grapple_pressed=True,
         noclip_toggle_pressed=False,
         key_w_held=True,
@@ -36,7 +35,7 @@ def test_input_command_roundtrip_preserves_raw_held_states() -> None:
     assert replay_cmd.look_dy == -7
     assert replay_cmd.move_forward == 1
     assert replay_cmd.move_right == -1
-    assert replay_cmd.dash_pressed is True
+    assert replay_cmd.slide_pressed is True
     assert replay_cmd.key_w_held is True
     assert replay_cmd.key_a_held is True
     assert replay_cmd.key_s_held is False
@@ -56,7 +55,7 @@ def test_from_demo_frame_without_raw_flags_marks_wasd_unavailable() -> None:
         move_right=1,
         jump_pressed=False,
         jump_held=False,
-        crouch_held=False,
+        slide_pressed=False,
         grapple_pressed=False,
         noclip_toggle_pressed=False,
     )

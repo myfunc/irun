@@ -10,6 +10,6 @@ class MotionIntent:
     """Input intent for one simulation tick."""
 
     wish_dir: LVector3f
-    crouching: bool
     jump_requested: bool
-    dash_requested: bool = False
+    # Hold semantics: True while slide key is held down.
+    slide_requested: bool = False

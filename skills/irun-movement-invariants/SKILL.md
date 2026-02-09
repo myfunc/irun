@@ -1,6 +1,6 @@
 ---
 name: irun-movement-invariants
-description: Build and refactor IVAN movement/physics features using a minimal invariant-first tuning surface with derived constants and clear solver authority. Use for any movement, jump, dash, collision, camera-feel, or control-pipeline change.
+description: Build and refactor IVAN movement/physics features using a minimal invariant-first tuning surface with derived constants and clear solver authority. Use for any movement, jump, slide, collision, camera-feel, or control-pipeline change.
 ---
 
 # IVAN Movement Invariants Skill
@@ -18,6 +18,11 @@ Keep movement feel stable under tuning changes by exposing only a small set of d
 - For wallrun UX, prefer read-only camera roll indication and camera-forward-biased wallrun jumps without adding extra scalar clutter.
 - Wallrun camera roll should recover toward neutral immediately when wallrun ends (including wallrun jump), while keeping the transition smooth and snappy.
 - When adding/refactoring movement features, remove redundant legacy scalars from active tuning and route behavior through existing invariants wherever possible.
+- Slide policy:
+  - hold-based activation (`Shift` held means active slide)
+  - no artificial entry speed boost
+  - keyboard strafe should not directly steer slide (camera-yaw steering only)
+  - slide slowdown should be controlled by one independent invariant (`slide_stop_t90`)
 
 ## Preferred movement invariants
 - `max_ground_speed` (Vmax)
@@ -28,8 +33,7 @@ Keep movement feel stable under tuning changes by exposing only a small set of d
 - `wallrun_sink_t90`
 - `jump_height`
 - `jump_apex_time`
-- `dash_distance`
-- `dash_duration`
+- `slide_stop_t90`
 - `jump_buffer_time`
 - `coyote_time`
 
@@ -40,18 +44,17 @@ Keep movement feel stable under tuning changes by exposing only a small set of d
 - `ground_damp_k = ln(10) / ground_stop_t90`
 - `air_speed = max_ground_speed * air_speed_mult`
 - `air_accel = 0.9 / air_gain_t90` (linear Quake-style air acceleration target)
-- `dash_speed = dash_distance / dash_duration`
+- `slide_damp_k = ln(10) / slide_stop_t90`
 
 ## Implementation checklist
 1. Put invariants and derived constants in `physics/motion/config.py`.
 2. Keep application logic in `physics/motion/solver.py`.
 3. Route control input through intent (`MotionIntent`) and one movement entrypoint.
 4. Enforce mode priority in solver/controller flow:
-   - knockback > dash > run/air
+   - knockback > slide > run/air
    - gravity always applies unless explicit pause/hitstop
-5. Implement fast-motion collision with sweep/cast (dash path).
-6. Add/maintain replay determinism hashing and HUD visibility.
-7. Update docs in same change (`docs/architecture.md`, `docs/features.md`, `docs/gameplay-feel-rehaul.md`, roadmap/ADR as needed).
+5. Add/maintain replay determinism hashing and HUD visibility.
+6. Update docs in same change (`docs/architecture.md`, `docs/features.md`, `docs/gameplay-feel-rehaul.md`, roadmap/ADR as needed).
 
 ## Debug-surface policy
 - If two sliders affect the same perceptual axis, collapse to one invariant.

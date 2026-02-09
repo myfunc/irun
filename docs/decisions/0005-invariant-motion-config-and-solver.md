@@ -28,8 +28,8 @@ Initial formulas:
 - Air gain/cap:
   - `V_air = Vmax * air_speed_mult`
   - `air_accel = 0.9 / air_gain_t90` (linear Quake-style acceleration target)
-- Dash:
-  - `V_dash = D_dash / T_dash`
+- Slide ground damping:
+  - `slide_damp_k = ln(10) / slide_stop_t90`
 - Wallrun sink:
   - sink target is derived from jump takeoff speed
   - convergence rate is timing-based (`wallrun_sink_t90`)

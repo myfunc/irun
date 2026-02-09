@@ -267,20 +267,26 @@ def test_wallrun_sink_t90_controls_descent_response() -> None:
     assert fast.vel.z > slow.vel.z
 
 
-def test_crouch_speed_multiplier_reduces_ground_acceleration() -> None:
-    tuning = PhysicsTuning(crouch_speed_multiplier=0.4, crouch_enabled=True)
-    stand_ctrl = _make_controller(tuning)
-    crouch_ctrl = _make_controller(tuning)
-    wish = LVector3f(1, 0, 0)
+def test_slide_engage_applies_low_hull_without_entry_boost() -> None:
+    ctrl = _make_controller(
+        PhysicsTuning(
+            slide_enabled=True,
+            slide_stop_t90=4.0,
+            max_ground_speed=6.0,
+        )
+    )
+    ctrl.grounded = True
+    ctrl.vel = LVector3f(2.0, 0.0, 0.0)
+    stand_half = float(ctrl.player_half.z)
 
-    stand_ctrl.grounded = True
-    crouch_ctrl.grounded = True
-    stand_ctrl.step(dt=0.016, wish_dir=wish, yaw_deg=0.0, crouching=False)
-    crouch_ctrl.step(dt=0.016, wish_dir=wish, yaw_deg=0.0, crouching=True)
+    ctrl.queue_slide(wish_dir=LVector3f(1.0, 0.0, 0.0), yaw_deg=0.0)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(1.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
 
-    stand_speed = math.sqrt(stand_ctrl.vel.x * stand_ctrl.vel.x + stand_ctrl.vel.y * stand_ctrl.vel.y)
-    crouch_speed = math.sqrt(crouch_ctrl.vel.x * crouch_ctrl.vel.x + crouch_ctrl.vel.y * crouch_ctrl.vel.y)
-    assert crouch_speed < stand_speed
+    slide_speed = math.sqrt(ctrl.vel.x * ctrl.vel.x + ctrl.vel.y * ctrl.vel.y)
+    assert ctrl.is_sliding()
+    assert ctrl.player_half.z < stand_half
+    assert slide_speed <= 2.0
+    assert slide_speed > 1.8
 
 
 def test_wall_detection_probe_refreshes_without_movement() -> None:
@@ -347,19 +353,49 @@ def test_coyote_jump_window_allows_late_jump_when_enabled() -> None:
     assert ctrl.vel.z > 0.0
 
 
-def test_dash_sweep_stops_dash_when_sweep_hits() -> None:
-    ctrl = PlayerController(
-        tuning=PhysicsTuning(dash_enabled=True, dash_sweep_enabled=True),
-        spawn_point=LVector3f(0, 0, 3),
-        aabbs=[],
-        collision=_FakeCollision(),
-    )
-    ctrl.grounded = False
-    ctrl.queue_dash(wish_dir=LVector3f(1, 0, 0), yaw_deg=0.0)
-    ctrl.step(dt=0.016, wish_dir=LVector3f(1, 0, 0), yaw_deg=0.0, crouching=False)
+def test_slide_release_restores_standing_hull() -> None:
+    ctrl = _make_controller(PhysicsTuning(slide_enabled=True, slide_stop_t90=4.0))
+    ctrl.grounded = True
+    stand_half = float(ctrl.player_half.z)
 
-    assert not ctrl.is_dashing()
-    assert ctrl.contact_count() >= 1
+    ctrl.set_slide_held(held=True)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(1.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+    assert ctrl.is_sliding()
+    assert ctrl.player_half.z < stand_half
+
+    ctrl.set_slide_held(held=False)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+    assert not ctrl.is_sliding()
+    assert math.isclose(float(ctrl.player_half.z), stand_half, rel_tol=1e-6)
+
+
+def test_slide_ignores_keyboard_strafe_and_uses_camera_yaw() -> None:
+    ctrl = _make_controller(PhysicsTuning(slide_enabled=True, slide_stop_t90=4.0))
+    ctrl.grounded = True
+    ctrl.vel = LVector3f(0.0, 8.0, 0.0)
+    ctrl.set_slide_held(held=True)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 1.0, 0.0), yaw_deg=0.0, crouching=False)
+
+    pre_dot = float(LVector3f(ctrl.vel.x, ctrl.vel.y, 0.0).dot(LVector3f(0.0, 1.0, 0.0)))
+    ctrl.step(dt=0.016, wish_dir=LVector3f(1.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+    post_dot = float(LVector3f(ctrl.vel.x, ctrl.vel.y, 0.0).dot(LVector3f(0.0, 1.0, 0.0)))
+    assert post_dot > pre_dot * 0.95
+
+
+def test_slide_wasd_input_does_not_change_ground_slide_motion() -> None:
+    left = _make_controller(PhysicsTuning(slide_enabled=True, slide_stop_t90=4.0))
+    right = _make_controller(PhysicsTuning(slide_enabled=True, slide_stop_t90=4.0))
+    for ctrl in (left, right):
+        ctrl.grounded = True
+        ctrl.vel = LVector3f(0.0, 10.0, 0.0)
+        ctrl.set_slide_held(held=True)
+        ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 1.0, 0.0), yaw_deg=0.0, crouching=False)
+
+    left.step(dt=0.016, wish_dir=LVector3f(-1.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+    right.step(dt=0.016, wish_dir=LVector3f(1.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+
+    assert math.isclose(float(left.vel.x), float(right.vel.x), abs_tol=1e-5)
+    assert math.isclose(float(left.vel.y), float(right.vel.y), abs_tol=1e-5)
 
 
 def test_invariant_vmax_remains_authoritative_under_input() -> None:

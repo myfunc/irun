@@ -169,8 +169,8 @@ Completed now:
     - position/eye height
     - velocity and horizontal/total speed
     - camera yaw/pitch
-    - grounded/crouched/grapple/noclip state
-    - per-tick command snapshot (jump/crouch/grapple/noclip/move/look/raw held keys)
+    - grounded/sliding/grapple/noclip state
+    - per-tick command snapshot (jump/slide/grapple/noclip/move/look/raw held keys)
   - Replay telemetry summary now includes:
     - landing speed loss/retention metrics
     - camera linear/angular jerk metrics
@@ -185,7 +185,7 @@ Completed now:
   - Added replay-only input HUD (UI kit based) showing:
     - movement cluster (left/right + forward/back)
     - dedicated jump section
-    - dedicated crouch section
+    - dedicated slide section
     - dedicated mouse-direction section (+ raw dx/dy)
 
 Validation completed:
@@ -193,18 +193,18 @@ Validation completed:
 - Runtime smoke runs pass in menu boot and map boot paths.
 
 ## Invariant Motion Refactor Progress (2026-02-09)
-Status: `IN PROGRESS` (core invariants active, authority hardening still staged)
+Status: `IN PROGRESS` (core invariants active, slide migration complete, authority hardening active)
 
 Completed in this slice:
 - Added a dedicated movement package: `apps/ivan/src/ivan/physics/motion/`
   - `MotionConfig` now holds one object with designer invariants + derived constants.
-  - Added derivation formulas for jump/run/dash constants.
+  - Added derivation formulas for jump/run/slide constants.
 - Added new tuning invariants (debug/profile/persistence compatible):
   - `run_t90`, `ground_stop_t90`
   - `jump_apex_time`
   - `air_speed_mult`, `air_gain_t90`
   - `wallrun_sink_t90`
-  - `dash_distance`, `dash_duration`
+  - `slide_stop_t90`
   - `coyote_time`
 - Wired `PlayerController` to consume `MotionSolver` for:
   - ground run response (derived model)
@@ -215,10 +215,16 @@ Completed in this slice:
 - Removed legacy direct run/gravity tuning fields from active tuning schema.
 
 Completed in follow-up slice:
-- Added initial dash mode integration:
-  - input command path includes `dash_pressed` (record/replay + network packet wiring).
-  - dash parameters are invariant-driven (`dash_distance`, `dash_duration` -> derived speed).
-  - dash collision supports sweep/cast path (`dash_sweep_enabled`) with runtime fallback path.
+- Added powerslide mode integration (dash/crouch replacement):
+  - input command path now uses held `slide_pressed` (`Shift`) across live input, record/replay, and network packets.
+  - slide parameters are invariant-driven (`slide_stop_t90` -> derived ground damping rate).
+  - slide does not add entry boost; it preserves carried horizontal speed and decays while grounded.
+  - slide ignores keyboard strafe steering; heading follows camera yaw (mouse look).
+  - slide owns low-profile hull while active and cleanly restores standing hull on exit.
+- Added motion authority hardening:
+  - non-solver velocity writes are routed through explicit controller velocity interface methods.
+  - write sources are tagged (`solver`, `impulse`, `collision`, `constraint`, `external`) for diagnostics and contract clarity.
+  - state priority now includes explicit override lanes (`knockback` > `slide` > `run/air`, hitstop pause lane).
 - Added deterministic feel harness bootstrap (`--feel-harness`):
   - flat, slope approximation, step, wall, ledge, and moving platform fixtures.
   - runtime harness toggles exposed in debug UI for subsystem isolation.
@@ -228,7 +234,7 @@ Completed in follow-up slice:
   - deterministic state hashing in HUD (`F2`) and trace dump (`F11`).
 - Added regression tests for:
   - invariant derivation formulas (`test_motion_config.py`)
-  - coyote window behavior and dash sweep stopping conditions.
+  - coyote window behavior and slide hold/release behavior.
 - Reduced debug tuning menu to a compact invariant-first control set:
   - removed redundant direct-scalar sliders from runtime tuning surface.
   - surf debug section is now toggle-only (`surf_enabled`) with no surf scalar sliders.
@@ -258,7 +264,7 @@ Completed in follow-up slice:
   - this keeps bhop gain behavior coupled to one speed-scale axis and one timing axis, with no hidden overlap sliders.
 - Unified command ingestion via motion intent:
   - both client sim tick and authoritative server tick now call `PlayerController.step_with_intent(...)`.
-  - jump/dash/crouch/wish direction are routed through one intent contract before solver/collision.
+  - jump/slide/wish direction are routed through one intent contract before solver/collision.
 - Split oversized controller file into ownership modules (all under 500 LOC):
   - orchestration (`player_controller.py`)
   - actions (`player_controller_actions.py`)
@@ -270,11 +276,16 @@ Completed in follow-up slice:
 - Replay determinism validation now runs during playback:
   - recorded telemetry includes per-tick deterministic state hash.
   - playback compares expected vs simulated hash and reports mismatch counts on exit.
+- Added CLI/automation wrapper for repeated determinism verification:
+  - `python -m ivan --verify-latest-replay-determinism --determinism-runs N`
+  - `python -m ivan --verify-replay-determinism <path> --determinism-runs N`
+  - both commands export determinism report JSON under telemetry export output.
 
 Still pending:
-- Motion authority hardening (state machine + solver priorities) to enforce “non-solver velocity writes only for explicit impulses” contract.
-- Harden dash state behavior and add dedicated dash mode telemetry thresholds.
-- Optional CLI/automation wrapper for determinism verification across repeated replay runs.
+- Capture initial baseline datasets (3 runs per route) using `docs/gameplay-baseline-checklist.md`.
+- Start Phase 1 camera pipeline pass (bounded FOV + landing response) behind explicit tuning params.
+- Start Phase 2 movement stability pass (step/slope/ground-air transitions) against baseline metrics.
+- Reintroduce dash as a separate movement mode after the current invariant baseline pass; keep slide as non-boost hold-based momentum preservation.
 
 ## Why This Helps Future Phases
 - Phase 0 baselining: replay telemetry gives us a stable per-tick data source to compare tuning passes, not just subjective feel.

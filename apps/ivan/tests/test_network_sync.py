@@ -48,6 +48,17 @@ class _FakePauseUI:
         self.multiplayer_status = str(text)
 
 
+class _FakeNoclipPlayer:
+    def __init__(self) -> None:
+        self.pos = LVector3f(0.0, 0.0, 0.0)
+        self.vel = LVector3f(0.0, 0.0, 0.0)
+        self.grounded = True
+
+    def set_external_velocity(self, *, vel: LVector3f, reason: str = "external") -> None:
+        _ = reason
+        self.vel = LVector3f(vel)
+
+
 def test_network_respawn_button_sends_server_request() -> None:
     demo = RunnerDemo.__new__(RunnerDemo)
     demo._net_connected = True
@@ -181,6 +192,28 @@ def test_current_tuning_snapshot_reflects_active_client_values() -> None:
     assert float(snap["jump_apex_time"]) == 0.33
     assert bool(snap["surf_enabled"]) is True
     assert float(snap["air_speed_mult"]) == 1.42
+
+
+def test_noclip_forward_uses_view_pitch_direction() -> None:
+    demo = RunnerDemo.__new__(RunnerDemo)
+    demo.player = _FakeNoclipPlayer()
+    demo.tuning = PhysicsTuning(noclip_speed=5.0)
+    demo._yaw = 0.0
+    demo._pitch = 45.0
+
+    RunnerDemo._step_noclip(
+        demo,
+        dt=1.0,
+        move_forward=1,
+        move_right=0,
+        jump_held=False,
+        slide_pressed=False,
+    )
+
+    assert demo.player.vel.y > 0.0
+    assert demo.player.vel.z > 0.0
+    assert demo.player.pos.y > 0.0
+    assert demo.player.pos.z > 0.0
 
 
 def test_reconcile_uses_ack_state_and_replays_unacked_inputs() -> None:
