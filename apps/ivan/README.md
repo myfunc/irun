@@ -36,6 +36,10 @@ Default boot:
   - `assets/imported/halflife/valve/bounce/map.json` (directory bundle), or
   - `assets/imported/halflife/valve/bounce.irunmap` (packed bundle)
   exists.
+- The menu includes `Quick Start: Metropolis` if either:
+  - `assets/imported/source/community/ttt_metropolis/map.json` (directory bundle), or
+  - `assets/imported/source/community/ttt_metropolis.irunmap` (packed bundle)
+  exists.
 - You can still run a bundle directly via `--map`.
 
 Smoke run:
@@ -73,6 +77,7 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 - `R`: reset to spawn
 - `Esc`: opens the in-game menu (Resume / Map Selector / Key Bindings / Back to Main Menu / Quit); in the main menu it acts as back/quit
 - `Esc -> Replays`: open replay browser and load an input-demo file
+  - while replay playback is active, input is locked; press `R` to exit replay and respawn
 - `` ` `` (tilde/backtick): opens the debug/admin tuning menu
 - `F`: save current demo recording (recording window starts on respawn and ends when saved)
 - `F4`: toggle the in-game console
@@ -144,7 +149,8 @@ Notes:
 
 ## Demos (Input Replay)
 - Ivan records input demos automatically from each spawn/respawn window.
-- A demo contains only per-tick input commands (look deltas, movement axes, action presses), not player positions.
+- A demo stores per-tick input commands (look deltas, movement axes, action presses) and replay telemetry
+  snapshots (position/velocity/speeds/camera angles/state/buttons) for feel tuning/diagnostics.
 - Press `F` to save the current demo to `apps/ivan/replays/` in this repository.
 - Replays can be loaded in-game from `Esc -> Replays`.
 - Replay playback re-simulates movement through the normal engine/controller path at fixed `60 Hz`.
@@ -202,6 +208,7 @@ Movement notes:
 Lighting notes:
 - GoldSrc/Quake-style animated lightstyles are applied at `~10Hz` (server-like), not every render frame.
 - For performance on large maps, only surfaces that reference an actually-animated style pattern participate in lightstyle updates.
+- If a bundle references lightmap files that are missing on disk, affected faces fall back to base-texture rendering instead of turning fully black.
 - While surfing, horizontal momentum is redirected toward the ramp tangent each frame, enabling natural horizontal<->vertical speed exchange (inertia transfer) on slopes.
 - Surf steering against current momentum preserves carry: it redirects momentum along the ramp and limits per-tick scrub so speed is not hard-stopped.
 - Surf input acceleration contributes vertical velocity only for uphill redirection; downhill acceleration uses normal gravity.
@@ -272,6 +279,23 @@ python3 tools/pack_irunmap.py --input <bundle-dir> --output <bundle>.irunmap
 python -m ivan --map <bundle>.irunmap
 ```
 
+### Source VMF -> BSP -> Bundle
+Use this when you have Source `.vmf` sources and want one-step import into IVAN.
+
+```bash
+python3 tools/importers/source/import_source_vmf.py \
+  --vmf <path-to-map.vmf> \
+  --out <bundle-dir-or-map.json-or.irunmap> \
+  --materials-root <path-to-materials/> \
+  --game-root <optional-source-game-root> \
+  --scale 0.03
+```
+
+Notes:
+- Requires Source compilers (`vbsp`, `vvis`, `vrad`) available in `PATH` or via `--compile-bin` / `--vbsp` / `--vvis` / `--vrad`.
+- If `--game-root` is set, compile can resolve stock assets from that Source install while keeping map-local assets from the VMF folder.
+- The tool compiles in an isolated temporary game root and does not modify your game installation.
+
 ### GoldSrc/Xash3D BSP -> Bundle (WAD + resources)
 Example (Counter-Strike 1.6 / Xash3D style mod folder):
 ```bash
@@ -297,6 +321,28 @@ Notes:
   (step + slide with plane clipping) for stable wall/ceiling/slope handling.
 - The Source build step converts `materials/**/*.vtf` into PNG so Panda3D can load them.
 - Map bundles include per-triangle materials, UVs, and optional vertex colors (used as a baked lighting tint/fallback).
+
+### TrenchBroom `.map` -> GoldSrc BSP -> Bundle
+Use this when you author geometry in TrenchBroom (Half-Life / Valve220 map format) and want one command to compile
+and import into IVAN.
+
+```bash
+python3 tools/importers/goldsrc/import_trenchbroom_map.py \
+  --map <path-to-trenchbroom.map> \
+  --game-root <path-to-mod-root> \
+  --out <bundle>.irunmap \
+  --compile-bin <path-to-hlcsg-hlbsp-hlvis-hlrad> \
+  --scale 0.03
+python -m ivan --map <bundle>.irunmap
+```
+
+Notes:
+- In TrenchBroom, select `Half-Life (experimental)` and `Valve 220` map format for best compatibility with the GoldSrc compiler chain.
+- Requires GoldSrc compile tools (`hlcsg`, `hlbsp`, `hlvis`, `hlrad`) available in `PATH` or via `--compile-bin` / explicit `--hl*` args.
+- The importer auto-detects SDHLT-style tool names (`sdHLCSG`, `sdHLBSP`, `sdHLVIS`, `sdHLRAD`) and omits `-game` for those binaries.
+- The script runs compile stages, finds the produced BSP, then forwards it to `import_goldsrc_bsp.py`.
+- Use `--skip-hlvis` and/or `--skip-hlrad` for fast graybox iteration.
+- Use `--hlcsg-args`, `--hlbsp-args`, `--hlvis-args`, `--hlrad-args` to pass extra compiler flags (string values are shell-split).
 
 ### Per-Map Run Options (run.json)
 If a bundle directory contains `run.json`, IVAN will use it to control defaults for that map (mode/spawn/lighting).
