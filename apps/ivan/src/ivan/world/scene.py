@@ -29,6 +29,7 @@ from panda3d.core import (
 from ivan.common.aabb import AABB
 from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, resolve_bundle_handle_path
 from ivan.paths import app_root as ivan_app_root
+from ivan.world.lightstyles import lightstyle_pattern_is_animated, lightstyle_pattern_scale
 from ivan.world.goldsrc_visibility import GoldSrcBspVis, load_or_build_visibility_cache
 
 
@@ -52,6 +53,8 @@ class WorldScene:
         self._lightstyles: dict[int, str] = {}
         self._lightmap_nodes: list[tuple[object, list[int | None]]] = []
         self._lightstyle_mode: str = "animate"  # animate | static
+        self._lightstyle_last_frame: int | None = None
+        self._lightstyle_animated_styles: set[int] = set()
         self._map_id: str = "scene"
         self._course: dict | None = None
         # Map bundle world scale (GoldSrc/Source BSPs are typically far larger than our gameplay space).
@@ -116,18 +119,36 @@ class WorldScene:
         # 1) Lightstyle animation (10Hz like Quake/GoldSrc).
         if self._lightmap_nodes and self._lightstyle_mode == "animate":
             frame = int(float(now) * 10.0)
-            for np, styles in self._lightmap_nodes:
-                scales: list[float] = [0.0, 0.0, 0.0, 0.0]
-                for i in range(4):
-                    s = styles[i] if i < len(styles) else None
-                    if s is None or int(s) == 255:
-                        continue
-                    scales[i] = self._lightstyle_scale(style=int(s), frame=frame)
-                try:
-                    np.setShaderInput("lm_scales", LVector4f(*scales))
-                except Exception:
-                    # If the node was removed or shader isn't active, ignore.
-                    pass
+            if self._lightstyle_last_frame is None or int(frame) != int(self._lightstyle_last_frame):
+                self._lightstyle_last_frame = int(frame)
+
+                # Many maps have thousands of lightmapped surfaces but only a small subset uses
+                # animated lightstyles. Keep this update strictly at 10Hz and memoize per-style tuple.
+                cached: dict[tuple[int | None, int | None, int | None, int | None], LVector4f] = {}
+
+                for np, styles in self._lightmap_nodes:
+                    # Normalize to a stable 4-tuple key.
+                    s0 = styles[0] if len(styles) > 0 else None
+                    s1 = styles[1] if len(styles) > 1 else None
+                    s2 = styles[2] if len(styles) > 2 else None
+                    s3 = styles[3] if len(styles) > 3 else None
+                    key = (s0, s1, s2, s3)
+
+                    vec = cached.get(key)
+                    if vec is None:
+                        scales: list[float] = [0.0, 0.0, 0.0, 0.0]
+                        for i, s in enumerate(key):
+                            if s is None or int(s) == 255:
+                                continue
+                            scales[i] = self._lightstyle_scale(style=int(s), frame=frame)
+                        vec = LVector4f(*scales)
+                        cached[key] = vec
+
+                    try:
+                        np.setShaderInput("lm_scales", vec)
+                    except Exception:
+                        # If the node was removed or shader isn't active, ignore.
+                        pass
 
         # 2) Visibility culling (GoldSrc PVS) - only updates when camera leaf changes.
         if self._vis_enabled:
@@ -409,23 +430,11 @@ class WorldScene:
         return (out, mode)
 
     def _lightstyle_scale(self, *, style: int, frame: int) -> float:
-        # GoldSrc/Quake convention:
-        # - pattern is a string of chars 'a'..'z'
-        # - each char maps to a brightness scale where 'm' is 1.0
-        # - server updates at ~10Hz
         if style == 0:
             pat = self._lightstyles.get(0) or "m"
         else:
             pat = self._lightstyles.get(int(style))
-        if not pat:
-            return 1.0
-        i = int(frame) % len(pat)
-        c = pat[i]
-        if not ("a" <= c <= "z"):
-            c = c.lower()
-        if not ("a" <= c <= "z"):
-            return 1.0
-        return max(0.0, float(ord(c) - ord("a")) / 12.0)
+        return float(lightstyle_pattern_scale(pat or "m", frame=int(frame)))
 
     def _build_graybox_scene(self, *, loader, render) -> None:
         # Broad collision-safe floor under the full play area to avoid edge fallthrough perception.
@@ -522,6 +531,10 @@ class WorldScene:
         self._lightstyles, self._lightstyle_mode = self._resolve_lightstyles(
             payload=payload, cfg=getattr(cfg, "lighting", None)
         )
+        self._lightstyle_last_frame = None
+        self._lightstyle_animated_styles = {
+            int(style) for style, pat in self._lightstyles.items() if lightstyle_pattern_is_animated(str(pat))
+        }
         self._lightmap_nodes = []
         self._vis_goldsrc = self._resolve_visibility(cfg=cfg, map_json=map_json, payload=payload)
         self._vis_face_nodes = {}
@@ -1006,7 +1019,11 @@ void main() {
                 # keep the result stable by ignoring per-vertex colors.
                 np.setColorOff(1)
                 try:
-                    self._lightmap_nodes.append((np, [int(x) if isinstance(x, int) else None for x in styles]))
+                    # Only register nodes that actually need animated lightstyle updates.
+                    if self._lightstyle_mode == "animate":
+                        st = [int(x) if isinstance(x, int) else None for x in styles]
+                        if any((s is not None and int(s) != 255 and int(s) in self._lightstyle_animated_styles) for s in st):
+                            self._lightmap_nodes.append((np, st))
                 except Exception:
                     pass
 
