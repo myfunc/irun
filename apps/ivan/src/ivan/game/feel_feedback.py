@@ -44,6 +44,11 @@ def _apply_add(current: float, add: float, field: str) -> float:
     return _clamp(field, float(current) + float(add))
 
 
+def _has_any(text: str, phrases: tuple[str, ...]) -> bool:
+    s = str(text or "").lower()
+    return any(p in s for p in phrases)
+
+
 def suggest_adjustments(
     *,
     feedback_text: str,
@@ -68,42 +73,94 @@ def suggest_adjustments(
         next_values[field] = _apply_add(cur, add, field)
         reasons[field] = reason
 
-    # Speed perception.
-    if "too fast" in text or "feels fast" in text:
-        set_mul("max_ground_speed", 0.94, "feedback: too fast")
-        set_mul("max_air_speed", 0.94, "feedback: too fast")
-    if "too slow" in text or "sluggish" in text:
-        set_mul("max_ground_speed", 1.06, "feedback: too slow")
-        set_mul("max_air_speed", 1.06, "feedback: too slow")
+    # Intents are strictly driven by feedback text.
+    intent_speed_fast = _has_any(text, ("too fast", "feels fast", "speed too high", "too quick"))
+    intent_speed_slow = _has_any(text, ("too slow", "sluggish", "speed too low", "cannot gain speed"))
+    intent_accel_fast = _has_any(
+        text,
+        ("acceleration is too fast", "acceleration too fast", "acceleration too snappy", "ramps too hard"),
+    )
+    intent_accel_slow = _has_any(
+        text,
+        ("acceleration too slow", "acceleration too weak", "acceleration feels weak", "can't accelerate"),
+    )
+    intent_smooth = _has_any(
+        text,
+        ("not smooth", "doesnt feel smooth", "doesn't feel smooth", "jerky", "jitter", "stutter", "rough"),
+    )
+    intent_landing_harsh = _has_any(
+        text,
+        ("landing is harsh", "harsh landing", "lose speed on landing", "landing kills speed"),
+    )
+    intent_air_steer_weak = _has_any(
+        text,
+        ("can't steer in air", "cant steer in air", "air control too weak", "air steering weak"),
+    )
+    intent_air_steer_strong = _has_any(
+        text,
+        ("too much air control", "air control too strong", "air steering too strong", "too floaty"),
+    )
+    intent_mouse_fast = _has_any(text, ("mouse too fast", "look too fast", "camera too sensitive", "too twitchy"))
+    intent_mouse_slow = _has_any(text, ("mouse too slow", "look too slow", "camera too sluggish"))
 
-    # Acceleration feel.
-    if "acceleration is too fast" in text or "acceleration too fast" in text:
+    if not any(
+        (
+            intent_speed_fast,
+            intent_speed_slow,
+            intent_accel_fast,
+            intent_accel_slow,
+            intent_smooth,
+            intent_landing_harsh,
+            intent_air_steer_weak,
+            intent_air_steer_strong,
+            intent_mouse_fast,
+            intent_mouse_slow,
+        )
+    ):
+        return []
+
+    if intent_speed_fast:
+        set_mul("max_ground_speed", 0.95, "feedback: speed too fast")
+        set_mul("max_air_speed", 0.95, "feedback: speed too fast")
+    if intent_speed_slow:
+        set_mul("max_ground_speed", 1.05, "feedback: speed too slow")
+        set_mul("max_air_speed", 1.05, "feedback: speed too slow")
+
+    if intent_accel_fast:
         set_mul("ground_accel", 0.90, "feedback: acceleration too fast")
         set_mul("jump_accel", 0.92, "feedback: acceleration too fast")
-        set_mul("surf_accel", 0.92, "feedback: acceleration too fast")
-    if "acceleration too weak" in text or "acceleration too slow" in text:
+        set_mul("surf_accel", 0.93, "feedback: acceleration too fast")
+    if intent_accel_slow:
         set_mul("ground_accel", 1.08, "feedback: acceleration too weak")
         set_mul("jump_accel", 1.06, "feedback: acceleration too weak")
 
-    # Smoothness / jitter.
-    if "not smooth" in text or "jitter" in text or "jerky" in text:
+    if intent_smooth:
         set_add("ground_snap_dist", +0.015, "feedback: smoothness")
         set_add("step_height", +0.030, "feedback: smoothness")
-        set_mul("air_counter_strafe_brake", 0.90, "feedback: smoothness")
-        set_mul("mouse_sensitivity", 0.97, "feedback: smoothness")
+        set_mul("air_counter_strafe_brake", 0.92, "feedback: smoothness")
+        # Optional metric-aware scaling, but only when smoothness intent is present.
+        if isinstance(metrics.get("ground_flicker_per_min"), (int, float)) and float(metrics["ground_flicker_per_min"]) >= 45.0:
+            set_add("ground_snap_dist", +0.010, "feedback+metric: high ground flicker")
+            set_add("step_height", +0.015, "feedback+metric: high ground flicker")
+        if isinstance(metrics.get("camera_lin_jerk_avg"), (int, float)) and float(metrics["camera_lin_jerk_avg"]) >= 120.0:
+            set_mul("mouse_sensitivity", 0.96, "feedback+metric: high camera jerk")
 
-    # Use telemetry when available to bias the adjustment magnitude.
-    if isinstance(metrics.get("ground_flicker_per_min"), (int, float)):
-        if float(metrics.get("ground_flicker_per_min")) >= 45.0:
-            set_add("ground_snap_dist", +0.010, "metric: high ground flicker")
-            set_add("step_height", +0.020, "metric: high ground flicker")
-    if isinstance(metrics.get("camera_lin_jerk_avg"), (int, float)):
-        if float(metrics.get("camera_lin_jerk_avg")) >= 120.0:
-            set_mul("mouse_sensitivity", 0.95, "metric: high camera linear jerk")
-    if isinstance(metrics.get("landing_speed_loss_avg"), (int, float)):
-        if float(metrics.get("landing_speed_loss_avg")) >= 1.0:
-            set_mul("friction", 0.94, "metric: high landing speed loss")
-            set_mul("air_control", 1.04, "metric: high landing speed loss")
+    if intent_landing_harsh:
+        set_mul("friction", 0.94, "feedback: landing speed loss")
+        set_mul("air_control", 1.04, "feedback: landing speed loss")
+        if isinstance(metrics.get("landing_speed_loss_avg"), (int, float)) and float(metrics["landing_speed_loss_avg"]) >= 1.0:
+            set_mul("friction", 0.95, "feedback+metric: landing loss confirmed")
+            set_mul("air_control", 1.03, "feedback+metric: landing loss confirmed")
+
+    if intent_air_steer_weak:
+        set_mul("air_control", 1.06, "feedback: weak air steering")
+    if intent_air_steer_strong:
+        set_mul("air_control", 0.94, "feedback: too much air steering")
+
+    if intent_mouse_fast:
+        set_mul("mouse_sensitivity", 0.95, "feedback: look too fast")
+    if intent_mouse_slow:
+        set_mul("mouse_sensitivity", 1.05, "feedback: look too slow")
 
     out: list[TuningAdjustment] = []
     for field in sorted(next_values.keys()):
@@ -118,4 +175,3 @@ def suggest_adjustments(
 def apply_adjustments(*, tuning: PhysicsTuning, adjustments: list[TuningAdjustment]) -> None:
     for adj in adjustments:
         setattr(tuning, str(adj.field), adj.after)
-

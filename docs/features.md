@@ -64,8 +64,9 @@
     - `python -m ivan --compare-latest-replays [--replay-telemetry-out <dir>] [--replay-route-tag A]` compares latest vs previous without launching gameplay
   - while replay is active, gameplay/menu input is locked; `R` exits replay and respawns to normal play
 - Ivan: in-game Feel Session tab (ESC menu)
-  - route tagging (`A/B/C`), export latest replay, compare latest vs previous
-  - free-text feedback action applies rule-based tuning adjustments using latest replay metrics
+  - route tagging via radio-style options (`A/B/C`)
+  - export latest replay telemetry
+  - free-text feedback action applies intent-driven tuning adjustments and auto-compares latest vs previous run
 - Ivan: multiplayer foundation (authoritative server + connected clients)
   - dedicated server mode with TCP bootstrap + UDP gameplay packets
   - normal client sessions are offline by default; ESC menu `Open To Network` starts/stops embedded host mode for LAN joinability while keeping the local player in-session

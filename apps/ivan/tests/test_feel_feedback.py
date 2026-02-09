@@ -47,3 +47,20 @@ def test_suggest_adjustments_uses_metrics_for_smoothness_bias() -> None:
 
     apply_adjustments(tuning=tuning, adjustments=adjustments)
     assert tuning.ground_snap_dist > 0.05
+
+
+def test_suggest_adjustments_requires_feedback_intent() -> None:
+    tuning = PhysicsTuning()
+    summary = {
+        "metrics": {
+            "ground_flicker_per_min": 80.0,
+            "camera_lin_jerk_avg": 200.0,
+            "landing_speed_loss_avg": 2.0,
+        }
+    }
+    adjustments = suggest_adjustments(
+        feedback_text="just testing",
+        tuning=tuning,
+        latest_summary=summary,
+    )
+    assert adjustments == []
