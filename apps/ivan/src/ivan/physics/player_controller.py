@@ -186,11 +186,17 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
         return bool(self._wallrun_active)
 
     def wallrun_camera_roll_deg(self, *, yaw_deg: float) -> float:
-        if not self.is_wallrunning():
+        if not bool(self.tuning.wallrun_enabled):
             return 0.0
-        # Camera feedback should drop quickly after losing contact, even if wallrun physics
-        # still has a short grace window.
-        if self._wall_contact_timer > 0.055:
+        if self.grounded:
+            return 0.0
+        if self._wallrun_reacquire_block_timer > 0.0:
+            return 0.0
+        if self._wall_normal.lengthSquared() <= 0.01:
+            return 0.0
+        # Keep visual feedback present while wall contact is recent enough to be perceived,
+        # then drop quickly after contact is truly stale.
+        if self._wall_contact_timer > 0.14:
             return 0.0
         h_rad = math.radians(float(yaw_deg))
         forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0.0)

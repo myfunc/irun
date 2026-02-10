@@ -267,11 +267,20 @@ def test_wallrun_camera_roll_clears_soon_after_contact_loss() -> None:
     tuning = PhysicsTuning(wallrun_enabled=True)
     ctrl = _make_controller(tuning)
     ctrl.grounded = False
-    ctrl._wallrun_active = True
     ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
-    ctrl._wall_contact_timer = 0.12
+    ctrl._wall_contact_timer = 0.16
 
     assert ctrl.wallrun_camera_roll_deg(yaw_deg=0.0) == 0.0
+
+
+def test_wallrun_camera_roll_uses_recent_wall_contact_window() -> None:
+    tuning = PhysicsTuning(wallrun_enabled=True)
+    ctrl = _make_controller(tuning)
+    ctrl.grounded = False
+    ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
+    ctrl._wall_contact_timer = 0.10
+
+    assert abs(ctrl.wallrun_camera_roll_deg(yaw_deg=0.0)) > 0.1
 
 
 def test_wallrun_jump_biases_to_camera_forward_direction() -> None:
