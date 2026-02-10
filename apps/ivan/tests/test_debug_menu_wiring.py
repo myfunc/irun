@@ -701,18 +701,64 @@ def test_slide_wasd_input_does_not_change_ground_slide_motion() -> None:
     assert math.isclose(float(left.vel.y), float(right.vel.y), abs_tol=1e-5)
 
 
-def test_slide_does_not_decay_horizontal_speed_per_tick() -> None:
+def test_slide_flat_ground_damps_horizontal_speed_per_tick() -> None:
     ctrl = _make_controller(PhysicsTuning(slide_enabled=True, slide_stop_t90=0.20))
     ctrl.grounded = True
     ctrl.vel = LVector3f(0.0, 11.0, 0.0)
+    ctrl._ground_normal = LVector3f(0.0, 0.0, 1.0)
     ctrl.set_slide_held(held=True)
     ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 1.0, 0.0), yaw_deg=0.0, crouching=False)
     pre = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y))
 
+    ctrl.grounded = True
     ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
     post = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y))
 
-    assert post >= pre * 0.995
+    assert post < pre
+
+
+def test_slide_gains_speed_when_moving_downhill() -> None:
+    ctrl = _make_controller(PhysicsTuning(slide_enabled=True, slide_stop_t90=3.0))
+    ctrl.grounded = True
+    # Ramp rises toward +Y, so downhill direction is -Y.
+    ctrl._ground_normal = LVector3f(0.0, -0.70, 0.71414284)
+    ctrl.vel = LVector3f(0.0, -10.0, 0.0)
+    ctrl.set_slide_held(held=True)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, -1.0, 0.0), yaw_deg=180.0, crouching=False)
+    pre = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y))
+
+    ctrl.grounded = True
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=180.0, crouching=False)
+    post = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y))
+
+    assert post > pre
+
+
+def test_slide_loses_speed_when_moving_uphill() -> None:
+    ctrl = _make_controller(PhysicsTuning(slide_enabled=True, slide_stop_t90=3.0))
+    ctrl.grounded = True
+    # Ramp rises toward +Y, so uphill direction is +Y.
+    ctrl._ground_normal = LVector3f(0.0, -0.70, 0.71414284)
+    ctrl.vel = LVector3f(0.0, 10.0, 0.0)
+    ctrl.set_slide_held(held=True)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 1.0, 0.0), yaw_deg=0.0, crouching=False)
+    pre = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y))
+
+    ctrl.grounded = True
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+    post = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y))
+
+    assert post < pre
+
+
+def test_clip_velocity_does_not_increase_speed() -> None:
+    ctrl = _make_controller(PhysicsTuning())
+    vel = LVector3f(35.0, -6.0, 0.0)
+    out = ctrl._clip_velocity(vel, LVector3f(-1.0, 0.0, 0.0))
+    pre = math.sqrt(float(vel.x) * float(vel.x) + float(vel.y) * float(vel.y) + float(vel.z) * float(vel.z))
+    post = math.sqrt(float(out.x) * float(out.x) + float(out.y) * float(out.y) + float(out.z) * float(out.z))
+
+    assert post <= pre + 1e-6
 
 
 def test_invariant_vmax_remains_authoritative_under_input() -> None:

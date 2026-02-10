@@ -63,10 +63,12 @@ See: `docs/ui-kit.md`.
   - `solver.py`: authority for derived run/jump/gravity/ground-damping operations
   - `intent.py`, `state.py`: motion pipeline contracts for staged refactor
 - `apps/ivan/src/ivan/physics/player_controller.py`: Kinematic character controller orchestration (intent -> mode -> solver -> collision)
+- `apps/ivan/src/ivan/physics/player_controller_kinematics.py`: Kinematic state mutation mixin (slide solve, jump consume/apply, velocity write helpers)
+- `apps/ivan/src/ivan/physics/player_controller_state.py`: Read-only state/query mixin (motion lane name, camera roll/pitch observers, external velocity lane toggles)
 - `apps/ivan/src/ivan/physics/player_controller_actions.py`: Player action mixin (jump variants, vault, grapple, slide hull, friction)
 - `apps/ivan/src/ivan/physics/player_controller_surf.py`: Air/surf behavior mixin (air steer, surf redirect, wall/surf contact probes)
 - `apps/ivan/src/ivan/physics/player_controller_collision.py`: Collision and step-slide mixin (sweep, snap, graybox fallback)
-- `apps/ivan/src/ivan/physics/player_controller_momentum.py`: Momentum policy mixin (speed-floor guards for trick states; ground run/coast is the only intentional deceleration lane)
+- `apps/ivan/src/ivan/physics/player_controller_momentum.py`: Momentum helper mixin (targeted speed-floor guards for jump transitions; no global per-tick speed lock)
 - `apps/ivan/src/ivan/physics/collision_world.py`: Bullet collision query world (convex sweeps against static geometry)
 - `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (CS-style grouped boxes, collapsible sections, scrollable content, real-unit sliders/entries, profile dropdown/save)
 - `apps/ivan/src/ivan/ui/main_menu.py`: main menu controller (bundle list + import flow + video settings)
@@ -122,7 +124,11 @@ See: `docs/ui-kit.md`.
   - active movement tuning is invariant-first: run, stop damping, jump, air gain/cap, wallrun sink, and slide are derived from timing/target invariants
   - `PlayerController` now uses `MotionSolver` for derived ground run, ground coasting damping, jump takeoff speed, air gain/cap, wallrun sink response, and gravity
   - gameplay and authoritative server ticks now feed movement through `MotionIntent` (`step_with_intent`) instead of ad-hoc feature velocity calls
-  - momentum policy is centralized: regular grounded run/coast may decelerate; trick lanes (air/surf/slide/wallrun/walljump/grapple) preserve momentum floors for chainable flow
+  - deceleration policy is explicit:
+    - regular grounded coasting/run is a deceleration lane
+    - slide uses invariant damping + slope-aligned acceleration (downhill gains, uphill losses)
+    - walljump keeps targeted total-speed floor preservation at jump transition only
+    - collision clipping is non-energy-gaining (`overbounce=1.0`) to reduce high-speed ricochet escalation
   - slide invariant (`slide_stop_t90`) derives grounded slide speed decay; slide is hold-driven, preserves carried speed, and owns low-profile hull state while active
   - shared leniency invariant (`grace_period`) drives jump buffer, coyote window, and vault grace checks from one slider, with runtime distance-derivation (`grace_distance = grace_period * Vmax`) for speed-aware grace timing
   - optional character scale lock derives geometry-facing values (`player_radius`, `step_height`) from `player_half_height` while keeping motion feel invariants independent

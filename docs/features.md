@@ -100,10 +100,12 @@
   - if jump is buffered shortly before wall contact while airborne, vault can now still trigger on contact
 - Ivan: controller module split for ownership clarity and reviewability
   - `player_controller.py`: orchestration + authority loop
+  - `player_controller_kinematics.py`: jump/slide solve + velocity write helpers
+  - `player_controller_state.py`: state/query and camera-observer helpers
   - `player_controller_actions.py`: jump/vault/grapple/slide-hull/friction
   - `player_controller_surf.py`: surf/air behavior + wall/surf probes
   - `player_controller_collision.py`: collision/step-slide/sweep logic
-  - `player_controller_momentum.py`: centralized momentum policy so trick states keep chainable speed while regular ground run/coast remains the deceleration lane
+  - `player_controller_momentum.py`: targeted momentum helpers for jump-transition speed floors (no global per-tick speed lock)
 - Ivan: camera and animation are now explicit read-only observers
   - `camera_observer.py`: render-shell camera smoothing that follows solved simulation state only
   - `animation_observer.py`: optional visual bob/root-motion layer that applies camera-only offsets and never writes movement state
