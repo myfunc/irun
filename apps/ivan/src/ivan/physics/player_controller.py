@@ -50,6 +50,7 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
         self._wall_normal = LVector3f(0, 0, 0)
         self._wall_contact_point = LVector3f(0, 0, 0)
         self._wallrun_active = False
+        self._wallrun_reacquire_block_timer = 0.0
         self._surf_contact_timer = 999.0
         self._surf_normal = LVector3f(0, 0, 0)
         self._wall_jump_lock_timer = 999.0
@@ -100,6 +101,7 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
         self._slide_dir = LVector3f(0, 0, 0)
         self._contact_count = 0
         self._wallrun_active = False
+        self._wallrun_reacquire_block_timer = 0.0
         self._vault_camera_timer = 0.0
         self._vault_assist_timer = 0.0
         self._vault_assist_vel = LVector3f(0, 0, 0)
@@ -330,7 +332,7 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
             return False
         # Prevent immediate wallrun re-acquire right after a wall jump; this keeps
         # camera tilt recovery aligned with jump-off state.
-        if self._wall_jump_lock_timer < 0.10:
+        if self._wallrun_reacquire_block_timer > 0.0:
             return False
         if self._wall_contact_timer > 0.24:
             return False
@@ -367,6 +369,7 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
         self._jump_buffer_timer = max(0.0, self._jump_buffer_timer - dt)
         self._vault_collision_pause_timer = max(0.0, float(self._vault_collision_pause_timer) - dt)
         self._vault_collision_ignore_timer = max(0.0, float(self._vault_collision_ignore_timer) - dt)
+        self._wallrun_reacquire_block_timer = max(0.0, float(self._wallrun_reacquire_block_timer) - dt)
         self._apply_vault_assist(dt=dt)
         if not self._is_vault_collision_paused():
             self._refresh_wall_contact_from_probe()
