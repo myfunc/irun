@@ -29,6 +29,28 @@ class PlayerControllerCollisionMixin:
         # Equivalent to Quake3 MIN_WALK_NORMAL (0.7) when max_slope_deg ~= 45.57.
         return float(math.cos(math.radians(max_slope_deg)))
 
+    def _walkable_ground_threshold(self) -> float:
+        threshold = self._walkable_threshold_z(float(self.tuning.max_ground_slope_deg))
+        # Add mild hysteresis when already grounded/sliding to reduce one-tick floor flicker
+        # on noisy slope contacts.
+        if self.grounded or self.is_sliding() or bool(getattr(self, "_slide_held", False)):
+            return max(0.05, float(threshold) - 0.035)
+        return float(threshold)
+
+    def _ground_probe_distance(self, *, for_snap: bool) -> float:
+        base = max(0.0 if for_snap else 0.06, float(self.tuning.ground_snap_dist))
+        step_h = max(0.0, float(self.tuning.step_height))
+        grounded_motion = bool(self.grounded) or self.is_sliding() or bool(getattr(self, "_slide_held", False))
+        if for_snap:
+            # Quake-style descending step glue: while grounded-style motion is active, allow
+            # snapping down up to step height so stair descent stays planted.
+            if grounded_motion:
+                return max(float(base), min(0.70, float(step_h) + float(base)))
+            return max(float(base), min(0.45, float(step_h) * 0.50 + float(base)))
+        if grounded_motion:
+            return max(float(base), min(0.70, max(float(base), float(step_h) * 0.75)))
+        return max(float(base), min(0.45, max(float(base), float(step_h) * 0.45)))
+
     @staticmethod
     def _clip_velocity(vel: LVector3f, normal: LVector3f, overbounce: float = 1.0) -> LVector3f:
         # Quake-style clip against a collision plane.
@@ -79,8 +101,8 @@ class PlayerControllerCollisionMixin:
         return self.collision.sweep_closest(from_pos, to_pos)
 
     def _bullet_ground_trace(self) -> None:
-        walkable_z = self._walkable_threshold_z(float(self.tuning.max_ground_slope_deg))
-        down = LVector3f(0, 0, -max(0.06, float(self.tuning.ground_snap_dist)))
+        walkable_z = self._walkable_ground_threshold()
+        down = LVector3f(0, 0, -float(self._ground_probe_distance(for_snap=False)))
         hit = self._bullet_sweep_closest(self.pos, self.pos + down)
         if not hit.hasHit():
             self.grounded = False
@@ -105,7 +127,7 @@ class PlayerControllerCollisionMixin:
         remaining = LVector3f(delta)
         planes: list[LVector3f] = []
 
-        walkable_z = self._walkable_threshold_z(float(self.tuning.max_ground_slope_deg))
+        walkable_z = self._walkable_ground_threshold()
         skin = 0.006
 
         for _ in range(4):
@@ -185,11 +207,13 @@ class PlayerControllerCollisionMixin:
 
         start_pos = LVector3f(self.pos)
         start_vel = LVector3f(self.vel)
+        start_grounded = bool(self.grounded)
 
         # First attempt: plain slide.
         self._bullet_slide_move(delta)
         pos1 = LVector3f(self.pos)
         vel1 = LVector3f(self.vel)
+        grounded1 = bool(self.grounded)
 
         # Second attempt: step up, move horizontally, then step down.
         self.pos = LVector3f(start_pos)
@@ -198,11 +222,16 @@ class PlayerControllerCollisionMixin:
             source=MotionWriteSource.COLLISION,
             reason="stepslide.reset_second_try",
         )
+        self.grounded = bool(start_grounded)
 
         step_up = LVector3f(0, 0, float(self.tuning.step_height))
         hit_up = self._bullet_sweep_closest(self.pos, self.pos + step_up)
-        if not hit_up.hasHit():
+        if hit_up.hasHit():
+            up_frac = max(0.0, min(1.0, float(hit_up.getHitFraction()) - 1e-4))
+            self.pos += step_up * up_frac
+        else:
             self.pos += step_up
+        if float(self.pos.z - start_pos.z) > 1e-6:
             horiz = LVector3f(float(delta.x), float(delta.y), 0.0)
             self._bullet_slide_move(horiz)
 
@@ -214,19 +243,40 @@ class PlayerControllerCollisionMixin:
 
         pos2 = LVector3f(self.pos)
         vel2 = LVector3f(self.vel)
+        grounded2 = bool(self.grounded)
 
         d1 = (pos1 - start_pos)
         d2 = (pos2 - start_pos)
         dist1 = d1.x * d1.x + d1.y * d1.y
         dist2 = d2.x * d2.x + d2.y * d2.y
+        choose_plain = True
+        intent = LVector3f(float(delta.x), float(delta.y), 0.0)
+        if intent.lengthSquared() > 1e-12:
+            intent.normalize()
+            p1 = float(d1.dot(intent))
+            p2 = float(d2.dot(intent))
+            eps = 1e-6
+            if p2 > (p1 + eps):
+                choose_plain = False
+            elif p1 > (p2 + eps):
+                choose_plain = True
+            elif dist2 > (dist1 + eps):
+                choose_plain = False
+            elif dist1 > (dist2 + eps):
+                choose_plain = True
+            else:
+                choose_plain = not (grounded2 and not grounded1)
+        elif dist2 > dist1:
+            choose_plain = False
 
-        if dist1 >= dist2:
+        if choose_plain:
             self.pos = pos1
             self._set_velocity(
                 LVector3f(vel1),
                 source=MotionWriteSource.COLLISION,
                 reason="stepslide.choose_plain",
             )
+            self.grounded = bool(grounded1)
         else:
             self.pos = pos2
             self._set_velocity(
@@ -234,14 +284,18 @@ class PlayerControllerCollisionMixin:
                 source=MotionWriteSource.COLLISION,
                 reason="stepslide.choose_step",
             )
+            self.grounded = bool(grounded2)
 
     def _bullet_ground_snap(self) -> None:
         # Keep the player glued to ground on small descents (Quake-style ground snap).
         if self.vel.z > 0.0:
             return
 
-        walkable_z = self._walkable_threshold_z(float(self.tuning.max_ground_slope_deg))
-        down = LVector3f(0, 0, -float(self.tuning.ground_snap_dist))
+        walkable_z = self._walkable_ground_threshold()
+        down_dist = float(self._ground_probe_distance(for_snap=True))
+        if down_dist <= 0.0:
+            return
+        down = LVector3f(0, 0, -down_dist)
         hit = self._bullet_sweep_closest(self.pos, self.pos + down)
         if not hit.hasHit():
             return

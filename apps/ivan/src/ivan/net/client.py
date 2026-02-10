@@ -27,6 +27,8 @@ class MultiplayerClient:
         self.token: str = ""
         self.tick_rate: int = 60
         self.server_map_json: str | None = None
+        self.server_spawn: tuple[float, float, float] | None = None
+        self.server_spawn_yaw: float | None = None
         self.can_configure: bool = False
         self.server_tuning_version: int = 0
         self.server_tuning: dict[str, float | bool] | None = None
@@ -53,6 +55,19 @@ class MultiplayerClient:
         map_json_val = obj.get("map_json")
         if isinstance(map_json_val, str):
             self.server_map_json = map_json_val.strip() or None
+        spawn_val = obj.get("spawn")
+        if isinstance(spawn_val, list) and len(spawn_val) == 3:
+            try:
+                self.server_spawn = (
+                    float(spawn_val[0]),
+                    float(spawn_val[1]),
+                    float(spawn_val[2]),
+                )
+            except Exception:
+                self.server_spawn = None
+        spawn_yaw_val = obj.get("spawn_yaw")
+        if isinstance(spawn_yaw_val, (int, float)):
+            self.server_spawn_yaw = float(spawn_yaw_val)
         self.can_configure = bool(obj.get("can_configure"))
         self.server_tuning_version = int(obj.get("cfg_v") or 0)
         tuning_val = obj.get("tuning")

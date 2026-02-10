@@ -133,6 +133,9 @@ See: `docs/ui-kit.md`.
   - shared leniency invariant (`grace_period`) drives jump buffer, coyote window, and vault grace checks from one slider, with runtime distance-derivation (`grace_distance = grace_period * Vmax`) for speed-aware grace timing
   - optional character scale lock derives geometry-facing values (`player_radius`, `step_height`) from `player_half_height` while keeping motion feel invariants independent
   - debug tuning UI is intentionally narrow: invariant-first controls plus harness isolation toggles (legacy direct scalars and niche sliders are hidden), with one explicit utility control for `noclip_speed`
+  - character group also exposes `step_height` for live step-up/ground-contact tuning without reopening broader legacy slider surface
+  - slide lane includes short ground-loss grace so transient slope contact jitter does not flap slide hull state (crouch/stand spam)
+  - step-slide resolver now compares path progress along intended horizontal move direction and preserves grounded state from the selected path, matching Quake-style step intent under oblique stair contact
   - legacy direct run/gravity tuning fields are migrated to invariants and no longer part of active tuning schema
   - legacy air gain scalars are migrated (`max_air_speed`, `jump_accel`, `air_control`, `air_counter_strafe_brake`) and removed from active tuning schema
 - Feel diagnostics:
@@ -142,6 +145,11 @@ See: `docs/ui-kit.md`.
 - Multiplayer networking:
   - TCP bootstrap for join/session token assignment.
   - Bootstrap welcome includes server map reference (`map_json`) so connecting clients can auto-load matching content.
+  - Bootstrap welcome includes per-player authoritative spawn + yaw so clients can align immediately on join.
+  - Dedicated/embedded server supports direct `.map` authoring inputs by converting the map for authoritative spawn/collision at startup (same scale/spawn offset parity as client runtime map loading).
+  - `.map` host startup is fail-fast: conversion errors or empty collision results raise and abort host startup (no silent empty-world server fallback).
+  - Embedded host handoff seeds authoritative spawn from current local player transform when host mode is toggled mid-run (prevents forced map-start respawn on host open).
+  - Per-player spawn assignment applies deterministic small ring offsets for later joins so multiple clients do not overlap one spawn point.
   - Bootstrap welcome also includes tuning ownership (`can_configure`) and initial authoritative tuning snapshot/version.
   - UDP packets for gameplay input and world snapshots.
   - Snapshot replication runs at `30 Hz` to reduce visible interpolation stutter.
@@ -151,16 +159,21 @@ See: `docs/ui-kit.md`.
   - Debug-profile switches in multiplayer use the same ownership flow: owner sends full snapshot to server and waits for `cfg_v` ack; non-owners are blocked and re-synced to authoritative tuning.
   - Respawn requests are sent to server over TCP; server performs authoritative respawn and replicates result.
   - Client `R` respawn uses immediate local predictive reset to keep controls responsive while waiting for authoritative `rs` confirmation.
+  - Connected clients skip local kill-plane auto-respawn; death/respawn stays server-authoritative.
   - Player snapshots include respawn sequence (`rs`) to force immediate authoritative client reset after respawn events.
   - Local reconciliation uses sequence-based prediction history: rollback to authoritative acked state, replay unacked inputs, then apply short visual error decay.
   - Movement authority stays deterministic and code-first (Bullet remains collision/query layer only), which keeps advanced movement mechanics and multiplayer reconciliation aligned.
   - Replay during reconciliation runs without per-step render snapshot pushes; a single snapshot is captured after replay completes to reduce jitter/perf spikes.
   - Local first-person render path uses a short camera shell smoothing layer in online mode; reconciliation offsets are not applied directly to the camera.
   - Remote interpolation delay is adaptive (derived from observed snapshot interval mean/stddev), and server-tick estimation uses smoothed offset tracking.
+  - Server snapshot replication supports AOI relevance filtering on GoldSrc bundles when visibility cache exists:
+    - uses the same `visibility.goldsrc.json`/leaf VIS data model as render culling
+    - includes local player unconditionally in each client snapshot stream
+    - keeps short-range distance fallback to avoid over-culling near VIS boundaries
   - Client records network diagnostics (snapshot cadence, correction magnitude, replay cost) and exposes a rolling one-second summary in the `F2` input debug overlay.
   - Client-host mode: the game can run an embedded local server thread on demand; `Esc` menu `Open To Network` toggles host mode ON/OFF.
   - Client join mode: `Esc` menu `Multiplayer` tab allows runtime remote connect/disconnect by host+port (no restart required).
-  - Host toggle handles busy local ports gracefully by attempting to join an already running local server.
+  - Host toggle force-restarts embedded host state before connect, and if bind fails (busy port) it exits without auto-joining unknown local servers.
   - Default multiplayer port uses env var `DEFAULT_HOST_PORT` (fallback `7777`).
 - Console control / MCP:
   - Runtime includes a minimal command console engine (`apps/ivan/src/ivan/console/`) for command + cvar execution.
@@ -194,6 +207,7 @@ See: `docs/ui-kit.md`.
   - `Esc` opens gameplay menu and unlocks cursor.
   - `` ` `` opens debug/admin tuning menu and unlocks cursor.
   - `G` opens quick feel-capture popup during active gameplay (route/name/notes/feedback + save/export/apply + `Revert Last` buttons).
+  - mouse center-snap look capture is automatically suspended when the window is unfocused/minimized and resumes with a one-frame recenter guard on focus return.
   - While either menu is open, gameplay input is blocked but simulation continues.
   - `Esc` menu can open a replay browser (`Replays`) to load saved input demos.
   - `Esc` menu Feel Session tab can export current run telemetry and apply feedback-based tuning changes.
