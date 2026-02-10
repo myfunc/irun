@@ -229,6 +229,7 @@
 - Ivan: minimal command console engine + localhost control bridge (JSON-lines TCP) for external command execution
   - MCP stdio server (`ivan-mcp`) exposes a `console_exec` tool that forwards to the running game process
 - Ivan: TrenchBroom integration — direct `.map` file loading (Valve 220 format), brush CSG-to-mesh conversion, WAD textures
+- Ivan: Valve 220 UV parity fix for direct `.map` loading — texture shift/align now matches TrenchBroom when per-face texture scale is not 1:1
 - Ivan: Material definition system (`.material.json`) for PBR properties (normal, roughness, metallic, emission) alongside WAD textures
 - Ivan: Phong smooth normals on brush geometry (`_phong` / `_phong_angle` entity properties in FGD)
 - Ivan: Hybrid lighting pipeline — flat ambient for dev iteration, optional ericw-tools bake for production-quality lightmaps

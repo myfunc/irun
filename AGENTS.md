@@ -57,6 +57,11 @@ Naming convention:
 - Python apps use a `src/` layout inside their app folder.
 - Primary project: `apps/ivan` (Ivan)
   - Entrypoint: `python -m ivan` (documented in `apps/ivan/README.md`).
+
+## Temporary Artifacts
+- Store smoke-test screenshots, quick debug captures, and other temporary run artifacts only under `.tmp/`.
+- Do not write smoke outputs into source/docs trees (for example `apps/ivan/` or `docs/brainstorm/.../screenshots/`).
+- Temporary artifacts are non-deliverable by default and should not be committed unless the user explicitly asks.
 ## Git Workflow (PR-Only, No Approvals)
 Goal: enable fast "vibe-coding" without stepping on each other, while keeping `main` always mergeable.
 
