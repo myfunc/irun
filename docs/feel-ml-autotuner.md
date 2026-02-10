@@ -8,6 +8,11 @@ Automatically tune movement + camera invariants from route captures (`A/B/C`) an
 - `feedback_text` and `run_note` captured per export.
 - Deterministic replay pipeline and compare outputs.
 - Pre-apply tuning backups and one-click restore (`Revert Last` / `tuning_restore`).
+- V1 route-scoped autotune console commands:
+  - `autotune_suggest <route_tag> <feedback_text> [out_dir]`
+  - `autotune_apply <route_tag> <feedback_text> [out_dir]`
+  - `autotune_eval <route_tag> [out_dir]`
+  - `autotune_rollback [backup_ref]`
 
 ## Scope of Parameters (Invariant-Only)
 Autotuner may adjust only compact invariants:
@@ -76,19 +81,21 @@ Recommended rollout:
    - Numeric deltas still produced by constrained optimizer.
 
 ## Implementation Plan
-1. Add `autotune_suggest` command:
-   - input: `route_tag`, optional feedback text.
-   - output: proposed invariant deltas + expected metric impact + confidence.
-2. Add `autotune_apply` command:
-   - backup current tuning.
-   - apply suggested candidate.
-   - emit evaluation checklist + compare artifact paths.
-3. Add `autotune_eval` command:
-   - score latest run vs previous + baseline for selected route.
-   - return pass/fail against guardrails.
-4. Add `autotune_rollback` convenience command:
-   - alias of latest `tuning_restore`.
-5. Integrate with `G` popup:
+1. `autotune_suggest` (implemented V1):
+   - input: `route_tag`, `feedback_text`, optional telemetry export `out_dir`.
+   - source data: route-scoped compare + history context (`A/B/C`) with latest fallback summary.
+   - output: invariant-only bounded deltas and context artifact paths.
+2. `autotune_apply` (implemented V1):
+   - calls route-scoped suggest pipeline.
+   - always creates tuning backup first (`pre-autotune-apply`) via existing backup system.
+   - applies only suggested invariant fields and triggers normal tuning-change hooks.
+3. `autotune_eval` (implemented V1):
+   - route-scoped guardrail checks + weighted score from latest vs reference compare metrics.
+   - reports compare result counts and check-level pass/fail details.
+4. `autotune_rollback` convenience command (implemented V1):
+   - alias over existing backup restore flow (`tuning_restore` semantics).
+   - defaults to latest backup when ref is omitted.
+5. Integrate with `G` popup (future enhancement):
    - keep current flow.
    - later add optional `Suggest` action.
 
@@ -107,3 +114,8 @@ Recommended rollout:
 - No repeated regressions on protected metrics.
 - Rollback remains instant and reliable.
 - Tuning surface remains compact and invariant-first.
+
+## V1 Notes
+- V1 is intentionally deterministic/rule-based and does not add external ML dependencies.
+- Per-apply trust-region and hard bounds are enforced by invariant-only suggestion logic.
+- Apply safety is shared with existing backup UI/console flows, so rollback behavior remains identical across `autotune_apply`, popup `Revert Last`, and `tuning_restore`.
