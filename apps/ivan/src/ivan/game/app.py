@@ -300,6 +300,7 @@ class RunnerDemo(ShowBase):
                 feedback_text=feedback,
                 apply_feedback=True,
             ),
+            on_restore=self._feel_capture_restore_latest,
             on_close=self._close_feel_capture,
         )
         self.feel_capture_ui.hide()
@@ -724,6 +725,9 @@ class RunnerDemo(ShowBase):
             feedback_text=feedback_text,
             apply_feedback=apply_feedback,
         )
+
+    def _feel_capture_restore_latest(self) -> None:
+        _feel_capture.restore_latest_tuning_backup(self)
 
     def _feel_export_latest(self, route_tag: str, feedback_text: str) -> None:
         _feel_capture.feel_export_latest(self, route_tag, feedback_text)

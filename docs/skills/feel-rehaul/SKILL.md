@@ -7,6 +7,8 @@ Keep movement and camera feel systems decoupled, invariant-driven, and easy to t
 - Expose designer-facing invariants, derive implementation constants.
 - Do not let feature code write velocity directly; route through solver/authority interfaces.
 - Keep debug tuning compact; avoid duplicate knobs that affect the same behavior.
+- For any auto-apply or autotune flow, create a tuning backup snapshot first and keep a one-command restore path.
+- For ML/autotune work, tune invariant fields only and keep per-iteration deltas bounded (trust region) with metric guardrails.
 - Prefer one slider per concept:
   - timing (`*_t90`, windows)
   - scale (`Vmax`, max add, gain)
@@ -44,6 +46,7 @@ Keep movement and camera feel systems decoupled, invariant-driven, and easy to t
   - compare should be route-scoped (`A/B/C`) and not use global latest replay when route context exists
   - preserve both baseline (first route run) and rolling history context for future tuning
   - keep `run_note` (what happened) separate from `feedback_text` (what to tune)
+  - auto-apply tuning should report backup snapshot id in status for immediate rollback
 
 ## Documentation Expectations
 - Any functional change in feel systems must update:
@@ -52,3 +55,4 @@ Keep movement and camera feel systems decoupled, invariant-driven, and easy to t
   - `docs/roadmap.md`
   - `docs/gameplay-feel-rehaul.md`
 - Add/update brainstorm notes under `docs/brainstorm/ui-ux/` when exploring feel iterations.
+- Keep formal ML/autotune design and rollout notes in `docs/feel-ml-autotuner.md`.

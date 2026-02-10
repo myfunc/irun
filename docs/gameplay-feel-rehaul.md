@@ -65,11 +65,13 @@ Deliverables:
   - latest-replay export trigger (CLI + in-game console command)
   - latest-vs-previous comparator utility with metric and tuning deltas
   - in-game Feel Session panel for export/compare/feedback actions
+  - pre-apply tuning backup snapshots for all auto-feedback apply actions
 
 Acceptance:
 - Metrics update during normal gameplay.
 - No movement behavior changes required in this phase.
 - Smoke run remains stable.
+- Rollback path exists for every auto-apply tuning action.
 
 ### Phase 1: Camera Feel Rehaul
 Status: `IN PROGRESS`
@@ -144,6 +146,7 @@ Deliverables:
 - Benchmark checklist and acceptance matrix in docs.
 - Regression tests for critical movement/camera invariants.
 - Final profile defaults recommendation and rollback strategy.
+- Explicit autotune rollback SOP (backup/restore + compare gate before accepting changes).
 
 Acceptance:
 - All milestone checks pass.
@@ -178,6 +181,7 @@ Acceptance:
 - [x] Add replay telemetry export + comparator tooling.
 - [ ] Capture initial baseline run metrics for Route A/B/C.
 - [ ] Open follow-up tasks for Phase 1 and Phase 2 implementation slices.
+- [ ] Add constrained autotuner loop (feedback + route history metrics -> invariant deltas with rollback-first flow).
 
 ## Current Progress (2026-02-09)
 Completed now:
@@ -347,6 +351,7 @@ Still pending:
 - Continue Phase 1 camera pass with optional audio/VFX event cues and final balancing of feedback gains.
 - Start Phase 2 movement stability pass (step/slope/ground-air transitions) against baseline metrics.
 - Reintroduce dash as a separate movement mode after the current invariant baseline pass; keep slide as non-boost hold-based momentum preservation.
+- Implement constrained ML/autotune loop per `docs/feel-ml-autotuner.md`.
 
 ## Why This Helps Future Phases
 - Phase 0 baselining: replay telemetry gives us a stable per-tick data source to compare tuning passes, not just subjective feel.
@@ -357,6 +362,7 @@ Still pending:
 ## Next Steps (Execution Order)
 1. Capture initial baseline datasets (3 runs per route) using `docs/gameplay-baseline-checklist.md`.
 2. Start Phase 1 camera pipeline pass behind explicit tuning params.
+3. Build the constrained autotune prototype (`suggest` + `apply` + rollback gate) using route history files.
 
 ## Rehaul Board Snapshot
 - Overall status: `Phase 0 active`, `Phase 1 active` (camera invariant pass in progress).
@@ -368,9 +374,11 @@ Still pending:
   - replay telemetry export summaries with landing/camera metrics
   - replay comparator utility (route-scoped latest vs reference deltas + baseline/history context)
   - in-game Feel Session + `G` quick-capture export/compare/feedback loop
+  - `G` quick-capture rollback control (`Revert Last`) for one-click tuning restore
   - camera invariant surface compacted (`camera_base_fov`, `camera_speed_fov_max_add`, `camera_tilt_gain`, `camera_event_gain`)
   - camera event feedback unified under one shared envelope/gain path
   - debug numeric controls switched to real-unit values (no normalized 0..100)
+  - explicit `noclip_speed` debug slider for fly-mode iteration
 - What is next:
   - baseline capture pack for Route A/B/C (3 runs each)
   - camera balancing pass on top of compact invariants using route telemetry exports

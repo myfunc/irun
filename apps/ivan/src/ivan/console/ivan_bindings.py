@@ -168,6 +168,59 @@ def build_client_console(runner: Any) -> Console:
             return [f"error: {e}"]
         return [f'feel_feedback applied for route="{route_tag or "none"}"']
 
+    def _cmd_tuning_backup(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        from ivan.game.tuning_backups import create_tuning_backup
+
+        label = " ".join(str(x) for x in argv).strip() if argv else ""
+        try:
+            out = create_tuning_backup(
+                runner,
+                label=(label or None),
+                reason="manual-console",
+            )
+        except Exception as e:
+            return [f"error: {e}"]
+        return [f"backup: {out}"]
+
+    def _cmd_tuning_restore(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        from ivan.game.tuning_backups import restore_tuning_backup
+
+        ref = " ".join(str(x) for x in argv).strip() if argv else None
+        try:
+            out = restore_tuning_backup(runner, backup_ref=(ref or None))
+        except Exception as e:
+            return [f"error: {e}"]
+        try:
+            runner.ui.set_status(f"Tuning restored from backup: {Path(out).name}")
+        except Exception:
+            pass
+        return [f"restored: {out}"]
+
+    def _cmd_tuning_backups(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        from ivan.game.tuning_backups import backup_metadata, list_tuning_backups
+
+        limit = 12
+        if argv:
+            try:
+                limit = max(1, min(100, int(str(argv[0]))))
+            except Exception:
+                return ["usage: tuning_backups [limit]"]
+        rows = list_tuning_backups(limit=limit)
+        if not rows:
+            return ["no tuning backups found"]
+        out: list[str] = []
+        for p in rows:
+            try:
+                md = backup_metadata(p)
+            except Exception:
+                out.append(f"{p.name}")
+                continue
+            profile = str(md.get("active_profile_name") or "-")
+            label = str(md.get("label") or md.get("reason") or "-")
+            fields = int(md.get("field_count") or 0)
+            out.append(f"{p.name} | profile={profile} | fields={fields} | tag={label}")
+        return out
+
     def _registry() -> dict[str, Any]:
         # Treat these as "entities" for now. We'll extend once map v3 entities exist.
         return {
@@ -341,6 +394,21 @@ def build_client_console(runner: Any) -> Console:
         name="feel_feedback",
         help="Apply rule-based tuning tweaks from feedback text + latest replay metrics.",
         handler=_cmd_feel_feedback,
+    )
+    con.register_command(
+        name="tuning_backup",
+        help="Save a tuning snapshot backup (optional label).",
+        handler=_cmd_tuning_backup,
+    )
+    con.register_command(
+        name="tuning_restore",
+        help="Restore tuning from latest backup or by name/path.",
+        handler=_cmd_tuning_restore,
+    )
+    con.register_command(
+        name="tuning_backups",
+        help="List recent tuning backups.",
+        handler=_cmd_tuning_backups,
     )
     con.register_command(name="ent_list", help="List registered entities/objects.", handler=_cmd_ent_list)
     con.register_command(name="ent_get", help="Get a property by path (dot-separated).", handler=_cmd_ent_get)

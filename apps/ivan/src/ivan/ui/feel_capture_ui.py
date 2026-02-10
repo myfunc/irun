@@ -22,6 +22,7 @@ class FeelCaptureUI:
         theme: Theme,
         on_export,
         on_export_apply,
+        on_restore,
         on_close,
     ) -> None:
         aspect_ratio = 16.0 / 9.0
@@ -34,6 +35,7 @@ class FeelCaptureUI:
         self._theme = theme
         self._on_export = on_export
         self._on_export_apply = on_export_apply
+        self._on_restore = on_restore
         self._on_close = on_close
         self._route_tag = "A"
 
@@ -69,7 +71,7 @@ class FeelCaptureUI:
         hint_y = content_h - theme.pad - theme.small_scale * 0.9
         hint = DirectLabel(
             parent=self._content,
-            text="G: open capture | Enter: export from feedback | Esc: close",
+            text="G: open capture | Enter: export | Apply auto-backs up tuning | Revert restores last backup",
             text_scale=theme.small_scale * 0.90,
             text_align=TextNode.ALeft,
             text_fg=theme.text_muted,
@@ -241,7 +243,7 @@ class FeelCaptureUI:
         )
 
         footer_gap = theme.gap
-        footer_w = (content_w - footer_gap * 2.0) / 3.0
+        footer_w = (content_w - footer_gap * 3.0) / 4.0
         self._export_button = Button.build(
             parent=self._content,
             theme=theme,
@@ -262,10 +264,20 @@ class FeelCaptureUI:
             label="Export + Apply",
             on_click=self._trigger_export_apply,
         )
-        self._close_button = Button.build(
+        self._restore_button = Button.build(
             parent=self._content,
             theme=theme,
             x=(footer_w * 2.5) + (footer_gap * 2.0),
+            y=button_y,
+            w=footer_w,
+            h=btn_h,
+            label="Revert Last",
+            on_click=self._trigger_restore,
+        )
+        self._close_button = Button.build(
+            parent=self._content,
+            theme=theme,
+            x=(footer_w * 3.5) + (footer_gap * 3.0),
             y=button_y,
             w=footer_w,
             h=btn_h,
@@ -338,6 +350,9 @@ class FeelCaptureUI:
 
     def _trigger_export_apply(self) -> None:
         self._on_export_apply(self.route_tag, self.route_name, self.run_note, self.feedback_text)
+
+    def _trigger_restore(self) -> None:
+        self._on_restore()
 
     def _set_route_tag(self, tag: str) -> None:
         t = str(tag or "").strip().upper()

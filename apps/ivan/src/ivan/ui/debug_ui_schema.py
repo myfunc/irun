@@ -19,6 +19,7 @@ NUMERIC_CONTROLS: list[tuple[str, float, float]] = [
     ("vault_max_ledge_height", 0.40, 7.50),
     ("vault_height_boost", 0.00, 1.20),
     ("vault_forward_boost", 0.00, 4.00),
+    ("noclip_speed", 1.0, 80.0),
     ("player_half_height", 0.70, 1.60),
 ]
 
@@ -53,6 +54,7 @@ GROUPS: list[tuple[str, list[str], list[str]]] = [
             "vault_max_ledge_height",
             "vault_height_boost",
             "vault_forward_boost",
+            "noclip_speed",
         ],
         [
             "autojump_enabled",
@@ -111,6 +113,7 @@ FIELD_LABELS: dict[str, str] = {
     "vault_max_ledge_height": "vault max obstacle height (u)",
     "vault_height_boost": "vault height boost (u/s)",
     "vault_forward_boost": "vault speed boost (u/s)",
+    "noclip_speed": "noclip speed (u/s)",
     "player_half_height": "player half height (u)",
 }
 
@@ -132,6 +135,7 @@ FIELD_HELP: dict[str, str] = {
     "vault_max_ledge_height": "Lower: only low obstacles can be vaulted. Higher: taller obstacles remain vaultable (up to 3x previous height cap).",
     "vault_height_boost": "Lower: flatter/lower vault arc. Higher: more vertical clearance and stronger vault pop.",
     "vault_forward_boost": "Lower: weaker forward carry when vault triggers. Higher: stronger forward push while vaulting.",
+    "noclip_speed": "Lower: slower noclip traversal while flying. Higher: faster noclip speed along view direction.",
     "player_half_height": "Lower: shorter player hull. Higher: taller player hull; eye height auto-scales to keep camera proportion.",
     "autojump_enabled": "Lower (OFF): jump requires press timing each hop. Higher (ON): holding jump auto-queues grounded hops.",
     "coyote_buffer_enabled": "Lower (OFF): disable coyote + buffered leniency windows. Higher (ON): enable forgiving jump windows.",
