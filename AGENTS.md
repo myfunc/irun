@@ -62,49 +62,23 @@ Naming convention:
 - Store smoke-test screenshots, quick debug captures, and other temporary run artifacts only under `.tmp/`.
 - Do not write smoke outputs into source/docs trees (for example `apps/ivan/` or `docs/brainstorm/.../screenshots/`).
 - Temporary artifacts are non-deliverable by default and should not be committed unless the user explicitly asks.
-## Git Workflow (PR-Only, No Approvals)
-Goal: enable fast "vibe-coding" without stepping on each other, while keeping `main` always mergeable.
+## Git Workflow (Automatic Push-to-Main Flow)
+When the user asks to "push", "sync", "push to main", or uses equivalent Russian phrasing like "запушить", "синхронизироваться", "пуш в мейн", always run the same sequence:
 
-- `main` is protected: no direct pushes, no force-pushes. Changes land in `main` only via Pull Requests.
-- Work happens in short-lived branches (one change / topic).
-- Branch naming:
-  - Use engineer-prefixed branches to avoid collisions: `myfunc/<topic>` and `ivan/<topic>`.
-  - When the agent creates branches, use `codex/<topic>`.
-- When asked to "push a new branch" or "push changes":
-  1. Create a branch if needed (never commit directly to `main`).
-  2. Push the branch to `origin` and create a PR targeting `main`.
-  3. Keep pushing additional commits to the same branch; the PR updates automatically.
-  4. Attempt to merge the PR into `main` (prefer squash) and delete the branch.
-  5. If the merge is blocked by conflicts, stop and ask the user how to proceed (see "Conflicts" below).
-  6. After a successful merge, sync the local `main` to the latest `origin/main` (see "Post-Merge Sync" below).
+1. If current branch is `main`, create and switch to a new branch named `codex/<topic>`.
+2. Ensure all current changes are committed on that branch.
+3. Push the branch to `origin`.
+4. Create (or update) a PR from that branch into `main` with a concise summary of changes.
+5. Merge the PR into `main` (prefer squash) and delete the branch.
+6. Return local repo to `main` and fast-forward sync it with `origin/main`.
 
-Local helper script (preferred to reduce manual steps and token usage):
-- Sync (push current branch -> create/update PR -> fast-forward local `main`): `./scripts/pr sync`
-- Ship (sync + attempt squash-merge PR): `./scripts/pr ship`
+Defaults and constraints:
+- Never push directly to `main`.
+- Never force-push.
+- Use GitHub CLI for PR operations (`gh pr create`, `gh pr merge`).
+- If `gh auth status -h github.com` fails, stop and ask the user to run `gh auth login -h github.com`.
 
-Implementation notes for the agent:
-- Prefer GitHub CLI:
-  - Create PR: `gh pr create --base main --head <branch> --fill`
-  - Merge PR: `gh pr merge --squash --auto --delete-branch`
-  - If auto-merge is not available, fall back to: `gh pr merge --squash --delete-branch`
-- If `gh auth status -h github.com` fails, stop and ask the user to run `gh auth login -h github.com` before continuing.
-- "No approvals" means: do not request reviewers, and branch protection must not require PR reviews (0 required). Status checks may be required if the repo has CI.
-
-Conflicts:
-- If the PR cannot be merged due to merge conflicts, do not guess conflict resolutions.
-- Ask the user which strategy to use:
-  - Rebase the branch onto `main` (preferred for linear history).
-  - Merge `main` into the branch (preferred if rebase is undesirable).
-  - Abort and let the user resolve conflicts manually.
-- After the user chooses, perform the chosen strategy, push the updated branch, and re-attempt the PR merge.
-
-Post-Merge Sync (Always):
-- After a PR is merged, always attempt to update the local `main` to match `origin/main`.
-- Commands:
-  - `git fetch origin main`
-  - `git switch main`
-  - `git pull --ff-only origin main`
-- If the fast-forward pull is blocked by local uncommitted changes or divergent history, stop and ask the user whether to stash/commit/discard local changes before retrying. Do not discard changes without explicit user instruction.
-
-Non-goal:
-- Do not add repository-side automation that creates PRs or merges automatically (GitHub Actions, bots, etc.). This workflow is intentionally agent-driven.
+Conflict handling (before merge):
+- If merge conflicts block PR merge, first attempt to resolve them safely by updating the branch with latest `main`, resolving straightforward conflicts, and pushing the updated branch.
+- If conflicts are non-trivial or risky, stop and ask the user how to resolve them.
+- If conflicts are resolved successfully, continue and merge the PR, then switch back to `main` and sync.
