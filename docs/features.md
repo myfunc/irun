@@ -146,16 +146,25 @@
     - `replay_export_latest` (in-game console command) exports latest replay to CSV + JSON summary
     - `replay_export <path> [out_dir]` exports a selected replay to CSV + JSON summary
     - summary now includes Phase 0 feel metrics: landing speed loss/retention and camera jerk (avg/max)
-    - `replay_compare_latest [out_dir] [route_tag]` auto-exports latest+previous runs and writes a metric/tuning delta comparison JSON
+    - `replay_compare_latest [out_dir] [route_tag]` compares route-tagged exported runs when `route_tag` is provided (latest route run vs preferred prior route run) and writes comparison JSON
     - `python -m ivan --export-latest-replay-telemetry [--replay-telemetry-out <dir>]` exports without launching gameplay
     - `python -m ivan --compare-latest-replays [--replay-telemetry-out <dir>] [--replay-route-tag A]` compares latest vs previous without launching gameplay
     - `python -m ivan --verify-latest-replay-determinism [--determinism-runs N] [--replay-telemetry-out <dir>]` runs repeated offline replay sim determinism checks and emits JSON
+    - route export metadata now stores: `route_tag`, optional `route_name`, optional `run_note`, optional `feedback_text`, and `source_demo` path
   - while replay is active, gameplay/menu input is locked; `R` exits replay and respawns to normal play
 - Ivan: in-game Feel Session tab (ESC menu)
   - route tagging via radio-style options (`A/B/C`)
-  - export latest replay telemetry
+  - export now saves the current in-progress run first, exports that exact replay, then starts a fresh recording
   - free-text feedback action applies intent-driven tuning adjustments and auto-compares latest vs previous run
   - export/apply flow stores route/comment metadata into replay summary export history, clears feedback input, and confirms save in-panel
+- Ivan: quick feel capture popup (`G` while playing)
+  - route selector (`A/B/C`) + free text fields (`route name`, `run notes`, `feedback`)
+  - one-click `Save + Export` writes current run telemetry and route-scoped comparisons
+  - optional `Export + Apply` runs the same export path and applies feedback-driven tuning suggestions
+  - route compare history now includes:
+    - latest vs preferred prior run (prefers prior runs with notes/feedback)
+    - latest vs baseline run (first run on route, when available)
+    - route history context JSON summarizing how latest ranks against prior route runs
 - Ivan: multiplayer foundation (authoritative server + connected clients)
   - dedicated server mode with TCP bootstrap + UDP gameplay packets
   - normal client sessions are offline by default; ESC menu `Open To Network` starts/stops embedded host mode for LAN joinability while keeping the local player in-session

@@ -38,6 +38,12 @@ Keep movement and camera feel systems decoupled, invariant-driven, and easy to t
   - state, speed, accel, contacts
   - camera FOV target/current, speed ratio/curve factor
   - event quality/amplitude/reject reason
+- Replay/feel capture UX should stay route-first and low-friction:
+  - `G` opens quick capture popup during gameplay
+  - export should save the current run first, then export that exact replay
+  - compare should be route-scoped (`A/B/C`) and not use global latest replay when route context exists
+  - preserve both baseline (first route run) and rolling history context for future tuning
+  - keep `run_note` (what happened) separate from `feedback_text` (what to tune)
 
 ## Documentation Expectations
 - Any functional change in feel systems must update:
