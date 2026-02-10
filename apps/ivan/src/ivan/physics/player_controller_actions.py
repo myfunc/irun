@@ -104,6 +104,7 @@ class PlayerControllerActionsMixin:
             reason="walljump.vertical",
         )
         self._wallrun_active = False
+        self._wallrun_reacquire_block_timer = 0.10
         self._wall_jump_lock_timer = 0.0
         self._wall_contact_timer = 999.0
         self._wall_normal = LVector3f(0, 0, 0)
