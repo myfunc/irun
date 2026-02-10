@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from ivan.game import RunnerDemo
+from ivan.game import app as app_mod
 from ivan.game import tuning_profiles as profiles_mod
 from ivan.physics.tuning import PhysicsTuning
 from ivan.net.server import MultiplayerServer
@@ -58,6 +59,30 @@ class _FakeNoclipPlayer:
     def set_external_velocity(self, *, vel: LVector3f, reason: str = "external") -> None:
         _ = reason
         self.vel = LVector3f(vel)
+
+
+class _FakeWindowProps:
+    def __init__(self, *, fullscreen: bool) -> None:
+        self._fullscreen = bool(fullscreen)
+
+    def getFullscreen(self) -> bool:
+        return bool(self._fullscreen)
+
+
+class _FakeWindow:
+    def __init__(self, *, width: int, height: int, fullscreen: bool) -> None:
+        self._w = int(width)
+        self._h = int(height)
+        self._props = _FakeWindowProps(fullscreen=fullscreen)
+
+    def getProperties(self) -> _FakeWindowProps:
+        return self._props
+
+    def getXSize(self) -> int:
+        return int(self._w)
+
+    def getYSize(self) -> int:
+        return int(self._h)
 
 
 def test_network_respawn_button_sends_server_request() -> None:
@@ -215,6 +240,40 @@ def test_noclip_forward_uses_view_pitch_direction() -> None:
     assert demo.player.vel.z > 0.0
     assert demo.player.pos.y > 0.0
     assert demo.player.pos.z > 0.0
+
+
+def test_window_resize_event_persists_window_size_on_windows(monkeypatch) -> None:
+    calls: list[dict[str, int | bool]] = []
+    monkeypatch.setattr(app_mod, "update_state", lambda **kwargs: calls.append(kwargs))
+    demo = RunnerDemo.__new__(RunnerDemo)
+    demo.cfg = SimpleNamespace(smoke=False)
+    demo._window_resize_persist_enabled = True
+    demo._last_persisted_window_size = (1280, 720)
+    demo.win = _FakeWindow(width=1600, height=900, fullscreen=False)
+
+    RunnerDemo._on_window_event(demo, demo.win)
+    RunnerDemo._on_window_event(demo, demo.win)
+
+    assert calls == [{"fullscreen": False, "window_width": 1600, "window_height": 900}]
+    assert demo._last_persisted_window_size == (1600, 900)
+
+
+def test_window_resize_event_is_ignored_off_windows_and_fullscreen(monkeypatch) -> None:
+    calls: list[dict[str, int | bool]] = []
+    monkeypatch.setattr(app_mod, "update_state", lambda **kwargs: calls.append(kwargs))
+    demo = RunnerDemo.__new__(RunnerDemo)
+    demo.cfg = SimpleNamespace(smoke=False)
+    demo._last_persisted_window_size = (1280, 720)
+
+    demo._window_resize_persist_enabled = False
+    demo.win = _FakeWindow(width=1600, height=900, fullscreen=False)
+    RunnerDemo._on_window_event(demo, demo.win)
+
+    demo._window_resize_persist_enabled = True
+    demo.win = _FakeWindow(width=1600, height=900, fullscreen=True)
+    RunnerDemo._on_window_event(demo, demo.win)
+
+    assert calls == []
 
 
 def test_reconcile_uses_ack_state_and_replays_unacked_inputs() -> None:
