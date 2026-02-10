@@ -34,7 +34,6 @@ apps/ivan/assets/imported/
 apps/ivan/assets/imported/halflife/valve/pool_party/
 
 # Local TrenchBroom/compile scratch outputs (do not commit)
-apps/ivan/assets/maps/*.map
 apps/ivan/assets/maps/*.bsp
 apps/ivan/assets/maps/*.log
 apps/ivan/assets/maps/*.lin

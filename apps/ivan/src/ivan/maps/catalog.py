@@ -36,6 +36,9 @@ def _label_for_map_json(*, app_root: Path, map_json_path: Path) -> str:
         # Prefer directory label for `<dir>/map.json`; otherwise use file stem.
         if rel.name == "map.json" and rel.parent != Path("."):
             return rel.parent.as_posix()
+        # .map files: use stem (e.g. "maps/mymap.map" -> "maps/mymap")
+        if rel.suffix.lower() == ".map":
+            return rel.with_suffix("").as_posix()
         return rel.with_suffix("").as_posix()
     if p.name == "map.json":
         return p.parent.name
@@ -61,6 +64,7 @@ def find_runnable_bundles(*, app_root: Path) -> list[MapBundle]:
     candidates.extend((assets / "maps").glob("**/map.json"))
     candidates.extend((assets / "maps").glob(f"**/*{PACKED_BUNDLE_EXT}"))
     candidates.extend((assets / "generated").glob("*_map.json"))
+    candidates.extend((assets / "maps").glob("**/*.map"))
 
     out: list[MapBundle] = []
     for p in candidates:

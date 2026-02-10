@@ -19,6 +19,7 @@ from baker.ui.layout import EditorLayout
 # Imported from Ivan for WYSIWYG rendering and bundle loading.
 ensure_ivan_importable()
 from ivan.maps.bundle_io import resolve_bundle_handle
+from ivan.state import resolve_map_json as _resolve_map_json
 from ivan.world.scene import WorldScene
 
 
@@ -43,17 +44,29 @@ class BakerViewer(ShowBase):
         self._setup_window()
         self.log.log("Window setup complete")
 
+        # Resolve the map path.  resolve_bundle_handle returns None for .map
+        # files (TrenchBroom workflow) because they don't produce a BundleHandle.
+        # In that case, fall back to resolve_map_json and pass the .map path
+        # directly — scene.py handles .map files via its own pipeline.
         handle = resolve_bundle_handle(cfg.map_json)
-        if handle is None:
-            raise SystemExit(f"Could not resolve --map: {cfg.map_json}")
-        self.log.log(f"Resolved map: {cfg.map_json} -> {handle.map_json}")
+        map_json_str: str | None = None
+        if handle is not None:
+            map_json_str = str(handle.map_json)
+            self.log.log(f"Resolved map: {cfg.map_json} -> {handle.map_json}")
+        else:
+            resolved = _resolve_map_json(cfg.map_json) if cfg.map_json else None
+            if resolved is not None and resolved.suffix.lower() == ".map":
+                map_json_str = str(resolved)
+                self.log.log(f"Resolved .map file: {cfg.map_json} -> {resolved}")
+            else:
+                raise SystemExit(f"Could not resolve --map: {cfg.map_json}")
 
         # WorldScene expects a config-like object with `map_json` and optional lighting/visibility settings.
         scene_cfg = type(
             "BakerSceneCfg",
             (),
             {
-                "map_json": str(handle.map_json),
+                "map_json": map_json_str,
                 "lighting": {"preset": "original"},
                 "visibility": {"enabled": True, "mode": "auto", "build_cache": True},
             },
@@ -78,7 +91,7 @@ class BakerViewer(ShowBase):
         except Exception:
             pass
         if cfg.smoke:
-            self._apply_smoke_camera_pose(map_json_path=Path(handle.map_json))
+            self._apply_smoke_camera_pose(map_json_path=Path(map_json_str))
 
         self.tonemap = TonemapPass(base=self)
         self.tonemap.attach()

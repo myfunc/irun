@@ -30,8 +30,22 @@ class BundleHandle:
     extracted_root: Path | None = None
 
 
+@dataclass(frozen=True)
+class MapFileHandle:
+    """Handle for a .map file loaded directly (TrenchBroom workflow)."""
+
+    map_file: Path
+    wad_search_dirs: list[Path]
+    materials_dirs: list[Path]
+
+
 def is_packed_bundle_path(p: Path) -> bool:
     return p.is_file() and p.suffix.lower() == PACKED_BUNDLE_EXT
+
+
+def is_map_file_path(p: Path) -> bool:
+    """Return True if *p* looks like a TrenchBroom .map file."""
+    return p.is_file() and p.suffix.lower() == ".map"
 
 
 def run_json_path_for_bundle_ref(bundle_ref: Path) -> Path:
@@ -40,9 +54,12 @@ def run_json_path_for_bundle_ref(bundle_ref: Path) -> Path:
 
     - Directory bundle: <bundle>/run.json
     - Packed bundle (.irunmap): <bundle>.run.json (sidecar)
+    - .map file: <map_file>.run.json (sidecar next to .map)
     - Single-file map json: <map-json-parent>/run.json
     """
 
+    if bundle_ref.is_file() and bundle_ref.suffix.lower() == ".map":
+        return bundle_ref.with_name(bundle_ref.name + ".run.json")
     if bundle_ref.is_file() and bundle_ref.suffix.lower() == PACKED_BUNDLE_EXT:
         # Unambiguous sidecar filename that preserves the original archive name.
         return bundle_ref.with_name(bundle_ref.name + ".run.json")
@@ -55,15 +72,24 @@ def run_json_path_for_bundle_ref(bundle_ref: Path) -> Path:
 def resolve_bundle_handle(map_json: str) -> BundleHandle | None:
     """
     Resolve a user-facing map selection (path/alias) into a runnable on-disk map.json.
+
+    Returns ``None`` for ``.map`` files — callers should pass the raw path
+    through to scene.py which handles ``.map`` files via its own resolution.
     """
 
     p = _resolve_map_json(map_json)
     if p is None:
         return None
-    return resolve_bundle_handle_path(p)
+    result = resolve_bundle_handle_path(p)
+    # .map files produce a MapFileHandle, not a BundleHandle.
+    # Return None so callers fall back to using the raw path string
+    # (scene.py's _resolve_map_bundle_path handles .map files directly).
+    if isinstance(result, MapFileHandle):
+        return None
+    return result
 
 
-def resolve_bundle_handle_path(p: Path) -> BundleHandle | None:
+def resolve_bundle_handle_path(p: Path) -> BundleHandle | MapFileHandle | None:
     """
     Resolve a path into a runnable bundle handle.
 
@@ -72,7 +98,17 @@ def resolve_bundle_handle_path(p: Path) -> BundleHandle | None:
     - <bundle-dir>/map.json
     - <bundle>.irunmap (packed bundle)
     - <something>_map.json (single-file generated bundle)
+    - <something>.map (TrenchBroom .map file, returns MapFileHandle)
     """
+
+    # .map files get a MapFileHandle, not a BundleHandle.
+    # Caller (scene.py) will detect this and use the map converter.
+    if p.exists() and p.is_file() and p.suffix.lower() == ".map":
+        return MapFileHandle(
+            map_file=p,
+            wad_search_dirs=_default_wad_search_dirs(p),
+            materials_dirs=_default_materials_dirs(p),
+        )
 
     if p.exists() and p.is_dir():
         mj = p / "map.json"
@@ -128,6 +164,31 @@ def pack_bundle_dir_to_irunmap(*, bundle_dir: Path, out_path: Path, compressleve
             zf.write(p, arcname=rel.as_posix())
 
     tmp.replace(out_path)
+
+
+def _default_wad_search_dirs(map_file: Path) -> list[Path]:
+    """Default WAD search dirs: map's parent, assets/textures/."""
+    from ivan.paths import app_root as ivan_app_root
+
+    dirs = [map_file.parent]
+    assets_textures = ivan_app_root() / "assets" / "textures"
+    if assets_textures.exists():
+        dirs.append(assets_textures)
+    return dirs
+
+
+def _default_materials_dirs(map_file: Path) -> list[Path]:
+    """Default material definition dirs: map's parent/materials, assets/materials/."""
+    from ivan.paths import app_root as ivan_app_root
+
+    dirs: list[Path] = []
+    local_mats = map_file.parent / "materials"
+    if local_mats.exists():
+        dirs.append(local_mats)
+    assets_mats = ivan_app_root() / "assets" / "materials"
+    if assets_mats.exists():
+        dirs.append(assets_mats)
+    return dirs
 
 
 def _cache_root() -> Path:

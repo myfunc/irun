@@ -45,17 +45,18 @@ Naming convention:
   - `docs/architecture.md`
 
 ## Map Bundles
-- Maps **must** be packed as `.irunmap` (zip archive) by default.
+- **`.map` files** (Valve 220 format) are the **primary authoring format** for IVAN-original maps. The engine loads them directly during development (no BSP compilation needed).
+- Maps **must** be packed as `.irunmap` (zip archive) for distribution.
 - Directory bundles are only used during development/debugging if the user explicitly requests it.
 - All import pipelines and tools should produce `.irunmap` output unless overridden.
 - Level editing is done in an external editor (TrenchBroom); map conversion/import tooling lives in this repo.
+- TrenchBroom game configuration lives at `apps/ivan/trenchbroom/` (`GameConfig.cfg` + `ivan.fgd`). See the README there for install instructions.
 
 ## Repository Defaults
 - Applications live under `apps/`.
 - Python apps use a `src/` layout inside their app folder.
 - Primary project: `apps/ivan` (Ivan)
   - Entrypoint: `python -m ivan` (documented in `apps/ivan/README.md`).
-
 ## Git Workflow (PR-Only, No Approvals)
 Goal: enable fast "vibe-coding" without stepping on each other, while keeping `main` always mergeable.
 

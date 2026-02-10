@@ -18,6 +18,11 @@ See: `docs/ui-kit.md`.
 
 ## Code Layout
 - Monorepo: apps are under `apps/`
+- `apps/launcher/src/launcher/__main__.py`: Launcher Toolbox entrypoint (`python -m launcher`) — Dear PyGui desktop app for one-click map editing, testing, and resource management
+- `apps/launcher/src/launcher/app.py`: Dear PyGui window, panels (Settings, Map Browser, Actions, Log), render loop
+- `apps/launcher/src/launcher/config.py`: Persistent launcher settings (`~/.irun/launcher/config.json`) — TrenchBroom exe, WAD/materials dirs, Steam root, ericw-tools path
+- `apps/launcher/src/launcher/actions.py`: Subprocess spawning for game, TrenchBroom, pack_map, bake_map (output captured to log)
+- `apps/launcher/src/launcher/map_browser.py`: Recursive `.map` file discovery sorted by modification time
 - `apps/baker/src/baker/__main__.py`: Baker entrypoint (`python -m baker`)
 - `apps/baker/src/baker/app.py`: Viewer wiring (Panda3D ShowBase), fly camera, tonemap hotkeys
 - `apps/baker/src/baker/render/tonemapping.py`: GLSL 120 post-process view transform (gamma-only/Reinhard/ACES approx)
@@ -41,8 +46,12 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/game/animation_observer.py`: read-only visual offset observer (camera bob/root-motion layer)
   - `apps/ivan/src/ivan/game/menu_flow.py`: main menu controller + import worker glue
   - `apps/ivan/src/ivan/game/grapple_rope.py`: grapple rope rendering helper
-  - `apps/ivan/src/ivan/game/feel_metrics.py`: rolling gameplay-feel telemetry (jump/landing/ground flicker/camera jerk proxies)
-- `apps/ivan/src/ivan/maps/catalog.py`: runtime catalog helpers for shipped bundles and GoldSrc-like map discovery
+- `apps/ivan/src/ivan/game/feel_metrics.py`: rolling gameplay-feel telemetry (jump/landing/ground flicker/camera jerk proxies)
+- `apps/ivan/src/ivan/maps/map_parser.py`: Valve 220 `.map` file parser (TrenchBroom text format)
+- `apps/ivan/src/ivan/maps/brush_geometry.py`: CSG brush-to-triangle mesh conversion (half-plane clipping, UV projection, Phong normals)
+- `apps/ivan/src/ivan/maps/map_converter.py`: .map to internal map-bundle format converter (orchestrates parser + brush geometry + material defs)
+- `apps/ivan/src/ivan/maps/material_defs.py`: `.material.json` loader for PBR overrides (normal, roughness, metallic, emission) alongside WAD base textures
+- `apps/ivan/src/ivan/maps/catalog.py`: runtime catalog helpers for shipped bundles and GoldSrc-like map discovery (includes .map file discovery)
 - `apps/ivan/src/ivan/state.py`: small persistent user state (last launched map, last game dir/mod, tuning profiles + active profile snapshot, display/video settings)
 - `apps/ivan/src/ivan/world/scene.py`: Scene building, external map-bundle loading (`--map`), spawn point/yaw
   - Includes an optional deterministic feel-harness scene (`--feel-harness`) with flat/slope/step/wall/ledge + moving-platform fixtures.
@@ -91,6 +100,15 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/tools/importers/goldsrc/import_goldsrc_bsp.py`: GoldSrc/Xash3D BSP -> IVAN map bundle (triangles + WAD textures + resource copy)
   - Notes: GoldSrc masked textures use `{` prefix; importer emits PNG alpha using palette/index rules and runtime enables binary transparency for those materials.
   - Notes: The importer extracts embedded BSP textures when present and falls back to scanning `--game-root` for `.wad` files if the BSP omits the worldspawn `wad` list.
+- `apps/ivan/tools/bake_map.py`: Bake pipeline — compiles a .map file with ericw-tools (qbsp → vis → light) then imports the resulting BSP via the GoldSrc importer to produce an .irunmap bundle with production-quality lightmaps.
+  - Requires external ericw-tools binaries (qbsp, vis, light) pointed to by `--ericw-tools`.
+  - Stages can be skipped individually (`--no-vis`, `--no-light`); light supports `--bounce N` and `--light-extra` (-extra4).
+- `apps/ivan/tools/pack_map.py`: Fast-iteration packer — converts a .map file directly to an .irunmap bundle without BSP compilation (no lightmaps).
+  - Parses .map with `ivan.maps.map_parser`, converts brushes via `ivan.maps.brush_geometry` (planned), resolves WAD textures, and packs the result.
+  - Depends on future `ivan.maps.brush_geometry` and `ivan.maps.material_defs` modules; will degrade gracefully until those are implemented.
+- `apps/ivan/tools/testmap.py`: Quick-test launcher — runs `python -m ivan --map <file>` and watches the .map for changes (mtime polling), auto-restarting the game on save.
+  - Supports `--bake` (ericw-tools pipeline), `--convert-only`, and `--no-watch` modes.
+  - Attempts hot-reload via the console bridge (`map_reload` command) before falling back to kill + restart.
 - `apps/ivan/tools/importers/goldsrc/import_trenchbroom_map.py`: TrenchBroom Valve220 `.map` -> GoldSrc BSP compile (`hlcsg`/`hlbsp`/`hlvis`/`hlrad`) -> IVAN bundle helper
   - Supports both classic `hl*` binaries and SDHLT `sdHL*` binaries (auto-handles toolchain CLI differences).
 
@@ -203,6 +221,10 @@ See: `docs/ui-kit.md`.
 - `panda3d.bullet`: Bullet integration used by IVAN for robust character collision queries (convex sweeps, step+slide).
 - `bsp_tool`: BSP parsing for IVAN map import pipelines (Source + GoldSrc branches)
 - `Pillow`: image IO used by map import tools (VTF/WAD -> PNG)
+- `goldsrc_wad`: WAD file parsing for GoldSrc texture extraction (used by both BSP importer and direct .map loader)
+- `dearpygui`: GPU-accelerated immediate-mode GUI used by the Launcher Toolbox (`apps/launcher`)
+
+No new dependencies were added for the TrenchBroom direct .map pipeline — it reuses existing `Pillow` and `goldsrc_wad`.
 
 ## Maps
 Maps are distributed as **map bundles** rooted at a `map.json` manifest plus adjacent assets (textures/resources).
@@ -214,10 +236,34 @@ Bundle storage formats:
 - **Packed bundle** (default): a single `.irunmap` file (zip archive) containing `map.json` at the archive root plus the same folder layout.
   - Runtime extracts `.irunmap` bundles to a local cache under `~/.irun/ivan/cache/bundles/<hash>/` before loading assets.
 
-Level editing uses **TrenchBroom** as the external editor. Integration analysis and conversion tooling are tracked separately.
+Level editing uses **TrenchBroom** as the external editor. `.map` files (Valve 220 format) are the **primary authoring format** for IVAN-original maps. The engine can load `.map` files directly — no BSP compilation step is needed for development.
 
-### Map Format v3 (Paused)
-Format v3 is on hold pending TrenchBroom integration analysis. The planned extensions were:
+TrenchBroom game configuration files live in `apps/ivan/trenchbroom/`:
+- `GameConfig.cfg`: TrenchBroom game definition (Valve 220 format, WAD textures, editor tags)
+- `ivan.fgd`: Entity definitions (spawns, triggers, lights, brush entities with `_phong` / `_phong_angle` support)
+- `README.md`: Setup instructions for installing the IVAN game profile into TrenchBroom
+
+### Map Pipeline
+
+Three workflows exist depending on the use case:
+
+- **Dev workflow (direct .map loading)**: TrenchBroom saves a `.map` file → IVAN loads it directly at runtime (parser → CSG half-plane clipping → triangulated mesh). Textures come from WAD files referenced in the map's worldspawn. Lighting is flat ambient (no bake). This is the fastest iteration path — save in TrenchBroom, reload in-game.
+- **Pack workflow**: `.map` → `tools/pack_map.py` → `.irunmap` bundle (no lightmaps). Used to distribute maps without requiring end-users to have WAD files or the raw `.map` source.
+- **Bake workflow** (optional, production): `.map` → ericw-tools (qbsp → vis → light) → `.bsp` → GoldSrc importer → `.irunmap` bundle with production-quality baked lightmaps. Use `tools/bake_map.py`.
+- **Legacy BSP import**: `.bsp` → GoldSrc/Source importer → `.irunmap` bundle (unchanged).
+
+### Material System
+
+IVAN supports optional `.material.json` sidecar files for PBR properties alongside WAD base textures.
+
+- Location: `materials/<texture_name>.material.json` inside the map bundle or alongside WAD textures.
+- Supported PBR maps: `normal_map`, `roughness_map`, `metallic_map`, `emission_map`.
+- Scalar fallbacks: `roughness` (0.0–1.0), `metallic` (0.0–1.0), `emission_color`.
+- Lookup order: exact name match → casefold match → fallback to WAD base texture only.
+- The material definition system is loaded by `ivan.maps.material_defs`.
+
+### Map Format v3 (Unpaused)
+Format v3 development can proceed now that TrenchBroom integration is complete. The planned extensions are:
 - **Entities**: triggers, spawners, buttons, ladders, movers, lights (engine-agnostic model).
 - **Course logic**: start/finish/checkpoints driven by trigger entities.
 - **Chunking**: baked geometry split into chunks for future streaming (initially still loaded eagerly).
