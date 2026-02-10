@@ -59,3 +59,9 @@ Items temporarily on hold pending further analysis:
 - 9) Reintroduce dash as a separate mode (after baseline/instrumentation pass): **pending**
 - 10) Add constrained autotuner loop (feedback + telemetry history -> suggested invariant deltas with rollback guardrails): **pending**
   - implementation plan + approaches are tracked in `docs/feel-ml-autotuner.md`
+  - V1 command surface shipped:
+    - `autotune_suggest` (route-scoped proposal from compare/history + feedback text)
+    - `autotune_apply` (backup-first invariant-only apply)
+    - `autotune_eval` (guardrails + weighted route score)
+    - `autotune_rollback` (latest/selected backup restore alias)
+  - remaining work keeps status pending: automated iterate/replay loop, candidate search strategy upgrades, and acceptance-board automation
