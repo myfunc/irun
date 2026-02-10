@@ -63,7 +63,7 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game ESC menu (Resume/Map Selector/Key Bindings/Back/Quit) and keybinding controls
   - Menu page uses a two-column action layout to keep all actions visible at gameplay resolutions.
   - Includes a Feel Session tab with route radio options (`A/B/C`), replay export, and feedback-driven tuning tweaks.
-- `apps/ivan/src/ivan/ui/feel_capture_ui.py`: in-game quick capture popup (`G`) for route-tagged save/export/apply flow
+- `apps/ivan/src/ivan/ui/feel_capture_ui.py`: in-game quick capture popup (`G`) for route-tagged save/export/apply flow, including one-click `Revert Last` rollback
 - `apps/ivan/src/ivan/ui/replay_browser_ui.py`: in-game replay browser overlay (UI kit list menu)
 - `apps/ivan/src/ivan/ui/replay_input_ui.py`: in-game replay input HUD (UI kit panel) for recorded command visualization
 - `apps/ivan/src/ivan/replays/demo.py`: input-demo storage (record/save/load/list) using repository-local storage under `apps/ivan/replays/`
@@ -74,6 +74,7 @@ See: `docs/ui-kit.md`.
   - emits latest-vs-reference compare JSON, optional baseline compare JSON, and per-route history context JSON
 - `apps/ivan/src/ivan/game/feel_capture_flow.py`: gameplay-side orchestration for save/export/compare/apply actions (used by pause tab + `G` popup)
 - `apps/ivan/src/ivan/game/feel_feedback.py`: rule-based free-text feedback interpreter for tuning suggestions
+- `apps/ivan/src/ivan/game/tuning_backups.py`: tuning snapshot backup/restore helpers (safety rail for auto-apply/autotune iteration)
 - `apps/ivan/src/ivan/net/server.py`: authoritative multiplayer server loop (TCP bootstrap + UDP input/snapshots)
 - `apps/ivan/src/ivan/net/client.py`: multiplayer client transport for handshake/input send/snapshot poll
 - `apps/ivan/src/ivan/net/protocol.py`: multiplayer packet/message schema and payload codecs
@@ -103,7 +104,7 @@ See: `docs/ui-kit.md`.
   - slide invariant (`slide_stop_t90`) derives grounded slide speed decay; slide is hold-driven, preserves carried speed, and owns low-profile hull state while active
   - shared leniency invariant (`grace_period`) drives jump buffer, coyote window, and vault grace checks from one slider, with runtime distance-derivation (`grace_distance = grace_period * Vmax`) for speed-aware grace timing
   - optional character scale lock derives geometry-facing values (`player_radius`, `step_height`) from `player_half_height` while keeping motion feel invariants independent
-  - debug tuning UI is intentionally narrow: invariant-first controls plus harness isolation toggles (legacy direct scalars and niche sliders are hidden)
+  - debug tuning UI is intentionally narrow: invariant-first controls plus harness isolation toggles (legacy direct scalars and niche sliders are hidden), with one explicit utility control for `noclip_speed`
   - legacy direct run/gravity tuning fields are migrated to invariants and no longer part of active tuning schema
   - legacy air gain scalars are migrated (`max_air_speed`, `jump_accel`, `air_control`, `air_counter_strafe_brake`) and removed from active tuning schema
 - Feel diagnostics:
@@ -143,6 +144,9 @@ See: `docs/ui-kit.md`.
     - `replay_export <replay_path> [out_dir]`
     - `replay_compare_latest [out_dir] [route_tag]` (route-scoped exported-run compare when route is provided)
     - `feel_feedback "<text>" [route_tag]`
+    - `tuning_backup [label]` (save current tuning snapshot to `~/.irun/ivan/tuning_backups/`)
+    - `tuning_restore [name_or_path]` (restore latest or chosen snapshot)
+    - `tuning_backups [limit]` (list recent backups)
   - `ivan-mcp` runs an MCP stdio server (Python 3.9, no deps) that exposes a single tool: `console_exec`.
 - CLI telemetry export:
   - `python -m ivan --export-latest-replay-telemetry [--replay-telemetry-out <dir>]` exports latest replay metrics and exits.
@@ -156,10 +160,11 @@ See: `docs/ui-kit.md`.
 - In-game UI/input split:
   - `Esc` opens gameplay menu and unlocks cursor.
   - `` ` `` opens debug/admin tuning menu and unlocks cursor.
-  - `G` opens quick feel-capture popup during active gameplay (route/name/notes/feedback + save/export buttons).
+  - `G` opens quick feel-capture popup during active gameplay (route/name/notes/feedback + save/export/apply + `Revert Last` buttons).
   - While either menu is open, gameplay input is blocked but simulation continues.
   - `Esc` menu can open a replay browser (`Replays`) to load saved input demos.
   - `Esc` menu Feel Session tab can export current run telemetry and apply feedback-based tuning changes.
+  - Any feedback-driven apply path creates a pre-apply tuning backup snapshot for rollback safety.
   - Apply-feedback flow auto-runs route-scoped compare (latest route run vs prior route run) and reports deltas.
   - Route compare can also emit baseline + route-history context files for longer tuning sessions.
   - Replay playback shows a dedicated replay input HUD and keeps gameplay/menu inputs locked until exit (`R`).

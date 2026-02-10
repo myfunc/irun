@@ -44,6 +44,7 @@
 - Ivan: debug tuning surface reduced to invariant-first controls
   - removed most legacy/direct scalar sliders from the runtime debug menu
   - kept compact controls for `Vmax`, run response timing, ground stop timing, air speed/gain, wallrun sink timing, jump height/apex timing, slide stop timing, leniency windows, and vault iteration (`vault_max_ledge_height`, `vault_height_boost`, `vault_forward_boost`)
+  - added explicit `noclip_speed` slider for fly-mode iteration without touching movement invariants
   - added character-height iteration slider (`player_half_height`) with automatic eye-height proportional update
   - added optional character scale lock toggle to auto-derive `player_radius` + `step_height` from `player_half_height` without touching core feel invariants
   - restored `autojump_enabled` in compact toggles for bhop-chain validation
@@ -156,15 +157,19 @@
   - route tagging via radio-style options (`A/B/C`)
   - export now saves the current in-progress run first, exports that exact replay, then starts a fresh recording
   - free-text feedback action applies intent-driven tuning adjustments and auto-compares latest vs previous run
+  - free-text apply path now auto-creates a tuning backup snapshot before applying any tweak
   - export/apply flow stores route/comment metadata into replay summary export history, clears feedback input, and confirms save in-panel
 - Ivan: quick feel capture popup (`G` while playing)
   - route selector (`A/B/C`) + free text fields (`route name`, `run notes`, `feedback`)
   - one-click `Save + Export` writes current run telemetry and route-scoped comparisons
-  - optional `Export + Apply` runs the same export path and applies feedback-driven tuning suggestions
+  - optional `Export + Apply` runs the same export path, snapshots current tuning backup, and then applies feedback-driven tuning suggestions
+  - added `Revert Last` button to restore the latest tuning backup directly from popup UI (no console command needed)
   - route compare history now includes:
     - latest vs preferred prior run (prefers prior runs with notes/feedback)
     - latest vs baseline run (first run on route, when available)
     - route history context JSON summarizing how latest ranks against prior route runs
+  - tuning backup control-plane is available in console commands (`tuning_backup`, `tuning_restore`, `tuning_backups`) for quick rollback during autotune passes
+  - ML autotune design/implementation plan documented in `docs/feel-ml-autotuner.md`
 - Ivan: multiplayer foundation (authoritative server + connected clients)
   - dedicated server mode with TCP bootstrap + UDP gameplay packets
   - normal client sessions are offline by default; ESC menu `Open To Network` starts/stops embedded host mode for LAN joinability while keeping the local player in-session

@@ -32,6 +32,7 @@ Items temporarily on hold pending further analysis:
   - Baseline tooling now includes replay telemetry export (CSV + JSON summary), latest-vs-previous comparator utility, and checklist doc (`docs/gameplay-baseline-checklist.md`)
   - In-game Feel Session panel + `G` quick-capture popup wire save/export/compare/feedback actions for faster iteration loops
   - Route compares are now route-scoped and preserve route baseline/history context for multi-run A/B/C tuning
+  - Safety rail landed: any auto-apply feedback tweak now snapshots tuning backup first; rollback is available via console (`tuning_restore`) and from `G` popup (`Revert Last`)
 - Phase 1: camera pipeline smoothing and readability pass (**in progress**)
   - read-only camera feedback slice landed and rehauled to compact invariants:
     - `camera_base_fov`
@@ -56,3 +57,5 @@ Items temporarily on hold pending further analysis:
 - 7) Controller ownership split (intent ingestion + module boundaries): **completed (staged)**
 - 8) Wallrun feel pass (tilt direction, camera-biased jump, invariant sink timing): **completed (staged)**
 - 9) Reintroduce dash as a separate mode (after baseline/instrumentation pass): **pending**
+- 10) Add constrained autotuner loop (feedback + telemetry history -> suggested invariant deltas with rollback guardrails): **pending**
+  - implementation plan + approaches are tracked in `docs/feel-ml-autotuner.md`

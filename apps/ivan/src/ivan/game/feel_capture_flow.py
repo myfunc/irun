@@ -7,6 +7,8 @@ from ivan.replays.telemetry import export_replay_telemetry
 
 from .feel_feedback import apply_adjustments as _apply_feedback_adjustments
 from .feel_feedback import suggest_adjustments as _suggest_feel_adjustments
+from .tuning_backups import create_tuning_backup as _create_tuning_backup
+from .tuning_backups import restore_tuning_backup as _restore_tuning_backup
 
 
 def _route_tag(tag: str | None) -> str:
@@ -56,6 +58,15 @@ def toggle_feel_capture(host) -> None:
         close_feel_capture(host)
     else:
         open_feel_capture(host)
+
+
+def restore_latest_tuning_backup(host) -> None:
+    try:
+        restored = _restore_tuning_backup(host)
+    except Exception as e:
+        _status(host, f"Revert failed: {e}")
+        return
+    _status(host, f"Tuning restored: {restored.name}")
 
 
 def _save_and_export_current_run(
@@ -145,10 +156,20 @@ def submit_feel_capture_export(
             if not adjustments:
                 apply_note = "no tuning changes"
             else:
+                backup_note = ""
+                try:
+                    backup = _create_tuning_backup(
+                        host,
+                        label=f"route-{tag}",
+                        reason="pre-export-apply",
+                    )
+                    backup_note = backup.name
+                except Exception as backup_err:
+                    backup_note = f"backup failed: {backup_err}"
                 _apply_feedback_adjustments(tuning=host.tuning, adjustments=adjustments)
                 for adj in adjustments:
                     host._on_tuning_change(str(adj.field))
-                apply_note = f"applied {len(adjustments)} tweak(s)"
+                apply_note = f"applied {len(adjustments)} tweak(s); {backup_note}"
                 try:
                     host.feel_capture_ui.clear_feedback()
                 except Exception:
@@ -217,6 +238,17 @@ def feel_apply_feedback(host, route_tag: str, feedback_text: str) -> None:
         _status(host, "No tuning adjustments suggested for this feedback.")
         return
 
+    backup_note = ""
+    try:
+        backup = _create_tuning_backup(
+            host,
+            label=f"route-{tag}",
+            reason="pre-feel-feedback",
+        )
+        backup_note = backup.name
+    except Exception as backup_err:
+        backup_note = f"backup failed: {backup_err}"
+
     _apply_feedback_adjustments(tuning=host.tuning, adjustments=adjustments)
     for adj in adjustments:
         host._on_tuning_change(str(adj.field))
@@ -231,7 +263,7 @@ def feel_apply_feedback(host, route_tag: str, feedback_text: str) -> None:
         host.feel_capture_ui.clear_feedback()
     except Exception:
         pass
-    _status(host, f"Applied {len(adjustments)} tweak(s) [{tag}] ({compare_note}): {preview}")
+    _status(host, f"Applied {len(adjustments)} tweak(s) [{tag}] ({compare_note}; {backup_note}): {preview}")
 
 
 __all__ = [
@@ -239,6 +271,7 @@ __all__ = [
     "feel_apply_feedback",
     "feel_export_latest",
     "open_feel_capture",
+    "restore_latest_tuning_backup",
     "submit_feel_capture_export",
     "toggle_feel_capture",
 ]
