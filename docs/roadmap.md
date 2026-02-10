@@ -66,5 +66,6 @@ Items temporarily on hold pending further analysis:
     - `autotune_rollback` (latest/selected backup restore alias)
   - remaining work keeps status pending: automated iterate/replay loop, candidate search strategy upgrades, and acceptance-board automation
 - 11) Momentum-policy architecture hardening (for feature scalability: grapple variants, rocket jumps, trap impulses, etc.): **in progress**
-  - landed: centralized momentum policy lane split (ground run/coast may decelerate; trick states preserve momentum floors)
+  - landed: targeted momentum transition policy (removed broad per-tick speed floors; reduced high-speed ricochet artifacts)
+  - landed: slope-aware slide dynamics (downhill gains speed, uphill loses speed)
   - next: move more collision/constraint edge-cases to policy-driven impulse budget hooks

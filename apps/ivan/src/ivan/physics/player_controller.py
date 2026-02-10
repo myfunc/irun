@@ -11,12 +11,16 @@ from ivan.physics.motion.solver import MotionSolver
 from ivan.physics.motion.state import MotionWriteSource
 from ivan.physics.player_controller_actions import PlayerControllerActionsMixin
 from ivan.physics.player_controller_collision import PlayerControllerCollisionMixin
+from ivan.physics.player_controller_kinematics import PlayerControllerKinematicsMixin
 from ivan.physics.player_controller_momentum import PlayerControllerMomentumMixin
+from ivan.physics.player_controller_state import PlayerControllerStateMixin
 from ivan.physics.player_controller_surf import PlayerControllerSurfMixin
 from ivan.physics.tuning import PhysicsTuning
 
 
 class PlayerController(
+    PlayerControllerKinematicsMixin,
+    PlayerControllerStateMixin,
     PlayerControllerMomentumMixin,
     PlayerControllerActionsMixin,
     PlayerControllerSurfMixin,
@@ -162,81 +166,6 @@ class PlayerController(
     def wall_normal(self) -> LVector3f:
         return LVector3f(self._wall_normal)
 
-    def motion_state_name(self) -> str:
-        if self._knockback_active:
-            return "knockback"
-        if self._hitstop_active:
-            return "hitstop"
-        if self.is_sliding():
-            return "slide"
-        if self.is_wallrunning():
-            return "wallrun"
-        return "ground" if bool(self.grounded) else "air"
-
-    def last_velocity_write_source(self) -> str:
-        return str(self._last_vel_write_source)
-
-    def last_velocity_write_reason(self) -> str:
-        return str(self._last_vel_write_reason)
-
-    def set_external_velocity(self, *, vel: LVector3f, reason: str = "external") -> None:
-        self._set_velocity(LVector3f(vel), source=MotionWriteSource.EXTERNAL, reason=str(reason))
-
-    def set_hitstop_active(self, active: bool) -> None:
-        self._hitstop_active = bool(active)
-
-    def set_knockback_active(self, active: bool) -> None:
-        self._knockback_active = bool(active)
-
-    def is_wallrunning(self) -> bool:
-        return bool(self._wallrun_active)
-
-    def wallrun_camera_roll_deg(self, *, yaw_deg: float) -> float:
-        if not bool(self.tuning.wallrun_enabled):
-            return 0.0
-        if self.grounded:
-            return 0.0
-        if self._wallrun_reacquire_block_timer > 0.0:
-            return 0.0
-        if self._wall_normal.lengthSquared() <= 0.01:
-            return 0.0
-        # Keep visual feedback present while wall contact is recent enough to be perceived,
-        # then drop quickly after contact is truly stale.
-        if self._wall_contact_timer > 0.14:
-            return 0.0
-        h_rad = math.radians(float(yaw_deg))
-        forward = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0.0)
-        if forward.lengthSquared() <= 1e-12:
-            return 0.0
-        right = LVector3f(forward.y, -forward.x, 0.0)
-        side = float(right.dot(self._wall_normal))
-        if abs(side) <= 1e-12:
-            return 0.0
-        # Slight side roll away from the wall to indicate active wallrun.
-        return math.copysign(6.0, side)
-
-    def vault_camera_pitch_deg(self) -> float:
-        if self._vault_camera_timer <= 0.0:
-            return 0.0
-        duration = self._vault_camera_duration()
-        # Smooth dip-and-recover curve (0 -> peak -> 0) to avoid one-frame snap.
-        progress = max(0.0, min(1.0, 1.0 - float(self._vault_camera_timer) / duration))
-        envelope = math.sin(math.pi * progress)
-        return -1.9 * envelope
-
-    @staticmethod
-    def _vault_camera_duration() -> float:
-        return 0.24
-
-    def vault_debug_status(self) -> str:
-        if self._vault_debug_timer <= 0.0:
-            return "idle"
-        return str(self._vault_debug)
-
-    def _set_vault_debug(self, text: str, *, hold: float = 0.85) -> None:
-        self._vault_debug = str(text)
-        self._vault_debug_timer = max(0.0, float(hold))
-
     def _apply_vault_assist(self, *, dt: float) -> None:
         left_dt = max(0.0, float(dt))
         if left_dt <= 0.0:
@@ -370,8 +299,6 @@ class PlayerController(
         _ = crouching
         dt = float(dt)
         pre_step_vel = LVector3f(self.vel)
-        started_grounded = bool(self.grounded)
-        jumped_this_tick = False
         self._motion_solver.sync_from_tuning(tuning=self.tuning)
         self._contact_count = 0
         self._wallrun_active = False
@@ -428,11 +355,10 @@ class PlayerController(
             ground_jump_requested = self._consume_jump_request() and self.can_ground_jump()
             if ground_jump_requested:
                 if bool(self.tuning.vault_enabled) and self._try_vault(yaw_deg=yaw_deg):
-                    jumped_this_tick = True
+                    pass
                 else:
                     # Preserve carried horizontal speed on successful hop timing frames.
                     self._apply_jump()
-                    jumped_this_tick = True
             else:
                 # Keep Vmax authoritative while input is held; friction should primarily damp coasting.
                 if not has_move_input:
@@ -479,17 +405,16 @@ class PlayerController(
 
             if self._consume_jump_request():
                 if bool(self.tuning.vault_enabled) and self._try_vault(yaw_deg=yaw_deg):
-                    jumped_this_tick = True
+                    pass
                 elif self._can_coyote_jump():
                     self._apply_jump()
-                    jumped_this_tick = True
                 elif self.tuning.walljump_enabled and self.has_wall_for_jump():
                     self._apply_wall_jump(
                         yaw_deg=yaw_deg,
                         pitch_deg=pitch_deg,
                         prefer_camera_forward=bool(wallrun_active),
+                        speed_floor_total=self._total_speed_of(pre_step_vel),
                     )
-                    jumped_this_tick = True
 
         self._apply_grapple_constraint(dt=dt)
 
@@ -508,11 +433,6 @@ class PlayerController(
             self._move_and_collide(self.vel * dt)
 
         self._enforce_grapple_length()
-        self._apply_momentum_policy(
-            pre_vel=pre_step_vel,
-            started_grounded=started_grounded,
-            jumped_this_tick=jumped_this_tick,
-        )
 
         if self.grounded:
             self._wall_jump_lock_timer = 999.0
@@ -534,106 +454,3 @@ class PlayerController(
             pitch_deg=pitch_deg,
             crouching=False,
         )
-
-    def _consume_jump_request(self) -> bool:
-        if self._jump_pressed:
-            self._jump_pressed = False
-            return True
-        if not bool(self.tuning.coyote_buffer_enabled):
-            return False
-        return self._jump_buffer_timer > 0.0
-
-    def _start_slide(self, *, yaw_deg: float) -> None:
-        if not self.grounded:
-            return
-        if self._slide_active:
-            return
-
-        hvel = LVector3f(self.vel.x, self.vel.y, 0.0)
-        slide_dir = self._horizontal_unit(hvel)
-        if slide_dir.lengthSquared() <= 1e-12:
-            h_rad = math.radians(float(yaw_deg))
-            slide_dir = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0.0)
-        if slide_dir.lengthSquared() <= 1e-12:
-            return
-        slide_dir.normalize()
-
-        self._slide_dir = LVector3f(slide_dir)
-        self._slide_active = True
-        cur_hspeed = math.sqrt(float(self.vel.x) * float(self.vel.x) + float(self.vel.y) * float(self.vel.y))
-        self._set_horizontal_velocity(
-            x=float(self._slide_dir.x) * cur_hspeed,
-            y=float(self._slide_dir.y) * cur_hspeed,
-            source=MotionWriteSource.IMPULSE,
-            reason="slide.start",
-        )
-
-    def _step_slide_mode(self, *, dt: float, yaw_deg: float) -> None:
-        # Slide owns horizontal velocity while active.
-        if self._slide_dir.lengthSquared() <= 1e-12:
-            self._slide_dir = self._horizontal_unit(LVector3f(self.vel.x, self.vel.y, 0.0))
-        if self._slide_dir.lengthSquared() <= 1e-12:
-            return
-
-        self._slide_dir.normalize()
-
-        # Slide steering is camera-only: keyboard strafing is ignored while slide owns velocity.
-        h_rad = math.radians(float(yaw_deg))
-        cam_dir = LVector3f(-math.sin(h_rad), math.cos(h_rad), 0.0)
-        if cam_dir.lengthSquared() > 1e-12:
-            cam_dir.normalize()
-            blend = max(0.0, min(1.0, float(dt) * 14.0))
-            out = self._slide_dir * (1.0 - blend) + cam_dir * blend
-            if out.lengthSquared() > 1e-12:
-                out.normalize()
-                self._slide_dir = out
-
-        hspeed = math.sqrt(float(self.vel.x) * float(self.vel.x) + float(self.vel.y) * float(self.vel.y))
-        hspeed = self._motion_solver.apply_slide_ground_damping(speed=hspeed, dt=dt)
-        self._set_horizontal_velocity(
-            x=float(self._slide_dir.x) * hspeed,
-            y=float(self._slide_dir.y) * hspeed,
-            source=MotionWriteSource.SOLVER,
-            reason="slide.solve",
-        )
-        self._motion_solver.apply_gravity(vel=self.vel, dt=dt, gravity_scale=1.0)
-
-        if self._consume_jump_request() and self._can_coyote_jump():
-            if bool(self.tuning.vault_enabled) and self._try_vault(yaw_deg=yaw_deg):
-                return
-            self._apply_jump()
-
-    def _apply_jump(self) -> None:
-        self._set_vertical_velocity(
-            self._jump_up_speed(),
-            source=MotionWriteSource.IMPULSE,
-            reason="jump.takeoff",
-        )
-        self._jump_buffer_timer = 0.0
-        self.grounded = False
-        self._coyote_timer = 0.0
-        self._slide_active = False
-
-    def _jump_up_speed(self) -> float:
-        return float(self._motion_solver.jump_takeoff_speed())
-
-    def _record_velocity_write(self, *, source: MotionWriteSource, reason: str) -> None:
-        self._last_vel_write_source = str(source.value)
-        self._last_vel_write_reason = str(reason)
-
-    def _set_velocity(self, vel: LVector3f, *, source: MotionWriteSource, reason: str) -> None:
-        self.vel = LVector3f(vel)
-        self._record_velocity_write(source=source, reason=reason)
-
-    def _set_horizontal_velocity(self, *, x: float, y: float, source: MotionWriteSource, reason: str) -> None:
-        self.vel.x = float(x)
-        self.vel.y = float(y)
-        self._record_velocity_write(source=source, reason=reason)
-
-    def _set_vertical_velocity(self, z: float, *, source: MotionWriteSource, reason: str) -> None:
-        self.vel.z = float(z)
-        self._record_velocity_write(source=source, reason=reason)
-
-    def _add_velocity(self, delta: LVector3f, *, source: MotionWriteSource, reason: str) -> None:
-        self.vel += LVector3f(delta)
-        self._record_velocity_write(source=source, reason=reason)
