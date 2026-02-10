@@ -21,6 +21,7 @@ NUMERIC_CONTROLS: list[tuple[str, float, float]] = [
     ("vault_forward_boost", 0.00, 4.00),
     ("noclip_speed", 1.0, 80.0),
     ("player_half_height", 0.70, 1.60),
+    ("step_height", 0.10, 1.20),
 ]
 
 TOGGLE_CONTROLS: list[str] = [
@@ -88,6 +89,7 @@ GROUPS: list[tuple[str, list[str], list[str]]] = [
         "Character",
         [
             "player_half_height",
+            "step_height",
         ],
         [
             "character_scale_lock_enabled",
@@ -115,6 +117,7 @@ FIELD_LABELS: dict[str, str] = {
     "vault_forward_boost": "vault speed boost (u/s)",
     "noclip_speed": "noclip speed (u/s)",
     "player_half_height": "player half height (u)",
+    "step_height": "step height (u)",
 }
 
 FIELD_HELP: dict[str, str] = {
@@ -137,6 +140,7 @@ FIELD_HELP: dict[str, str] = {
     "vault_forward_boost": "Lower: weaker forward carry when vault triggers. Higher: stronger forward push while vaulting.",
     "noclip_speed": "Lower: slower noclip traversal while flying. Higher: faster noclip speed along view direction.",
     "player_half_height": "Lower: shorter player hull. Higher: taller player hull; eye height auto-scales to keep camera proportion.",
+    "step_height": "Lower: smaller ledges require jumps and footing is less sticky on uneven terrain. Higher: larger steps are walkable and slope/edge grounding is more forgiving.",
     "autojump_enabled": "Lower (OFF): jump requires press timing each hop. Higher (ON): holding jump auto-queues grounded hops.",
     "coyote_buffer_enabled": "Lower (OFF): disable coyote + buffered leniency windows. Higher (ON): enable forgiving jump windows.",
     "custom_friction_enabled": "Lower (OFF): skip custom ground friction for isolation tests. Higher (ON): use normal friction model.",

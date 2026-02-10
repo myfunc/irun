@@ -142,6 +142,7 @@ class RunnerDemo(ShowBase):
         self._sim_accumulator: float = 0.0
         self._mouse_dx_accum: float = 0.0
         self._mouse_dy_accum: float = 0.0
+        self._mouse_capture_blocked: bool = False
         self._prev_jump_down: bool = False
         self._prev_grapple_down: bool = False
         self._prev_noclip_toggle_down: bool = False
@@ -546,6 +547,7 @@ class RunnerDemo(ShowBase):
     def _set_pointer_lock(self, locked: bool) -> None:
         self._pointer_locked = bool(locked)
         self._last_mouse = None
+        self._mouse_capture_blocked = bool(self._pointer_locked)
         props = WindowProperties()
         props.setCursorHidden(self._pointer_locked)
         # M_confined keeps the OS cursor inside the window in windowed mode.
@@ -1363,11 +1365,22 @@ class RunnerDemo(ShowBase):
         had_embedded_server = self._embedded_server is not None
         start_embedded = self._open_to_network and not self._runtime_connect_host
         if start_embedded:
-            embedded_ready = self._start_embedded_server()
+            try:
+                embedded_ready = self._start_embedded_server()
+            except Exception as e:
+                msg = f"Failed to start local host: {e}"
+                self.error_log.log_message(context="net.host.start", message=str(e))
+                self.error_console.refresh(auto_reveal=True)
+                self.pause_ui.set_keybind_status(msg)
+                self.pause_ui.set_multiplayer_status(msg)
+                self.ui.set_status(msg)
+                return
             if not embedded_ready:
-                self.pause_ui.set_keybind_status(
-                    f"Host port {target_port} is busy; trying existing local server."
-                )
+                msg = f"Host port {target_port} is busy; local host was not started."
+                self.pause_ui.set_keybind_status(msg)
+                self.pause_ui.set_multiplayer_status(msg)
+                self.ui.set_status(msg)
+                return
         try:
             self._net_client = MultiplayerClient(
                 host=str(target_host),
@@ -1419,6 +1432,14 @@ class RunnerDemo(ShowBase):
             self._net_perf.reset()
             self._net_perf_last_publish = 0.0
             self._net_perf_text = ""
+            if self.player is not None and self._net_client.server_spawn is not None:
+                sx, sy, sz = self._net_client.server_spawn
+                self.player.pos = LVector3f(float(sx), float(sy), float(sz))
+                self.player.vel = LVector3f(0, 0, 0)
+                if isinstance(self._net_client.server_spawn_yaw, (int, float)):
+                    self._yaw = float(self._net_client.server_spawn_yaw)
+                self._pitch = 0.0
+                self._push_sim_snapshot()
             if self._runtime_connect_host:
                 update_state(last_net_host=str(self._runtime_connect_host), last_net_port=int(self._runtime_connect_port))
             self.ui.set_status(f"Connected to server {target_host}:{target_port} as #{self._net_player_id}")
@@ -1445,6 +1466,20 @@ class RunnerDemo(ShowBase):
         if self._embedded_server is not None:
             return True
         host = "0.0.0.0" if self._open_to_network else "127.0.0.1"
+        spawn_override = None
+        spawn_yaw_override = None
+        player = getattr(self, "player", None)
+        if player is not None:
+            try:
+                spawn_override = (
+                    float(player.pos.x),
+                    float(player.pos.y),
+                    float(player.pos.z),
+                )
+                spawn_yaw_override = float(self._yaw)
+            except Exception:
+                spawn_override = None
+                spawn_yaw_override = None
         try:
             self._embedded_server = _EmbeddedHostServer(
                 host=host,
@@ -1452,6 +1487,8 @@ class RunnerDemo(ShowBase):
                 udp_port=int(self._runtime_connect_port) + 1,
                 map_json=self._current_map_json,
                 initial_tuning=self._current_tuning_snapshot(),
+                initial_spawn=spawn_override,
+                initial_spawn_yaw=spawn_yaw_override,
             )
             self._embedded_server.start()
         except OSError as e:
@@ -1635,8 +1672,7 @@ class RunnerDemo(ShowBase):
                 pitch_deg=self._pitch,
             )
 
-        if self.scene is not None and self.player.pos.z < float(self.scene.kill_z):
-            self._do_respawn(from_mode=True)
+        self._handle_kill_plane()
 
         if not bool(self.tuning.noclip_enabled):
             self._camera_feedback_observer.record_sim_tick(
@@ -1880,6 +1916,17 @@ class RunnerDemo(ShowBase):
             frac = max(0.0, min(1.0, float(hit.getHitFraction())))
             anchor = origin + (end - origin) * frac
         self.player.attach_grapple(anchor=anchor)
+
+    def _handle_kill_plane(self) -> None:
+        if self.player is None or self.scene is None:
+            return
+        if float(self.player.pos.z) >= float(self.scene.kill_z):
+            return
+        # Multiplayer is server-authoritative for death/respawn. A local kill-plane reset here can
+        # fight authoritative snapshots and cause large correction loops.
+        if self._net_connected and self._net_client is not None:
+            return
+        self._do_respawn(from_mode=True)
 
     @staticmethod
     def _build_grapple_rope_texture() -> Texture:
