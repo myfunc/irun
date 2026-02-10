@@ -328,6 +328,10 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
             return False
         if self.grounded:
             return False
+        # Prevent immediate wallrun re-acquire right after a wall jump; this keeps
+        # camera tilt recovery aligned with jump-off state.
+        if self._wall_jump_lock_timer < 0.10:
+            return False
         if self._wall_contact_timer > 0.24:
             return False
         return self._wall_normal.lengthSquared() > 0.01

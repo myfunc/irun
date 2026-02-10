@@ -54,6 +54,9 @@
   - while wallrunning, camera now applies slight roll tilt away from the wall as an engagement indicator
   - wallrun jump now biases horizontal launch direction toward camera forward heading (while still peeling off wall)
   - wallrun jump now enforces a minimum peel-away horizontal component opposite the wall so jump-off gains reliable wall-exit distance
+  - wallrun jump now exits wallrun state immediately, so camera roll starts recovering right after jump-off
+  - wallrun jump horizontal launch now prioritizes opposite-wall peel-away and carries ground-jump-like launch speed (instead of over-biasing along-wall camera-forward drift)
+  - wallrun jump vertical launch now uses full jump takeoff pop on wallrun jump-offs
   - wallrun vertical sink is now invariant-driven (`wallrun_sink_t90`) instead of ad-hoc per-feature velocity edits
   - debug UI now maps `wallrun_sink_t90` in intuitive direction (higher slider value = stronger wallrun hold / less height loss)
   - wallrun tilt recovery now begins immediately when wallrun ends (including jump-off), avoiding delayed recentering

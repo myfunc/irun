@@ -234,6 +234,10 @@ Completed now:
   - `autotune_rollback [backup_ref]`
 - Autotune suggestion/apply flow is invariant-only and consumes route A/B/C compare + history context.
 - Apply path now always snapshots tuning backup before any change and stays compatible with existing backup restore entry points.
+- Wallrun jump feel fix:
+  - wallrun jump now hard-exits wallrun state on jump-off so camera tilt recovers immediately.
+  - wallrun jump launch now prioritizes stronger opposite-wall peel-away with ground-jump-like horizontal carry.
+  - wallrun jump vertical pop now matches normal jump takeoff (full up-pop on wallrun jump-offs).
 
 ## Invariant Motion Refactor Progress (2026-02-09)
 Status: `IN PROGRESS` (core invariants active, slide migration complete, authority hardening active)
