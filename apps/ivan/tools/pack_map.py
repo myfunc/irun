@@ -13,6 +13,7 @@ Usage::
         --output path/to/output.irunmap \\
         --scale 0.03 \\
         --wad-dirs path/to/wad/directory \\
+        [--profile dev-fast|prod-baked] \\
         [--dir-bundle]
 """
 
@@ -20,7 +21,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 import tempfile
 import time
@@ -38,7 +38,7 @@ if str(_APPS_SRC) not in sys.path:
     sys.path.insert(0, str(_APPS_SRC))
 
 from ivan.maps.map_parser import parse_map, MapEntity  # noqa: E402
-from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, pack_bundle_dir_to_irunmap  # noqa: E402
+from ivan.maps.bundle_io import pack_bundle_dir_to_irunmap  # noqa: E402
 
 # These modules do not exist yet.  Importing them will fail until they are
 # implemented.  We guard with a try/except so the rest of the script can be
@@ -62,6 +62,13 @@ except ImportError:
 # The WAD texture extractor from the GoldSrc importer pipeline.
 _TOOLS_DIR = Path(__file__).resolve().parent
 _GOLDSRC_DIR = _TOOLS_DIR / "importers" / "goldsrc"
+
+from pipeline_profiles import (  # noqa: E402
+    PROFILE_DEV_FAST,
+    add_profile_argument,
+    get_profile,
+)
+
 if str(_GOLDSRC_DIR) not in sys.path:
     sys.path.insert(0, str(_GOLDSRC_DIR))
 
@@ -300,6 +307,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "No ericw-tools required; produces geometry from raw brush data."
         ),
     )
+    add_profile_argument(parser)
     parser.add_argument(
         "--map",
         required=True,
@@ -347,8 +355,12 @@ def main() -> None:
     output = Path(args.output).resolve()
     wad_dirs = [Path(d).resolve() for d in args.wad_dirs]
 
+    profile = get_profile(args)
+    compresslevel = 0 if profile == PROFILE_DEV_FAST else 6
+
     print(f"[pack] Map     : {map_file}")
     print(f"[pack] Output  : {output}")
+    print(f"[pack] Profile : {profile}")
     print(f"[pack] Scale   : {args.scale}")
     print(f"[pack] WAD dirs: {wad_dirs if wad_dirs else '(none)'}")
     print(f"[pack] Format  : {'directory' if args.dir_bundle else '.irunmap'}")
@@ -474,7 +486,9 @@ def main() -> None:
         if packed_out is not None:
             t0 = time.perf_counter()
             print(f"\n[pack] Packing {packed_out}...")
-            pack_bundle_dir_to_irunmap(bundle_dir=out_dir, out_path=packed_out, compresslevel=1)
+            pack_bundle_dir_to_irunmap(
+                bundle_dir=out_dir, out_path=packed_out, compresslevel=compresslevel
+            )
             elapsed = time.perf_counter() - t0
             print(f"[pack] Packed ({elapsed:.2f}s)")
 

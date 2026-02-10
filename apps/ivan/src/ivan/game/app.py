@@ -31,7 +31,7 @@ from ivan.console.control_server import ConsoleControlServer
 from ivan.console.core import CommandContext
 from ivan.console.ivan_bindings import build_client_console
 from ivan.console.line_bus import ThreadSafeLineBus
-from ivan.maps.bundle_io import resolve_bundle_handle
+from ivan.maps.bundle_io import infer_map_profile_from_path, resolve_bundle_handle
 from ivan.maps.run_metadata import RunMetadata, load_run_metadata
 from ivan.modes.base import ModeContext
 from ivan.modes.loader import load_mode
@@ -52,6 +52,7 @@ from ivan.replays import (
 )
 from ivan.state import IvanState, load_state, update_state
 from ivan.ui.debug_ui import DebugUI
+from ivan.ui.debug_hud_overlay import DebugHudOverlay
 from ivan.ui.console_ui import ConsoleUI
 from ivan.ui.error_console_ui import ErrorConsoleUI
 from ivan.ui.input_debug_ui import InputDebugUI
@@ -319,6 +320,7 @@ class RunnerDemo(ShowBase):
         self.replay_input_ui.hide()
         self.console_ui = ConsoleUI(aspect2d=self.aspect2d, theme=self.ui_theme, on_submit=self._console_submit_line)
         self.input_debug = InputDebugUI(aspect2d=self.aspect2d, theme=self.ui_theme)
+        self.debug_hud = DebugHudOverlay(aspect2d=self.aspect2d, theme=self.ui_theme)
         self._setup_input()
 
         # Minimal console runtime (no in-game UI yet). Primarily driven via MCP/control socket.
@@ -433,6 +435,7 @@ class RunnerDemo(ShowBase):
         self.accept("r", lambda: self._safe_call("input.respawn", self._on_respawn_pressed))
         self.accept("f2", self.input_debug.toggle)
         self.accept("f3", self.error_console.toggle)
+        self.accept("f12", lambda: self._safe_call("input.debug_hud", self._cycle_debug_hud))
         self.accept("f10", lambda: self._safe_call("feel.dump", self._dump_feel_rolling_log))
         self.accept("f11", lambda: self._safe_call("determinism.dump", self._dump_determinism_trace))
         self.accept("shift-f3", lambda: self._safe_call("errors.clear", self._clear_errors))
@@ -617,6 +620,12 @@ class RunnerDemo(ShowBase):
         self.replay_browser_ui.hide()
         self.ui.hide()
         self._set_pointer_lock(False)
+
+    def _cycle_debug_hud(self) -> None:
+        """F12: cycle debug overlay modes (minimal | render | streaming | graph)."""
+        if self._mode != "game":
+            return
+        self.debug_hud.cycle_mode()
 
     def _toggle_debug_menu(self) -> None:
         if self._mode != "game":
@@ -968,7 +977,12 @@ class RunnerDemo(ShowBase):
     def _start_import_from_request(self, req: ImportRequest) -> None:
         _menu.start_import_from_request(self, req)
 
-    def _start_game(self, map_json: str | None, lighting: dict | None = None) -> None:
+    def _start_game(
+        self,
+        map_json: str | None,
+        lighting: dict | None = None,
+        visibility: dict | None = None,
+    ) -> None:
         try:
             self._teardown_game_mode()
             if map_json:
@@ -1009,21 +1023,28 @@ class RunnerDemo(ShowBase):
             self.world_root = self.render.attachNewNode("world-root")
 
             handle = resolve_bundle_handle(map_json) if map_json else None
-            bundle_ref = handle.bundle_ref if handle is not None else None
-            run_meta: RunMetadata = (
-                load_run_metadata(bundle_ref=bundle_ref) if bundle_ref is not None else RunMetadata()
-            )
+            # Use bundle_ref for run.json; for .map files handle is None, use the map path.
+            bundle_ref = handle.bundle_ref if handle is not None else (Path(map_json) if map_json else None)
+            run_meta: RunMetadata = load_run_metadata(bundle_ref=bundle_ref)
 
             cfg_map_json = str(handle.map_json) if handle is not None else map_json
+            profile = infer_map_profile_from_path(
+                cfg_map_json,
+                explicit_profile=getattr(self.cfg, "map_profile", None),
+            )
             lighting_cfg = lighting if isinstance(lighting, dict) else run_meta.lighting
+            visibility_cfg = visibility if isinstance(visibility, dict) else run_meta.visibility
+            fog_cfg = run_meta.fog if isinstance(run_meta.fog, dict) else None
             cfg = RunConfig(
                 smoke=self.cfg.smoke,
                 feel_harness=bool(self.cfg.feel_harness),
                 map_json=cfg_map_json,
+                map_profile=profile,
                 hl_root=self.cfg.hl_root,
                 hl_mod=self.cfg.hl_mod,
                 lighting=lighting_cfg if isinstance(lighting_cfg, dict) else None,
-                visibility=run_meta.visibility if isinstance(run_meta.visibility, dict) else None,
+                visibility=visibility_cfg if isinstance(visibility_cfg, dict) else None,
+                fog=fog_cfg,
             )
             self.scene = WorldScene()
             self.scene.build(cfg=cfg, loader=self.loader, render=self.world_root, camera=self.camera)
@@ -2161,6 +2182,20 @@ class RunnerDemo(ShowBase):
             vault_dbg = self.player.vault_debug_status()
             self.ui.set_speed(hspeed)
             self.ui.set_health(self._local_hp)
+            if self.debug_hud.is_visible():
+                frame_dt_ms = float(frame_dt) * 1000.0
+                fps = 1.0 / max(1e-6, float(frame_dt))
+                self.debug_hud.update(
+                    fps=fps,
+                    frame_dt_ms=frame_dt_ms,
+                    frame_p95_ms=self._feel_diag.frame_p95_ms(),
+                    sim_steps=self._physics_steps_this_frame,
+                    sim_hz=self._sim_tick_rate_hz,
+                    net_connected=self._net_connected,
+                    net_perf_text=self._net_perf_text,
+                    frame_ms_history=self._feel_diag.frame_ms_history(),
+                    frame_spike_threshold_ms=self._feel_diag.frame_spike_threshold_ms(),
+                )
             self.ui.set_status(
                 f"speed: {hspeed:.2f} | z-vel: {self.player.vel.z:.2f} | grounded: {self.player.grounded} | "
                 f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()} | slide: {self.player.is_sliding()} | "
@@ -2239,6 +2274,7 @@ def run(
     smoke_screenshot: str | None = None,
     feel_harness: bool = False,
     map_json: str | None = None,
+    map_profile: str = "auto",
     hl_root: str | None = None,
     hl_mod: str = "valve",
     net_host: str | None = None,
@@ -2252,6 +2288,7 @@ def run(
             smoke_screenshot=smoke_screenshot,
             feel_harness=feel_harness,
             map_json=map_json,
+            map_profile=map_profile,
             hl_root=hl_root,
             hl_mod=hl_mod,
             net_host=net_host,

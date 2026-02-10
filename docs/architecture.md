@@ -207,6 +207,7 @@ See: `docs/ui-kit.md`.
 - Coordinate system: IVAN uses Panda3D's default world axes (`X` right, `Y` forward, `Z` up). GoldSrc BSP imports keep the same axes and only apply a uniform scale.
 - Imported BSP bundles render with baked lightmaps (Source/GoldSrc) and disable dynamic scene lights for map geometry.
 - If a face references missing lightmap files at runtime, IVAN skips lightmap shading for that face and falls back to base-texture rendering (avoids full-black output for partial bundles).
+- Runtime GLSL is file-based and versioned under `apps/ivan/assets/shaders/`; shader ids and bindings are tracked in `apps/ivan/src/ivan/render/shader_catalog.py`.
 - Optional visibility culling:
   - GoldSrc bundles can use BSP PVS (VISIBILITY + leaf face lists) to avoid rendering world geometry behind walls.
   - Currently disabled by default; `vis_culling_enabled` is available in tuning/profile data (not in the compact invariant debug menu).
@@ -214,6 +215,29 @@ See: `docs/ui-kit.md`.
 - Per-map run options can be stored in:
   - directory bundles: `<bundle>/run.json`
   - packed bundles (`.irunmap`): `<bundle>.run.json` (sidecar file next to the archive)
+
+#### Runtime Map Profile
+
+The runtime uses `--map-profile` (`auto` | `dev-fast` | `prod-baked`) to control lighting, fog, and visibility behavior:
+
+- **auto** (default): Infer from path — `.map` / directory → `dev-fast`; `.irunmap` → `prod-baked`.
+- **dev-fast**: Fog off unless `run.json` explicitly enables; visibility culling off (permissive for iteration).
+- **prod-baked**: Fog from `run.json` or conservative defaults (start 80, end 200); visibility can enable via `run.json`.
+
+Fog and visibility config live in `run.json` under `fog` and `visibility`; profile selects defaults when not explicitly set.
+
+#### Debug HUD (F12)
+
+`F12` cycles a compact debug overlay through four modes, then off:
+
+| Mode | Purpose |
+|------|---------|
+| **minimal** | FPS + frame time (ms) |
+| **render** | FPS, frame time, p95, sim steps/hz |
+| **streaming** | FPS, p95, network perf (snapshot cadence, correction) |
+| **graph** | FPS, spike count, mini frametime bar graph |
+
+Cycle: off → minimal → render → streaming → graph → off. Overlay sits top-right to avoid overlap with speed/health HUD.
 
 ## Dependencies
 - `panda3d`: 3D engine and window/event loop
@@ -245,12 +269,30 @@ TrenchBroom game configuration files live in `apps/ivan/trenchbroom/`:
 
 ### Map Pipeline
 
-Three workflows exist depending on the use case:
+#### Pipeline Profiles
 
-- **Dev workflow (direct .map loading)**: TrenchBroom saves a `.map` file → IVAN loads it directly at runtime (parser → CSG half-plane clipping → triangulated mesh). Textures come from WAD files referenced in the map's worldspawn. Lighting is flat ambient (no bake). This is the fastest iteration path — save in TrenchBroom, reload in-game.
-- **Pack workflow**: `.map` → `tools/pack_map.py` → `.irunmap` bundle (no lightmaps). Used to distribute maps without requiring end-users to have WAD files or the raw `.map` source.
-- **Bake workflow** (optional, production): `.map` → ericw-tools (qbsp → vis → light) → `.bsp` → GoldSrc importer → `.irunmap` bundle with production-quality baked lightmaps. Use `tools/bake_map.py`.
-- **Legacy BSP import**: `.bsp` → GoldSrc/Source importer → `.irunmap` bundle (unchanged).
+Two profiles control the trade-off between fast iteration and production quality:
+
+| Profile | Purpose | Bake: vis/light | Pack: compression |
+|---------|---------|------------------|--------------------|
+| `dev-fast` | Quick local iteration | Skip (default) | Off (level 0) |
+| `prod-baked` | Full quality for distribution | Run both | On (level 6) |
+
+- **dev-fast** (default): Skip expensive steps; output runtime-consumable artifacts without mandatory vis/light bake or archive compression.
+- **prod-baked**: Full bake/pack quality flow (vis + light in bake, compressed `.irunmap` archives).
+
+#### Primary Authoring Flow (.map)
+
+1. **Direct .map loading** (fastest): TrenchBroom saves a `.map` file → IVAN loads it directly at runtime (parser → CSG half-plane clipping → triangulated mesh). Textures from WAD files. Lighting is flat ambient (no bake). Save in TrenchBroom, reload in-game; optional steps can be skipped.
+2. **Pack workflow**: `.map` → `tools/pack_map.py` → `.irunmap` bundle (no lightmaps). Use `--profile dev-fast` for fast pack, `--profile prod-baked` for compressed archives.
+3. **Bake workflow** (production): `.map` → ericw-tools (qbsp → vis → light) → `.bsp` → GoldSrc importer → `.irunmap` bundle with baked lightmaps. Use `tools/bake_map.py`; `--profile dev-fast` skips vis/light by default, `--profile prod-baked` runs full vis+light.
+4. **Legacy BSP import**: `.bsp` → GoldSrc/Source importer → `.irunmap` bundle (unchanged).
+
+#### Production Baked + Packed Expectations
+
+- `bake_map.py --profile prod-baked`: runs qbsp, vis, and light; outputs `.irunmap` with baked lightmaps.
+- `pack_map.py --profile prod-baked`: produces compressed `.irunmap` archives (zip level 6).
+- Both tools support `--dir-bundle` for directory output instead of packed archives.
 
 ### Material System
 

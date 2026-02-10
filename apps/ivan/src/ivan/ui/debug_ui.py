@@ -82,7 +82,7 @@ class DebugUI:
         self._window = Window(
             aspect2d=aspect2d,
             theme=theme,
-            title="DEBUG / PHYSICS (`)  -  GoldSrc style",
+            title="DEBUG / PHYSICS (`)  |  F12: overlay",
             x=panel_left,
             y=panel_bottom,
             w=w,

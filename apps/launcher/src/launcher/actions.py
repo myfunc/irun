@@ -91,6 +91,7 @@ def spawn_game(
     map_path: str = "",
     *,
     watch: bool = True,
+    map_profile: str = "auto",
     hl_root: str = "",
     on_line: Callable[[str], None] | None = None,
 ) -> ProcessHandle:
@@ -98,6 +99,8 @@ def spawn_game(
     cmd = [python, "-m", "ivan"]
     if map_path:
         cmd.extend(["--map", map_path])
+        if map_profile:
+            cmd.extend(["--map-profile", map_profile])
         if watch:
             cmd.append("--watch")
     if hl_root:
@@ -121,6 +124,7 @@ def spawn_pack(
     ivan_root: str,
     map_path: str,
     *,
+    profile: str = "dev-fast",
     wad_dirs: list[str] | None = None,
     on_line: Callable[[str], None] | None = None,
 ) -> ProcessHandle:
@@ -129,6 +133,8 @@ def spawn_pack(
     map_p = Path(map_path)
     output = map_p.with_suffix(".irunmap")
     cmd = [python, script, "--map", map_path, "--output", str(output)]
+    if profile:
+        cmd.extend(["--profile", profile])
     if wad_dirs:
         cmd.append("--wad-dirs")
         cmd.extend(wad_dirs)
@@ -140,6 +146,11 @@ def spawn_bake(
     ivan_root: str,
     map_path: str,
     *,
+    profile: str = "prod-baked",
+    no_vis: bool = False,
+    no_light: bool = False,
+    light_extra: bool = False,
+    bounce: int | None = None,
     ericw_tools_dir: str = "",
     game_root: str = "",
     on_line: Callable[[str], None] | None = None,
@@ -149,6 +160,16 @@ def spawn_bake(
     map_p = Path(map_path)
     output = map_p.with_suffix(".irunmap")
     cmd = [python, script, "--map", map_path, "--output", str(output)]
+    if profile:
+        cmd.extend(["--profile", profile])
+    if no_vis:
+        cmd.append("--no-vis")
+    if no_light:
+        cmd.append("--no-light")
+    if light_extra:
+        cmd.append("--light-extra")
+    if bounce is not None and bounce > 0:
+        cmd.extend(["--bounce", str(int(bounce))])
     if ericw_tools_dir:
         cmd.extend(["--ericw-tools", ericw_tools_dir])
     if game_root:

@@ -149,6 +149,91 @@ def _parse_angles(value: str | None) -> tuple[float, float, float] | None:
     return float(parts[0]), float(parts[1]), float(parts[2])
 
 
+def _parse_float(value, default: float) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _parse_int(value, default: int) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return int(default)
+
+
+def _parse_light_rgb_intensity(ent: dict) -> tuple[float, float, float, float]:
+    # Preferred GoldSrc format: _light "R G B I"
+    raw = str(ent.get("_light") or "").strip()
+    parts = raw.split() if raw else []
+    if len(parts) >= 3:
+        try:
+            r = float(parts[0])
+            g = float(parts[1])
+            b = float(parts[2])
+            i = float(parts[3]) if len(parts) >= 4 else 200.0
+            return (r, g, b, i)
+        except Exception:
+            pass
+
+    # Alternate editor format: _color + light
+    c = str(ent.get("_color") or "255 255 255").split()
+    r, g, b = 255.0, 255.0, 255.0
+    if len(c) >= 3:
+        try:
+            r, g, b = float(c[0]), float(c[1]), float(c[2])
+        except Exception:
+            pass
+    i = _parse_float(ent.get("light"), 200.0)
+    return (r, g, b, i)
+
+
+def _extract_light_entities(entities, scale: float) -> list[dict]:
+    """
+    Preserve GoldSrc light entities in map.json so runtime fast mode can
+    reconstruct preview/entity lighting when baked lightmaps are absent.
+    """
+    out: list[dict] = []
+    for ent in entities:
+        if not isinstance(ent, dict):
+            continue
+        cn = str(ent.get("classname") or "").strip().lower()
+        if cn not in {"light", "light_spot", "light_environment"}:
+            continue
+        origin = _parse_origin(ent.get("origin"))
+        if not origin:
+            continue
+
+        r, g, b, intensity = _parse_light_rgb_intensity(ent)
+        pitch = _parse_float(ent.get("pitch"), 0.0)
+        angles = _parse_angles(ent.get("angles"))
+        if angles is None:
+            yaw = _parse_float(ent.get("angle"), 0.0) if cn == "light_environment" else 0.0
+            angles = (0.0, yaw, 0.0)
+
+        out.append(
+            {
+                "classname": cn,
+                "origin": [origin[0] * scale, origin[1] * scale, origin[2] * scale],
+                "color": [
+                    max(0.0, min(1.0, r / 255.0)),
+                    max(0.0, min(1.0, g / 255.0)),
+                    max(0.0, min(1.0, b / 255.0)),
+                ],
+                "brightness": float(intensity),
+                "pitch": float(pitch),
+                "angles": [float(angles[0]), float(angles[1]), float(angles[2])],
+                "inner_cone": _parse_float(ent.get("_cone"), 0.0),
+                "outer_cone": _parse_float(ent.get("_cone2"), 0.0),
+                "fade": _parse_float(ent.get("_fade"), 1.0),
+                "falloff": _parse_int(ent.get("_falloff"), 0),
+                "style": _parse_int(ent.get("style"), 0),
+            }
+        )
+    return out
+
+
 def _pick_spawn(entities, scale: float) -> tuple[list[float], float]:
     fallback = ([0.0, 0.0, 2.0], 0.0)
     for ent in entities:
@@ -324,6 +409,38 @@ def _tex_s_t(*, texinfo, pos) -> tuple[float, float]:
     return (s, t)
 
 
+def _face_positions_from_lumps(*, bsp, face_idx: int) -> list[object]:
+    """
+    Fallback polygon vertex extraction when `bsp.face_mesh()` is unavailable.
+
+    Returns raw BSP vertex objects with x/y/z fields.
+    """
+    try:
+        face = bsp.FACES[int(face_idx)]
+        first_edge = int(face.first_edge)
+        num_edges = int(face.num_edges)
+        surfedges = bsp.SURFEDGES
+        edges = bsp.EDGES
+        vertices = bsp.VERTICES
+    except Exception:
+        return []
+
+    if num_edges < 3:
+        return []
+
+    out: list[object] = []
+    for i in range(num_edges):
+        try:
+            se = int(surfedges[first_edge + i])
+            edge = edges[abs(se)]
+            vi = int(edge[0]) if se >= 0 else int(edge[1])
+            v = vertices[vi]
+        except Exception:
+            return []
+        out.append(v)
+    return out
+
+
 def _face_lightmap_meta(*, bsp, face_idx: int, lightmap_scale: float) -> dict | None:
     """
     Compute GoldSrc lightmap extents and return metadata required for extraction + UV mapping.
@@ -341,7 +458,7 @@ def _face_lightmap_meta(*, bsp, face_idx: int, lightmap_scale: float) -> dict | 
     except Exception:
         return None
 
-    # Derive a polygon vertex list using bsp_tool's mesh helper (keeps this importer branch-agnostic).
+    # Derive a polygon vertex list. Prefer bsp_tool mesh helper, fall back to raw lump traversal.
     try:
         mesh = bsp.face_mesh(int(face_idx))
         poly = mesh.polygons[0]
@@ -350,7 +467,9 @@ def _face_lightmap_meta(*, bsp, face_idx: int, lightmap_scale: float) -> dict | 
             return None
         positions = [v.position for v in verts]
     except Exception:
-        return None
+        positions = _face_positions_from_lumps(bsp=bsp, face_idx=int(face_idx))
+        if not positions:
+            return None
 
     st = [_tex_s_t(texinfo=texinfo, pos=p) for p in positions]
     ss = [x[0] for x in st]
@@ -720,6 +839,7 @@ def main() -> None:
                 continue
             # Store as string keys for JSON stability.
             lightstyles[str(style)] = pat
+        payload_lights = _extract_light_entities(entities, float(args.scale))
 
         model_entities: dict[int, dict] = {}
         for ent in entities:
@@ -790,12 +910,17 @@ def main() -> None:
                 continue
 
             for face_idx in range(int(first_face), int(first_face + num_faces)):
+                mesh = None
                 try:
                     mesh = bsp.face_mesh(face_idx)
                 except Exception:
-                    continue
+                    mesh = None
 
-                mat_name = mesh.material.name if getattr(mesh, "material", None) is not None else "unknown"
+                mat_name = (
+                    mesh.material.name
+                    if (mesh is not None and getattr(mesh, "material", None) is not None)
+                    else "unknown"
+                )
                 mat_name = str(mat_name).strip()
                 tri_renders = render_model and _should_render_texture(mat_name)
 
@@ -807,34 +932,43 @@ def main() -> None:
                     except Exception:
                         texinfo = None
 
-                for poly in mesh.polygons:
-                    if len(poly.vertices) < 3:
-                        continue
-                    verts = poly.vertices
+                if mesh is not None:
+                    polygon_vertex_sets = [poly.vertices for poly in mesh.polygons if len(poly.vertices) >= 3]
+                else:
+                    raw_positions = _face_positions_from_lumps(bsp=bsp, face_idx=int(face_idx))
+                    polygon_vertex_sets = [raw_positions] if len(raw_positions) >= 3 else []
+
+                for verts in polygon_vertex_sets:
                     for i in range(1, len(verts) - 1):
                         # Use a consistent winding order for Panda3D (CCW in view space).
                         # Historically we achieved this by mirroring the coordinate system (Y flip),
                         # but that made the whole map mirrored. Keep coordinates unmirrored and instead
                         # flip the triangle winding here.
-                        v0 = verts[0]
-                        v1 = verts[i + 1]
-                        v2 = verts[i]
+                        vv0 = verts[0]
+                        vv1 = verts[i + 1]
+                        vv2 = verts[i]
+                        v0 = vv0.position if hasattr(vv0, "position") else vv0
+                        v1 = vv1.position if hasattr(vv1, "position") else vv1
+                        v2 = vv2.position if hasattr(vv2, "position") else vv2
 
                         # Keep GoldSrc BSP coordinates in the same space as the runtime (scale only).
+                        p0_src = v0.position if hasattr(v0, "position") else v0
+                        p1_src = v1.position if hasattr(v1, "position") else v1
+                        p2_src = v2.position if hasattr(v2, "position") else v2
                         p0 = [
-                            float(v0.position.x) * args.scale,
-                            float(v0.position.y) * args.scale,
-                            float(v0.position.z) * args.scale,
+                            float(p0_src.x) * args.scale,
+                            float(p0_src.y) * args.scale,
+                            float(p0_src.z) * args.scale,
                         ]
                         p1 = [
-                            float(v1.position.x) * args.scale,
-                            float(v1.position.y) * args.scale,
-                            float(v1.position.z) * args.scale,
+                            float(p1_src.x) * args.scale,
+                            float(p1_src.y) * args.scale,
+                            float(p1_src.z) * args.scale,
                         ]
                         p2 = [
-                            float(v2.position.x) * args.scale,
-                            float(v2.position.y) * args.scale,
-                            float(v2.position.z) * args.scale,
+                            float(p2_src.x) * args.scale,
+                            float(p2_src.y) * args.scale,
+                            float(p2_src.z) * args.scale,
                         ]
                         pos9 = [*p0, *p1, *p2]
 
@@ -842,17 +976,33 @@ def main() -> None:
                             collision_triangles.append(pos9)
 
                         if tri_renders:
-                            n0 = [float(v0.normal.x), float(v0.normal.y), float(v0.normal.z)]
-                            n1 = [float(v1.normal.x), float(v1.normal.y), float(v1.normal.z)]
-                            n2 = [float(v2.normal.x), float(v2.normal.y), float(v2.normal.z)]
+                            if hasattr(vv0, "normal") and hasattr(vv1, "normal") and hasattr(vv2, "normal"):
+                                n0 = [float(vv0.normal.x), float(vv0.normal.y), float(vv0.normal.z)]
+                                n1 = [float(vv1.normal.x), float(vv1.normal.y), float(vv1.normal.z)]
+                                n2 = [float(vv2.normal.x), float(vv2.normal.y), float(vv2.normal.z)]
+                            else:
+                                # Fallback normal for toolchains that don't expose mesh normals.
+                                ax = float(v1.x) - float(v0.x)
+                                ay = float(v1.y) - float(v0.y)
+                                az = float(v1.z) - float(v0.z)
+                                bx = float(v2.x) - float(v0.x)
+                                by = float(v2.y) - float(v0.y)
+                                bz = float(v2.z) - float(v0.z)
+                                nx = ay * bz - az * by
+                                ny = az * bx - ax * bz
+                                nz = ax * by - ay * bx
+                                mag = max(1e-6, math.sqrt(nx * nx + ny * ny + nz * nz))
+                                n0 = [nx / mag, ny / mag, nz / mag]
+                                n1 = [nx / mag, ny / mag, nz / mag]
+                                n2 = [nx / mag, ny / mag, nz / mag]
 
                             # Some GoldSrc branches may not provide UV pairs; treat as best-effort.
                             try:
                                 # BSP UV convention is effectively upside-down compared to how Panda3D
                                 # samples images loaded from PNG. Flip V to match expected in-game orientation.
-                                uv0 = [float(v0.uv[0].x), -float(v0.uv[0].y)]
-                                uv1 = [float(v1.uv[0].x), -float(v1.uv[0].y)]
-                                uv2 = [float(v2.uv[0].x), -float(v2.uv[0].y)]
+                                uv0 = [float(vv0.uv[0].x), -float(vv0.uv[0].y)]
+                                uv1 = [float(vv1.uv[0].x), -float(vv1.uv[0].y)]
+                                uv2 = [float(vv2.uv[0].x), -float(vv2.uv[0].y)]
                             except Exception:
                                 uv0 = [0.0, 0.0]
                                 uv1 = [0.0, 0.0]
@@ -878,9 +1028,9 @@ def main() -> None:
                                     # Panda's texture V origin differs from GoldSrc lightmap row order; flip V.
                                     return [float(u), float(1.0 - v)]
 
-                                lm0 = lm_uv(v0.position)
-                                lm1 = lm_uv(v1.position)
-                                lm2 = lm_uv(v2.position)
+                                lm0 = lm_uv(v0)
+                                lm1 = lm_uv(v1)
+                                lm2 = lm_uv(v2)
                                 lmi = int(face_idx)
                             else:
                                 lm0 = [0.0, 0.0]
@@ -1085,6 +1235,7 @@ def main() -> None:
                 "faces": face_lm_bundle,
             },
             "lightstyles": lightstyles,
+            "lights": payload_lights,
             "resources": {
                 "root": "resources",
                 "copied": copied,

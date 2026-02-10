@@ -12,6 +12,9 @@
 - Ivan: rebindable noclip toggle (default `V`) via in-game Key Bindings
 - Ivan: in-game menu/debug UI block gameplay input but keep simulation running (no pause)
 - Ivan: classic center crosshair (Half-Life/CS style) visible during active gameplay
+- Ivan: debug HUD overlay (`F12`) — compact FPS/frametime panel with mode cycle
+  - modes: minimal (fps + frame ms) → render (fps, p95, sim steps) → streaming (fps, p95, net perf) → graph (fps, spike count, frametime bars) → off
+  - top-right placement to avoid overlap with speed/health HUD
 - Ivan: input debug overlay (`F2`) for keyboard/mouse troubleshooting
 - Ivan: gameplay feel telemetry in `F2` overlay (rolling jump success, landing speed loss, ground flicker, camera jerk proxies)
 - Ivan: staged invariant-motion refactor foundation
@@ -228,6 +231,13 @@
   - Playground demo to exercise components in one place (`python -m irun_ui_kit.demo`)
 - Ivan: minimal command console engine + localhost control bridge (JSON-lines TCP) for external command execution
   - MCP stdio server (`ivan-mcp`) exposes a `console_exec` tool that forwards to the running game process
+- Ivan: map pipeline profiles and authoring flow
+  - primary authoring: edit `.map` in TrenchBroom → fast edit-run (direct load, optional pack/bake with skipped steps)
+  - dev-fast: skip vis/light in bake, no compression in pack; prod-baked: full quality for distribution
+  - bake_map.py and pack_map.py accept `--profile`; default dev-fast for fast iteration
+  - runtime `--map-profile` (auto | dev-fast | prod-baked): auto infers from path (.map/dir → dev-fast, .irunmap → prod-baked)
+  - profile-aware fog: dev-fast off unless run.json enables; prod-baked conservative defaults
+  - profile-aware visibility culling: dev-fast off (permissive); prod-baked can enable via run.json
 - Ivan: TrenchBroom integration — direct `.map` file loading (Valve 220 format), brush CSG-to-mesh conversion, WAD textures
 - Ivan: Valve 220 UV parity fix for direct `.map` loading — texture shift/align now matches TrenchBroom when per-face texture scale is not 1:1
 - Ivan: Material definition system (`.material.json`) for PBR properties (normal, roughness, metallic, emission) alongside WAD textures

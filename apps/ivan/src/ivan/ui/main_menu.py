@@ -13,7 +13,7 @@ from ivan.maps.catalog import (
     resolve_goldsrc_install_root,
 )
 from ivan.maps.steam import detect_steam_halflife_game_root
-from ivan.maps.run_metadata import set_run_metadata_lighting
+from ivan.maps.run_metadata import set_run_metadata_lighting, set_run_metadata_visibility
 from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, resolve_bundle_handle
 from ivan.paths import app_root as ivan_app_root
 from ivan.state import IvanState, load_state, resolve_map_json, update_state
@@ -351,13 +351,17 @@ class MainMenuController:
         self._ui.set_hint("Up/Down: select | Enter: choose | Del/Backspace: delete | Esc: back")
         self._ui.set_items(
             [
-                ListMenuItem("Run (saved config)"),
-                ListMenuItem("Run: Lighting = Original (bundle)"),
+                ListMenuItem("Run: Bundle defaults"),
+                ListMenuItem("Run: Lighting = Original"),
                 ListMenuItem("Run: Lighting = Server defaults"),
                 ListMenuItem("Run: Lighting = Static (no animation)"),
-                ListMenuItem("Save default: Lighting = Original (bundle)"),
+                ListMenuItem("Run: View = Full scene (PVS off)"),
+                ListMenuItem("Run: View = GoldSrc PVS"),
+                ListMenuItem("Save default: Lighting = Original"),
                 ListMenuItem("Save default: Lighting = Server defaults"),
                 ListMenuItem("Save default: Lighting = Static (no animation)"),
+                ListMenuItem("Save default: View = Full scene (PVS off)"),
+                ListMenuItem("Save default: View = GoldSrc PVS"),
             ],
             selected=0,
         )
@@ -382,14 +386,40 @@ class MainMenuController:
         if idx == 3:
             self._on_start_map_json(map_json, {"preset": "static"})
             return
-        if idx in (4, 5, 6):
+        if idx == 4:
+            self._on_start_map_json(
+                map_json,
+                None,
+                {"enabled": False, "mode": "goldsrc_pvs", "build_cache": True},
+            )
+            return
+        if idx == 5:
+            self._on_start_map_json(
+                map_json,
+                None,
+                {"enabled": True, "mode": "goldsrc_pvs", "build_cache": True},
+            )
+            return
+        if idx in (6, 7, 8):
             if bundle_ref is None:
                 self._ui.set_status("Cannot save: bundle root not resolved for this map.")
                 return
-            preset = "original" if idx == 4 else ("server_defaults" if idx == 5 else "static")
+            preset = "original" if idx == 6 else ("server_defaults" if idx == 7 else "static")
             try:
                 set_run_metadata_lighting(bundle_ref=bundle_ref, lighting={"preset": preset})
                 self._ui.set_status(f"Saved run.json lighting preset: {preset}")
+            except Exception as e:
+                self._ui.set_status(f"Save failed: {e}")
+            return
+        if idx in (9, 10):
+            if bundle_ref is None:
+                self._ui.set_status("Cannot save: bundle root not resolved for this map.")
+                return
+            vis = {"enabled": idx == 10, "mode": "goldsrc_pvs", "build_cache": True}
+            try:
+                set_run_metadata_visibility(bundle_ref=bundle_ref, visibility=vis)
+                state = "goldsrc_pvs" if idx == 10 else "disabled"
+                self._ui.set_status(f"Saved run.json visibility: {state}")
             except Exception as e:
                 self._ui.set_status(f"Save failed: {e}")
             return

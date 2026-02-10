@@ -48,6 +48,19 @@ class LauncherConfig:
     maps_dir: str = ""
     # Python executable used to run ivan / tools (defaults to sys.executable).
     python_exe: str = ""
+    # Runtime launch profile for Play Map.
+    play_map_profile: str = "dev-fast"
+    # Enable --watch for Play Map.
+    play_watch: bool = True
+    # Pack pipeline profile.
+    pack_profile: str = "dev-fast"
+    # Bake pipeline profile.
+    bake_profile: str = "prod-baked"
+    # Optional bake flags.
+    bake_no_vis: bool = False
+    bake_no_light: bool = False
+    bake_light_extra: bool = False
+    bake_bounce: int = 0
     # Window geometry (persisted between sessions).
     window_width: int = 720
     window_height: int = 700
@@ -131,7 +144,14 @@ def load_config() -> LauncherConfig:
             val = raw[fld]
             # Coerce types to match field annotations.
             ann = LauncherConfig.__dataclass_fields__[fld].type
-            if ann == "int" and isinstance(val, (int, float)):
+            if ann == "bool":
+                if isinstance(val, bool):
+                    kwargs[fld] = val
+                elif isinstance(val, (int, float)):
+                    kwargs[fld] = bool(val)
+                elif isinstance(val, str):
+                    kwargs[fld] = val.strip().lower() in ("1", "true", "yes", "on")
+            elif ann == "int" and isinstance(val, (int, float)):
                 kwargs[fld] = int(val)
             elif isinstance(val, str):
                 kwargs[fld] = val
