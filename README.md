@@ -28,30 +28,10 @@ List apps:
 ./runapp list
 ```
 
-## Ship Changes (PR Workflow Helper)
+## Ship Changes
 This repo uses a PR-only workflow: changes land in `main` via Pull Requests.
 
-Create a topic branch (optional helper):
-```bash
-./scripts/pr start my-topic
-```
-
-After committing your changes, sync the current branch (push -> PR -> update local `main`):
-```bash
-./scripts/pr sync
-```
-
-If you want to attempt merging the PR (squash) when possible:
-```bash
-./scripts/pr ship
-```
-
-If you only want to push and open/update the PR (no merge attempt):
-```bash
-./scripts/pr ship --no-merge
-```
-
-Branch naming for `start` can be customized via `IRUN_BRANCH_PREFIX` (default: `myfunc`).
+See `AGENTS.md` for the canonical automatic push/sync/merge flow.
 
 ## UI Kit Demo
 Run the UI kit playground:
