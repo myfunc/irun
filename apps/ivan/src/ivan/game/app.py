@@ -1611,6 +1611,7 @@ def run(
     net_host: str | None = None,
     net_port: int = 7777,
     net_name: str = "player",
+    watch: bool = False,
 ) -> None:
     app = RunnerDemo(
         RunConfig(
@@ -1622,6 +1623,7 @@ def run(
             net_host=net_host,
             net_port=int(net_port),
             net_name=net_name,
+            watch=watch,
         )
     )
     app.run()

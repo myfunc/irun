@@ -1,0 +1,129 @@
+// ============================================================================
+// IVAN FGD — Entity definitions for TrenchBroom
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+// Base classes
+// ---------------------------------------------------------------------------
+
+@baseclass = BaseEntity
+[
+    "targetname"(string) : "Name"
+]
+
+@baseclass = PhongSupport
+[
+    "_phong"(choices) : "Phong smooth normals" : 0 =
+    [
+        0 : "Disabled"
+        1 : "Enabled"
+    ]
+    "_phong_angle"(integer) : "Phong angle threshold" : 89
+]
+
+@baseclass = Targetable
+[
+    "target"(string) : "Target entity"
+]
+
+@baseclass = Angle
+[
+    "angle"(integer) : "Facing angle" : 0
+]
+
+// ---------------------------------------------------------------------------
+// World
+// ---------------------------------------------------------------------------
+
+@SolidClass base(BaseEntity, PhongSupport) = worldspawn : "World entity"
+[
+    "wad"(string) : "WAD file paths"
+    "skyname"(string) : "Skybox name"
+    "message"(string) : "Map title"
+]
+
+// ---------------------------------------------------------------------------
+// Info entities
+// ---------------------------------------------------------------------------
+
+@PointClass base(BaseEntity, Angle) size(-16 -16 -36, 16 16 36) color(0 255 0) = info_player_start : "Player start position"
+[
+]
+
+@PointClass base(BaseEntity, Angle) size(-16 -16 -36, 16 16 36) color(0 255 0) = info_player_deathmatch : "Deathmatch spawn point"
+[
+]
+
+@PointClass base(BaseEntity, Angle) size(-8 -8 -8, 8 8 8) color(128 0 128) = info_teleport_destination : "Teleport destination"
+[
+]
+
+// ---------------------------------------------------------------------------
+// Triggers
+// ---------------------------------------------------------------------------
+
+@SolidClass base(BaseEntity, Targetable) color(0 255 0) = trigger_start : "Course start trigger"
+[
+]
+
+@SolidClass base(BaseEntity, Targetable) color(255 0 0) = trigger_finish : "Course finish trigger"
+[
+]
+
+@SolidClass base(BaseEntity, Targetable) color(255 255 0) = trigger_checkpoint : "Course checkpoint trigger"
+[
+    "order"(integer) : "Checkpoint order" : 0
+]
+
+@SolidClass base(BaseEntity, Targetable) color(128 0 128) = trigger_teleport : "Teleport trigger"
+[
+]
+
+// ---------------------------------------------------------------------------
+// Brush entities
+// ---------------------------------------------------------------------------
+
+@SolidClass base(BaseEntity, PhongSupport) = func_illusionary : "Non-solid visible brush (renders but no collision)"
+[
+]
+
+@SolidClass base(BaseEntity, PhongSupport) = func_wall : "Solid brush entity"
+[
+]
+
+@SolidClass base(BaseEntity, PhongSupport) = func_detail : "Detail brush (does not split BSP)"
+[
+]
+
+// ---------------------------------------------------------------------------
+// Lights
+// ---------------------------------------------------------------------------
+
+@PointClass base(BaseEntity) size(-8 -8 -8, 8 8 8) color(255 255 128) = light : "Point light"
+[
+    "light"(integer) : "Brightness" : 200
+    "_color"(color255) : "Light color" : "255 255 255"
+    "style"(choices) : "Light style" : 0 =
+    [
+        0 : "Normal"
+        1 : "Flicker A"
+        2 : "Slow strong pulse"
+        3 : "Candle A"
+        4 : "Fast strobe"
+        5 : "Gentle pulse"
+        6 : "Flicker B"
+        7 : "Candle B"
+        8 : "Candle C"
+        9 : "Slow strobe"
+        10 : "Fluorescent flicker"
+        11 : "Slow pulse (no black)"
+    ]
+]
+
+@PointClass base(BaseEntity) size(-8 -8 -8, 8 8 8) color(255 255 200) = light_environment : "Directional sun light"
+[
+    "light"(integer) : "Brightness" : 200
+    "_color"(color255) : "Light color" : "255 255 255"
+    "pitch"(integer) : "Sun pitch angle" : 0
+    "angle"(integer) : "Sun yaw angle" : 0
+]

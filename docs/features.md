@@ -95,13 +95,25 @@
   - Playground demo to exercise components in one place (`python -m irun_ui_kit.demo`)
 - Ivan: minimal command console engine + localhost control bridge (JSON-lines TCP) for external command execution
   - MCP stdio server (`ivan-mcp`) exposes a `console_exec` tool that forwards to the running game process
+- Ivan: TrenchBroom integration — direct `.map` file loading (Valve 220 format), brush CSG-to-mesh conversion, WAD textures
+- Ivan: Material definition system (`.material.json`) for PBR properties (normal, roughness, metallic, emission) alongside WAD textures
+- Ivan: Phong smooth normals on brush geometry (`_phong` / `_phong_angle` entity properties in FGD)
+- Ivan: Hybrid lighting pipeline — flat ambient for dev iteration, optional ericw-tools bake for production-quality lightmaps
+- Ivan: Quick-test script (`tools/testmap.py`) with file watcher auto-reload (mtime polling, hot-reload via console bridge)
+- Ivan: TrenchBroom game config shipped (`apps/ivan/trenchbroom/`: `GameConfig.cfg` + `ivan.fgd`)
+- Launcher Toolbox: standalone Dear PyGui desktop app (`apps/launcher`, `python -m launcher`) for one-click map editing workflow
+  - Settings panel: configure TrenchBroom exe, WAD directory, materials directory, Steam/HL root, ericw-tools path
+  - Map browser: recursive `.map` file discovery sorted by modification time with auto-refresh
+  - Actions: Play Map (launches IVAN with `--watch`), Edit in TrenchBroom, Pack `.irunmap`, Bake Lightmaps
+  - Live log panel capturing subprocess stdout/stderr
+  - Persistent settings in `~/.irun/launcher/config.json`
 
 ## Planned (High-Level)
 - Movement: walk/run, jump, jump buffer, air control
 - Movement: iterate wallrun from toggleable prototype hooks
 - Camera: follow camera with collision avoidance and smoothing
 - Levels: modular blocks, checkpoints, hazards, collectibles
-- Maps: TrenchBroom integration for level editing (analysis in progress)
+- Maps: TrenchBroom integration for level editing — ~~game config + FGD entity definitions created~~ **done** (direct .map loading, game config, FGD shipped)
 - Time trial: portal/leaderboards (plus ghosts/replays; map_hash binding)
 - Rendering: retro texture filtering options (nearest-neighbor, mipmap strategy)
 - Game loop: pause, restart, level select
@@ -109,7 +121,7 @@
 - UI: extend the procedural UI kit to cover remaining runtime UI needs (avoid one-off custom UI)
 
 ## Paused
-- Maps: format v3 (entities, triggers, lights, chunked baked geometry) — paused pending TrenchBroom integration analysis
+- Maps: format v3 (entities, triggers, lights, chunked baked geometry) — **unpaused**; TrenchBroom integration is complete, format v3 can proceed
 - Tools: Baker app (map viewer + import manager + lighting rebake) — paused; external editor replaces the editing/preview role
 
 ## Out of Scope (For Now)

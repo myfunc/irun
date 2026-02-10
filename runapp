@@ -50,15 +50,24 @@ def _venv_python(venv_dir: Path) -> Path | None:
 
 
 def _python_for(app: str, app_dir: Path) -> str:
+    # 1) App's own venv (highest priority).
     venv_py = _venv_python(app_dir / ".venv")
     if venv_py is not None:
         return str(venv_py)
-    # Monorepo convenience: UI kit is a library and typically reuses Ivan's venv.
-    if app == "ui_kit":
-        # Do NOT resolve symlinks here: running the resolved interpreter path bypasses venv site-packages.
-        ivan_py = _venv_python(APPS_DIR / "ivan" / ".venv")
-        if ivan_py is not None:
-            return str(ivan_py)
+
+    # 2) Shared monorepo venv: ivan's venv is the primary environment that has
+    #    all runtime dependencies (panda3d, Pillow, dearpygui, …).  Every app
+    #    in the monorepo should use it when it doesn't have its own venv.
+    ivan_py = _venv_python(APPS_DIR / "ivan" / ".venv")
+    if ivan_py is not None:
+        return str(ivan_py)
+
+    # 3) Last resort — system Python.  Print a warning so the user knows.
+    print(
+        f"runapp: WARNING: no venv found for '{app}' or in apps/ivan/.venv — "
+        f"falling back to system python. Dependencies may be missing.",
+        file=sys.stderr,
+    )
     return "python" if sys.platform == "win32" else "python3"
 
 

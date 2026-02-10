@@ -28,3 +28,5 @@ class RunConfig:
     net_port: int = 7777
     # Multiplayer display/player name.
     net_name: str = "player"
+    # Watch .map file for changes and auto-reload (TrenchBroom workflow).
+    watch: bool = False
