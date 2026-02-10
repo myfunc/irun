@@ -66,6 +66,7 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/ui/feel_capture_ui.py`: in-game quick capture popup (`G`) for route-tagged save/export/apply flow, including one-click `Revert Last` rollback
 - `apps/ivan/src/ivan/ui/replay_browser_ui.py`: in-game replay browser overlay (UI kit list menu)
 - `apps/ivan/src/ivan/ui/replay_input_ui.py`: in-game replay input HUD (UI kit panel) for recorded command visualization
+- `apps/ivan/src/ivan/console/autotune_bindings.py`: console command wiring for route-scoped autotune V1 (`autotune_suggest/apply/eval/rollback`)
 - `apps/ivan/src/ivan/replays/demo.py`: input-demo storage (record/save/load/list) using repository-local storage under `apps/ivan/replays/`
 - `apps/ivan/src/ivan/replays/telemetry.py`: replay telemetry export pipeline (CSV tick dump + JSON summary metrics)
   - Export summary keeps append-only export metadata history per replay summary file (`route_tag`, optional `route_name`, `run_note`, `feedback_text`, `source_demo`).
@@ -74,6 +75,7 @@ See: `docs/ui-kit.md`.
   - emits latest-vs-reference compare JSON, optional baseline compare JSON, and per-route history context JSON
 - `apps/ivan/src/ivan/game/feel_capture_flow.py`: gameplay-side orchestration for save/export/compare/apply actions (used by pause tab + `G` popup)
 - `apps/ivan/src/ivan/game/feel_feedback.py`: rule-based free-text feedback interpreter for tuning suggestions
+- `apps/ivan/src/ivan/game/autotune.py`: route-scoped autotune core (context load from compare/history, invariant-only bounded suggestions, guardrail evaluation)
 - `apps/ivan/src/ivan/game/tuning_backups.py`: tuning snapshot backup/restore helpers (safety rail for auto-apply/autotune iteration)
 - `apps/ivan/src/ivan/net/server.py`: authoritative multiplayer server loop (TCP bootstrap + UDP input/snapshots)
 - `apps/ivan/src/ivan/net/client.py`: multiplayer client transport for handshake/input send/snapshot poll
@@ -147,6 +149,10 @@ See: `docs/ui-kit.md`.
     - `tuning_backup [label]` (save current tuning snapshot to `~/.irun/ivan/tuning_backups/`)
     - `tuning_restore [name_or_path]` (restore latest or chosen snapshot)
     - `tuning_backups [limit]` (list recent backups)
+    - `autotune_suggest <route_tag> <feedback_text> [out_dir]` (route-scoped invariant-only proposal from compare/history context)
+    - `autotune_apply <route_tag> <feedback_text> [out_dir]` (backup-first apply of current route-scoped suggestion)
+    - `autotune_eval <route_tag> [out_dir]` (guardrail checks + weighted route score)
+    - `autotune_rollback [backup_ref]` (alias over backup restore flow; defaults to latest backup)
   - `ivan-mcp` runs an MCP stdio server (Python 3.9, no deps) that exposes a single tool: `console_exec`.
 - CLI telemetry export:
   - `python -m ivan --export-latest-replay-telemetry [--replay-telemetry-out <dir>]` exports latest replay metrics and exits.

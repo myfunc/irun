@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ivan.console.autotune_bindings import register_autotune_commands
 from ivan.console.core import CommandContext, Console
 from ivan.physics.tuning import PhysicsTuning
 
@@ -410,6 +411,7 @@ def build_client_console(runner: Any) -> Console:
         help="List recent tuning backups.",
         handler=_cmd_tuning_backups,
     )
+    register_autotune_commands(con=con, runner=runner)
     con.register_command(name="ent_list", help="List registered entities/objects.", handler=_cmd_ent_list)
     con.register_command(name="ent_get", help="Get a property by path (dot-separated).", handler=_cmd_ent_get)
     con.register_command(name="ent_set", help="Set a property by path using JSON value.", handler=_cmd_ent_set)

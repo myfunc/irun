@@ -113,3 +113,65 @@ def test_console_tuning_backup_restore_and_list(monkeypatch) -> None:
     assert any("backup:" in line for line in out_backup)
     assert any("restored:" in line for line in out_restore)
     assert any("profile=surf_bhop_c2" in line for line in out_list)
+
+
+def test_console_autotune_commands(monkeypatch) -> None:
+    runner = _FakeRunner()
+    con = build_client_console(runner)
+
+    context = SimpleNamespace(
+        route_tag="A",
+        note="route compare ready (+4/-1/=1)",
+        latest_summary_path=Path("/tmp/latest.summary.json"),
+        comparison_path=Path("/tmp/compare.json"),
+        history_path=Path("/tmp/history.json"),
+    )
+    adjustments = [
+        SimpleNamespace(
+            field="max_ground_speed",
+            before=6.0,
+            after=6.3,
+            reason="intent: raise top speed",
+        )
+    ]
+    eval_result = SimpleNamespace(
+        route_tag="A",
+        passed=True,
+        score=0.24,
+        improved_count=4,
+        regressed_count=1,
+        equal_count=1,
+        comparison_path=Path("/tmp/compare.json"),
+        history_path=Path("/tmp/history.json"),
+        checks=[SimpleNamespace(name="jump_success_drop", passed=True, detail="delta=+0.0300")],
+    )
+    backup_path = Path("/tmp/backup.json")
+
+    monkeypatch.setattr(
+        "ivan.console.autotune_bindings.autotune_suggest",
+        lambda runner, route_tag, feedback_text, out_dir=None: (context, adjustments),
+    )
+    monkeypatch.setattr(
+        "ivan.console.autotune_bindings.autotune_apply",
+        lambda runner, route_tag, feedback_text, out_dir=None: (context, adjustments, backup_path),
+    )
+    monkeypatch.setattr(
+        "ivan.console.autotune_bindings.autotune_eval",
+        lambda route_tag, out_dir=None: eval_result,
+    )
+    monkeypatch.setattr(
+        "ivan.console.autotune_bindings.autotune_rollback",
+        lambda runner, backup_ref=None: backup_path,
+    )
+
+    out_suggest = con.execute_line(ctx=CommandContext(role="client", origin="test"), line='autotune_suggest A "too slow"')
+    out_apply = con.execute_line(ctx=CommandContext(role="client", origin="test"), line='autotune_apply A "too slow"')
+    out_eval = con.execute_line(ctx=CommandContext(role="client", origin="test"), line="autotune_eval A")
+    out_rollback = con.execute_line(ctx=CommandContext(role="client", origin="test"), line="autotune_rollback")
+
+    assert any("suggested: 1" in line for line in out_suggest)
+    assert any("comparison:" in line for line in out_suggest)
+    assert any("applied: 1" in line for line in out_apply)
+    assert any("backup:" in line for line in out_apply)
+    assert any("guardrails: pass" in line for line in out_eval)
+    assert any("restored:" in line for line in out_rollback)

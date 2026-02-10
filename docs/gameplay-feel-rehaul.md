@@ -182,6 +182,9 @@ Acceptance:
 - [ ] Capture initial baseline run metrics for Route A/B/C.
 - [ ] Open follow-up tasks for Phase 1 and Phase 2 implementation slices.
 - [ ] Add constrained autotuner loop (feedback + route history metrics -> invariant deltas with rollback-first flow).
+  - V1 console control-plane landed: `autotune_suggest`, `autotune_apply`, `autotune_eval`, `autotune_rollback`.
+  - `autotune_apply` is backup-first and reuses the same restore path as popup `Revert Last` / `tuning_restore`.
+  - Remaining gap for this checklist item: automated iterative loop/orchestration across repeated capture/eval rounds.
 
 ## Current Progress (2026-02-09)
 Completed now:
@@ -221,6 +224,16 @@ Completed now:
 Validation completed:
 - Replay format/telemetry/comparison tests pass (`test_replay_demo.py`, `test_replay_telemetry_export.py`, `test_replay_compare.py`).
 - Runtime smoke runs pass in menu boot and map boot paths.
+
+## Current Progress (2026-02-10)
+Completed now:
+- Route-scoped autotune V1 command surface in console:
+  - `autotune_suggest <route_tag> <feedback_text> [out_dir]`
+  - `autotune_apply <route_tag> <feedback_text> [out_dir]`
+  - `autotune_eval <route_tag> [out_dir]`
+  - `autotune_rollback [backup_ref]`
+- Autotune suggestion/apply flow is invariant-only and consumes route A/B/C compare + history context.
+- Apply path now always snapshots tuning backup before any change and stays compatible with existing backup restore entry points.
 
 ## Invariant Motion Refactor Progress (2026-02-09)
 Status: `IN PROGRESS` (core invariants active, slide migration complete, authority hardening active)

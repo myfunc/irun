@@ -169,7 +169,12 @@
     - latest vs baseline run (first run on route, when available)
     - route history context JSON summarizing how latest ranks against prior route runs
   - tuning backup control-plane is available in console commands (`tuning_backup`, `tuning_restore`, `tuning_backups`) for quick rollback during autotune passes
-  - ML autotune design/implementation plan documented in `docs/feel-ml-autotuner.md`
+  - route-scoped ML autotune V1 commands are available in console:
+    - `autotune_suggest <route_tag> <feedback_text> [out_dir]`
+    - `autotune_apply <route_tag> <feedback_text> [out_dir]` (always creates backup before apply)
+    - `autotune_eval <route_tag> [out_dir]`
+    - `autotune_rollback [backup_ref]` (restore latest by default; same backup pipeline as `tuning_restore` and `G` popup Revert Last)
+  - ML autotune design/implementation details are tracked in `docs/feel-ml-autotuner.md`
 - Ivan: multiplayer foundation (authoritative server + connected clients)
   - dedicated server mode with TCP bootstrap + UDP gameplay packets
   - normal client sessions are offline by default; ESC menu `Open To Network` starts/stops embedded host mode for LAN joinability while keeping the local player in-session
