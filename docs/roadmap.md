@@ -20,6 +20,7 @@
 - Handcrafted, player-generated map workflow and validation tools
 - Packed map bundles for distribution and git-friendly imports (`.irunmap`) — **default format for all maps**
 - External level editor: TrenchBroom — **implemented**: direct `.map` loading (Valve 220), brush CSG, WAD textures, Phong normals, material defs, hybrid lighting, quick-test script with file watcher, bake + pack pipelines (game config + FGD shipped in `apps/ivan/trenchbroom/`)
+- Map pipeline profiles — **implemented**: dev-fast (skip vis/light, no compression) vs prod-baked (full quality); runtime `--map-profile` auto/dev-fast/prod-baked; profile-aware fog and visibility defaults
 - Time trial: local timing + local personal best storage (replays/portal later)
 
 ## Paused

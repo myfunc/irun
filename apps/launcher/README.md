@@ -47,11 +47,11 @@ Settings are saved to `~/.irun/launcher/config.json`.
 ### Action Buttons
 | Button | What it does |
 |---|---|
-| **Play Map** | Launches `python -m ivan --map <selected> --watch` (auto-reload on save) |
+| **Play Map** | Launches `python -m ivan --map <selected> [--map-profile ...] [--watch]` based on Pipeline Controls |
 | **Stop Game** | Terminates the running IVAN game process |
 | **Edit in TrenchBroom** | Opens the selected `.map` file in TrenchBroom |
-| **Pack .irunmap** | Runs `tools/pack_map.py` to create a distributable bundle |
-| **Bake Lightmaps** | Runs `tools/bake_map.py` with ericw-tools for production lighting |
+| **Pack .irunmap** | Runs `tools/pack_map.py --profile <selected>` from Pipeline Controls |
+| **Bake Lightmaps (legacy)** | Optional CLI bake path via `tools/bake_map.py` with selected profile/overrides |
 
 Buttons that require unconfigured paths (TrenchBroom exe, ericw-tools) are
 grayed out until the paths are set in Settings.
@@ -59,6 +59,12 @@ grayed out until the paths are set in Settings.
 ### Log Panel
 - Captures stdout/stderr from all spawned subprocesses.
 - Timestamped, scrollable, with a Clear button.
+
+### Pipeline Controls
+- Choose per-action profile: `dev-fast` or `prod-baked`.
+- Control Play behavior (`--map-profile`, `--watch`) without editing CLI.
+- Control Bake overrides (`--no-vis`, `--no-light`, `--light-extra`, `--bounce`) directly in UI.
+- For full lightmap bake, set `Bake profile = prod-baked`, keep `--no-light` unchecked, and configure **ericw-tools dir** in Settings.
 
 ## Dependencies
 
@@ -75,3 +81,7 @@ grayed out until the paths are set in Settings.
 5. Click **Play Map** to launch the game with auto-reload.
 6. Edit in TrenchBroom, save — the game reloads automatically.
 7. When ready to share, click **Pack .irunmap**.
+
+Notes:
+- Preferred workflow for GoldSrc-style lighting is to compile/bake in the editor toolchain, then package via launcher.
+- Launcher bake remains available for advanced/legacy CLI-driven workflows.

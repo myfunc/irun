@@ -85,6 +85,7 @@ def back_to_menu(host) -> None:
     host.world_root = host.render.attachNewNode("world-root")
 
     host.input_debug.hide()
+    host.debug_hud.hide()
     host._grapple_rope_np.hide()
     host.ui.hide()
     host.pause_ui.hide()

@@ -12,7 +12,7 @@ class RunMetadata:
     """
     Optional metadata stored next to a map bundle to control how the game should run that map.
 
-    File: <bundle>/run.json
+    File: <bundle>/run.json or <map>.run.json for .map files
     """
 
     mode: str = "free_run"
@@ -20,17 +20,21 @@ class RunMetadata:
     spawn_override: dict | None = None  # {"position":[x,y,z], "yaw":deg}
     lighting: dict | None = None  # {"preset": str, "overrides": {style(str): pattern(str)}}
     visibility: dict | None = None  # {"enabled": bool, "mode": "auto"|"goldsrc_pvs", "build_cache": bool}
+    fog: dict | None = None  # {"enabled": bool, "start": float, "end": float, "color": [r,g,b]}
 
 
-def load_run_metadata(*, bundle_ref: Path) -> RunMetadata:
+def load_run_metadata(*, bundle_ref: Path | None) -> RunMetadata:
     """
     Load per-bundle runtime metadata.
 
     Storage:
     - directory bundle: <bundle>/run.json
     - packed bundle (.irunmap): <bundle>.run.json (sidecar)
+    - .map file: <map>.run.json (sidecar)
     """
 
+    if bundle_ref is None:
+        return RunMetadata()
     p = run_json_path_for_bundle_ref(bundle_ref)
     if not p.exists() or not p.is_file():
         return RunMetadata()
@@ -62,12 +66,17 @@ def load_run_metadata(*, bundle_ref: Path) -> RunMetadata:
     if not isinstance(visibility, dict):
         visibility = None
 
+    fog = payload.get("fog")
+    if not isinstance(fog, dict):
+        fog = None
+
     return RunMetadata(
         mode=mode,
         mode_config=mode_config,
         spawn_override=spawn,
         lighting=lighting,
         visibility=visibility,
+        fog=fog,
     )
 
 
@@ -92,5 +101,28 @@ def set_run_metadata_lighting(*, bundle_ref: Path, lighting: dict | None) -> Non
         payload.pop("lighting", None)
     else:
         payload["lighting"] = dict(lighting)
+
+    p.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def set_run_metadata_visibility(*, bundle_ref: Path, visibility: dict | None) -> None:
+    """
+    Persist visibility config for this bundle in <bundle>/run.json.
+    """
+
+    p = run_json_path_for_bundle_ref(bundle_ref)
+    payload: dict = {}
+    if p.exists():
+        try:
+            old = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(old, dict):
+                payload = dict(old)
+        except Exception:
+            payload = {}
+
+    if visibility is None:
+        payload.pop("visibility", None)
+    else:
+        payload["visibility"] = dict(visibility)
 
     p.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

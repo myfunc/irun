@@ -647,17 +647,31 @@ def convert_map_file(
         except ValueError:
             continue
 
-        # _light "R G B I" (RGB 0-255, I = intensity).
-        light_raw = ent.properties.get("_light", "255 255 255 200")
-        lp = light_raw.split()
+        # GoldSrc supports either:
+        # - _light: "R G B I"
+        # - _color + light (brightness)
+        light_raw = ent.properties.get("_light", "").strip()
+        lp = light_raw.split() if light_raw else []
         r, g, b, intensity = 255.0, 255.0, 255.0, 200.0
-        try:
-            if len(lp) >= 3:
+        if len(lp) >= 3:
+            try:
                 r, g, b = float(lp[0]), float(lp[1]), float(lp[2])
-            if len(lp) >= 4:
-                intensity = float(lp[3])
-        except ValueError:
-            pass
+                if len(lp) >= 4:
+                    intensity = float(lp[3])
+            except ValueError:
+                pass
+        else:
+            color_raw = ent.properties.get("_color", "255 255 255")
+            try:
+                cp = color_raw.split()
+                if len(cp) >= 3:
+                    r, g, b = float(cp[0]), float(cp[1]), float(cp[2])
+            except ValueError:
+                pass
+            try:
+                intensity = float(ent.properties.get("light", "200"))
+            except ValueError:
+                pass
 
         # Direction (light_environment / light_spot).
         pitch = 0.0
@@ -672,6 +686,25 @@ def convert_map_file(
                 angles = (float(a_raw[0]), float(a_raw[1]), float(a_raw[2]))
         except ValueError:
             pass
+        if cn == "light_environment" and angles == (0.0, 0.0, 0.0):
+            # GoldSrc commonly stores environment yaw in `angle`, not `angles`.
+            try:
+                yaw = float(ent.properties.get("angle", "0"))
+                angles = (0.0, yaw, 0.0)
+            except ValueError:
+                pass
+
+        inner_cone = 0.0
+        outer_cone = 0.0
+        if cn == "light_spot":
+            try:
+                inner_cone = float(ent.properties.get("_cone", "0"))
+            except ValueError:
+                pass
+            try:
+                outer_cone = float(ent.properties.get("_cone2", "0"))
+            except ValueError:
+                pass
 
         # Attenuation.
         fade = 1.0
@@ -697,6 +730,8 @@ def convert_map_file(
             brightness=intensity,
             pitch=pitch,
             angles=angles,
+            inner_cone=inner_cone,
+            outer_cone=outer_cone,
             fade=fade,
             falloff=falloff,
             style=style,

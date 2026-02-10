@@ -3,7 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, pack_bundle_dir_to_irunmap, resolve_bundle_handle_path
+from ivan.app_config import MAP_PROFILE_DEV_FAST, MAP_PROFILE_PROD_BAKED
+
+from ivan.maps.bundle_io import (
+    PACKED_BUNDLE_EXT,
+    infer_map_profile_from_path,
+    pack_bundle_dir_to_irunmap,
+    resolve_bundle_handle_path,
+)
 from ivan.state import resolve_map_json
 
 
@@ -33,4 +40,15 @@ def test_packed_bundle_extracts_to_cache_and_resolves_map_json(tmp_path: Path, m
     payload = json.loads(h.map_json.read_text(encoding="utf-8"))
     assert payload["map_id"] == "t"
     assert (h.map_json.parent / "materials" / "a.txt").read_text(encoding="utf-8") == "ok"
+
+
+def test_infer_map_profile_from_path() -> None:
+    assert infer_map_profile_from_path("x.map") == MAP_PROFILE_DEV_FAST
+    assert infer_map_profile_from_path(Path("a/b/c.map")) == MAP_PROFILE_DEV_FAST
+    assert infer_map_profile_from_path(f"bundle{PACKED_BUNDLE_EXT}") == MAP_PROFILE_PROD_BAKED
+    assert infer_map_profile_from_path("x.map", explicit_profile="prod-baked") == MAP_PROFILE_PROD_BAKED
+    assert infer_map_profile_from_path("bundle.irunmap", explicit_profile="dev-fast") == MAP_PROFILE_DEV_FAST
+    assert infer_map_profile_from_path(None) == MAP_PROFILE_DEV_FAST
+    assert infer_map_profile_from_path("") == MAP_PROFILE_DEV_FAST
+    assert infer_map_profile_from_path(None, explicit_profile="prod-baked") == MAP_PROFILE_PROD_BAKED
 

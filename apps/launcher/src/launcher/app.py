@@ -29,6 +29,7 @@ _TAG_LOG = "log_text"
 _TAG_MAP_LIST = "map_listbox"
 _TAG_SELECTED_LABEL = "selected_map_label"
 _TAG_BTN_PLAY = "btn_play"
+_TAG_BTN_PLAY_BAKED = "btn_play_baked"
 _TAG_BTN_EDIT = "btn_edit"
 _TAG_BTN_PACK = "btn_pack"
 _TAG_BTN_BAKE = "btn_bake"
@@ -44,6 +45,14 @@ _TAG_HL_ROOT = "inp_hl_root"
 _TAG_ERICW = "inp_ericw"
 _TAG_MAPS_DIR = "inp_maps_dir"
 _TAG_PYTHON = "inp_python"
+_TAG_PLAY_PROFILE = "inp_play_profile"
+_TAG_PLAY_WATCH = "inp_play_watch"
+_TAG_PACK_PROFILE = "inp_pack_profile"
+_TAG_BAKE_PROFILE = "inp_bake_profile"
+_TAG_BAKE_NO_VIS = "inp_bake_no_vis"
+_TAG_BAKE_NO_LIGHT = "inp_bake_no_light"
+_TAG_BAKE_LIGHT_EXTRA = "inp_bake_light_extra"
+_TAG_BAKE_BOUNCE = "inp_bake_bounce"
 
 # Create map dialog tags.
 _TAG_CREATE_DLG = "create_map_dlg"
@@ -60,6 +69,7 @@ _wad_candidates: list[Path] = []
 
 # Label width for settings table (characters).
 _LABEL_COL_WIDTH = 130
+_PIPELINE_PROFILES = ("dev-fast", "prod-baked")
 
 
 # ── minimal .map template ────────────────────────────────────
@@ -146,11 +156,27 @@ def _update_buttons() -> None:
     game_running = any(p.alive and p.label == "IVAN Game" for p in _processes)
 
     dpg.configure_item(_TAG_BTN_PLAY, enabled=has_map and not game_running)
+    baked_exists = bool(_selected_map is not None and _selected_map.path.with_suffix(".irunmap").is_file())
+    if dpg.does_item_exist(_TAG_BTN_PLAY_BAKED):
+        dpg.configure_item(_TAG_BTN_PLAY_BAKED, enabled=baked_exists and not game_running)
     dpg.configure_item(_TAG_BTN_LAUNCH, enabled=not game_running)
     dpg.configure_item(_TAG_BTN_EDIT, enabled=has_map and has_tb)
     dpg.configure_item(_TAG_BTN_PACK, enabled=has_map)
     dpg.configure_item(_TAG_BTN_BAKE, enabled=has_map and has_ericw)
     dpg.configure_item(_TAG_BTN_STOP, enabled=game_running)
+
+
+def _sanitize_profile(raw: str, *, default: str) -> str:
+    value = (raw or "").strip()
+    if value in _PIPELINE_PROFILES:
+        return value
+    return default
+
+
+def _profile_from_tag(tag: str, *, default: str) -> str:
+    if not dpg.does_item_exist(tag):
+        return default
+    return _sanitize_profile(dpg.get_value(tag), default=default)
 
 
 def _save_settings_from_ui() -> None:
@@ -162,6 +188,20 @@ def _save_settings_from_ui() -> None:
     _cfg.ericw_tools_dir = dpg.get_value(_TAG_ERICW) or ""
     _cfg.maps_dir = dpg.get_value(_TAG_MAPS_DIR) or ""
     _cfg.python_exe = dpg.get_value(_TAG_PYTHON) or ""
+    _cfg.play_map_profile = _profile_from_tag(_TAG_PLAY_PROFILE, default="dev-fast")
+    _cfg.play_watch = bool(dpg.get_value(_TAG_PLAY_WATCH)) if dpg.does_item_exist(_TAG_PLAY_WATCH) else True
+    _cfg.pack_profile = _profile_from_tag(_TAG_PACK_PROFILE, default="dev-fast")
+    _cfg.bake_profile = _profile_from_tag(_TAG_BAKE_PROFILE, default="prod-baked")
+    _cfg.bake_no_vis = bool(dpg.get_value(_TAG_BAKE_NO_VIS)) if dpg.does_item_exist(_TAG_BAKE_NO_VIS) else False
+    _cfg.bake_no_light = bool(dpg.get_value(_TAG_BAKE_NO_LIGHT)) if dpg.does_item_exist(_TAG_BAKE_NO_LIGHT) else False
+    _cfg.bake_light_extra = (
+        bool(dpg.get_value(_TAG_BAKE_LIGHT_EXTRA)) if dpg.does_item_exist(_TAG_BAKE_LIGHT_EXTRA) else False
+    )
+    if dpg.does_item_exist(_TAG_BAKE_BOUNCE):
+        try:
+            _cfg.bake_bounce = max(0, int(dpg.get_value(_TAG_BAKE_BOUNCE)))
+        except (TypeError, ValueError):
+            _cfg.bake_bounce = 0
     save_config(_cfg)
     _log("Settings saved.")
     _update_buttons()
@@ -441,12 +481,41 @@ def _cb_play(sender, app_data) -> None:
     if _selected_map is None:
         return
     _save_settings_from_ui()
-    _log(f"Launching IVAN with {_selected_map.name} ...")
+    play_profile = _sanitize_profile(_cfg.play_map_profile, default="dev-fast")
+    watch_enabled = bool(_cfg.play_watch)
+    _log(
+        f"Launching IVAN with {_selected_map.name} "
+        f"(profile={play_profile}, watch={'on' if watch_enabled else 'off'}) ..."
+    )
     h = spawn_game(
         python=_cfg.effective_python(),
         ivan_root=_cfg.effective_ivan_root(),
         map_path=str(_selected_map.path),
-        watch=True,
+        map_profile=play_profile,
+        watch=watch_enabled,
+        hl_root=_cfg.hl_root,
+        on_line=_on_process_line,
+    )
+    _processes.append(h)
+    _update_buttons()
+
+
+def _cb_play_baked(sender, app_data) -> None:
+    if _selected_map is None:
+        return
+    baked = _selected_map.path.with_suffix(".irunmap")
+    if not baked.is_file():
+        _log(f"Baked bundle not found: {baked}. Run Pack or Bake first.")
+        _update_buttons()
+        return
+    _save_settings_from_ui()
+    _log(f"Launching IVAN with baked bundle {baked.name} (profile=prod-baked) ...")
+    h = spawn_game(
+        python=_cfg.effective_python(),
+        ivan_root=_cfg.effective_ivan_root(),
+        map_path=str(baked),
+        map_profile="prod-baked",
+        watch=False,
         hl_root=_cfg.hl_root,
         on_line=_on_process_line,
     )
@@ -496,12 +565,14 @@ def _cb_pack(sender, app_data) -> None:
     if _selected_map is None:
         return
     _save_settings_from_ui()
-    _log(f"Packing {_selected_map.name} -> .irunmap ...")
+    pack_profile = _sanitize_profile(_cfg.pack_profile, default="dev-fast")
+    _log(f"Packing {_selected_map.name} -> .irunmap (profile={pack_profile}) ...")
     wad_dirs = [_cfg.effective_wad_dir()] if _cfg.effective_wad_dir() else []
     h = spawn_pack(
         python=_cfg.effective_python(),
         ivan_root=_cfg.effective_ivan_root(),
         map_path=str(_selected_map.path),
+        profile=pack_profile,
         wad_dirs=wad_dirs,
         on_line=_on_process_line,
     )
@@ -518,11 +589,21 @@ def _cb_bake(sender, app_data) -> None:
     if not _cfg.hl_root:
         _log("Bake requires Steam/HL root (game-root for textures). Set it in Settings.")
         return
-    _log(f"Baking lightmaps for {_selected_map.name} ...")
+    bake_profile = _sanitize_profile(_cfg.bake_profile, default="prod-baked")
+    _log(
+        f"Baking lightmaps for {_selected_map.name} "
+        f"(profile={bake_profile}, no_vis={_cfg.bake_no_vis}, "
+        f"no_light={_cfg.bake_no_light}, extra={_cfg.bake_light_extra}, bounce={_cfg.bake_bounce}) ..."
+    )
     h = spawn_bake(
         python=_cfg.effective_python(),
         ivan_root=_cfg.effective_ivan_root(),
         map_path=str(_selected_map.path),
+        profile=bake_profile,
+        no_vis=bool(_cfg.bake_no_vis),
+        no_light=bool(_cfg.bake_no_light),
+        light_extra=bool(_cfg.bake_light_extra),
+        bounce=max(0, int(_cfg.bake_bounce or 0)),
         ericw_tools_dir=_cfg.ericw_tools_dir,
         game_root=_cfg.hl_root,
         on_line=_on_process_line,
@@ -673,20 +754,70 @@ def _build_ui() -> None:
         # ── Workflow ──────────────────────────────────
         with dpg.collapsing_header(label="Workflow", default_open=True):
             with dpg.group(horizontal=True):
-                dpg.add_button(label="  Play Map  ", tag=_TAG_BTN_PLAY, callback=_cb_play)
+                dpg.add_button(label="  Play Map (quick)  ", tag=_TAG_BTN_PLAY, callback=_cb_play)
+                dpg.add_button(label="  Play Baked (.irunmap)  ", tag=_TAG_BTN_PLAY_BAKED, callback=_cb_play_baked)
                 dpg.add_button(label="  Stop Game  ", tag=_TAG_BTN_STOP, callback=_cb_stop)
                 dpg.add_button(label="  Edit in TrenchBroom  ", tag=_TAG_BTN_EDIT, callback=_cb_edit)
+            dpg.add_text("Quick path: Play Map loads source .map (fast iteration profile).")
+            dpg.add_text("Baked path: Play Baked runs sibling .irunmap (build first via Pack/Bake).")
+
+        dpg.add_spacer(height=4)
+
+        # ── Pipeline Controls ─────────────────────────
+        with dpg.collapsing_header(label="Pipeline Controls", default_open=True):
+            dpg.add_text("Run profile:")
+            with dpg.group(horizontal=True):
+                dpg.add_text("Play profile:")
+                dpg.add_combo(
+                    _PIPELINE_PROFILES,
+                    tag=_TAG_PLAY_PROFILE,
+                    default_value=_sanitize_profile(_cfg.play_map_profile, default="dev-fast"),
+                    width=140,
+                )
+                dpg.add_checkbox(tag=_TAG_PLAY_WATCH, label="watch (.map auto-reload)", default_value=bool(_cfg.play_watch))
+            dpg.add_spacer(height=4)
+            with dpg.group(horizontal=True):
+                dpg.add_text("Pack profile:")
+                dpg.add_combo(
+                    _PIPELINE_PROFILES,
+                    tag=_TAG_PACK_PROFILE,
+                    default_value=_sanitize_profile(_cfg.pack_profile, default="dev-fast"),
+                    width=140,
+                )
+                dpg.add_text("Bake profile:")
+                dpg.add_combo(
+                    _PIPELINE_PROFILES,
+                    tag=_TAG_BAKE_PROFILE,
+                    default_value=_sanitize_profile(_cfg.bake_profile, default="prod-baked"),
+                    width=140,
+                )
+            dpg.add_spacer(height=4)
+            dpg.add_text("Bake overrides:")
+            with dpg.group(horizontal=True):
+                dpg.add_checkbox(tag=_TAG_BAKE_NO_VIS, label="--no-vis", default_value=bool(_cfg.bake_no_vis))
+                dpg.add_checkbox(tag=_TAG_BAKE_NO_LIGHT, label="--no-light", default_value=bool(_cfg.bake_no_light))
+                dpg.add_checkbox(tag=_TAG_BAKE_LIGHT_EXTRA, label="--light-extra", default_value=bool(_cfg.bake_light_extra))
+                dpg.add_text("bounce:")
+                dpg.add_input_int(
+                    tag=_TAG_BAKE_BOUNCE,
+                    default_value=max(0, int(_cfg.bake_bounce)),
+                    width=80,
+                    min_value=0,
+                    min_clamped=True,
+                )
+            dpg.add_text("Tip: prod-baked + no-light/no-vis off is the full lightmap bake path.")
 
         dpg.add_spacer(height=4)
 
         # ── Build & Export ────────────────────────────
         with dpg.collapsing_header(label="Build & Export", default_open=False):
-            dpg.add_text("Pack: creates .irunmap from .map (no lightmaps, fast).")
-            dpg.add_text("Bake: compiles with ericw-tools + lightmaps (slow).")
+            dpg.add_text("Recommended: compile/bake in your editor, then use Pack for distribution.")
+            dpg.add_text("Pack: creates .irunmap from .map (profile from Pipeline Controls).")
+            dpg.add_text("Bake Lightmaps button is optional CLI bake (advanced/legacy workflow).")
             dpg.add_spacer(height=4)
             with dpg.group(horizontal=True):
                 dpg.add_button(label="  Pack .irunmap  ", tag=_TAG_BTN_PACK, callback=_cb_pack)
-                dpg.add_button(label="  Bake Lightmaps  ", tag=_TAG_BTN_BAKE, callback=_cb_bake)
+                dpg.add_button(label="  Bake Lightmaps (legacy)  ", tag=_TAG_BTN_BAKE, callback=_cb_bake)
 
         dpg.add_spacer(height=4)
 
