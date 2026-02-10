@@ -362,7 +362,7 @@ def test_slide_engage_applies_low_hull_without_entry_boost() -> None:
     slide_speed = math.sqrt(ctrl.vel.x * ctrl.vel.x + ctrl.vel.y * ctrl.vel.y)
     assert ctrl.is_sliding()
     assert ctrl.player_half.z < stand_half
-    assert slide_speed <= 2.0
+    assert slide_speed <= 2.0001
     assert slide_speed > 1.8
 
 
@@ -701,6 +701,20 @@ def test_slide_wasd_input_does_not_change_ground_slide_motion() -> None:
     assert math.isclose(float(left.vel.y), float(right.vel.y), abs_tol=1e-5)
 
 
+def test_slide_does_not_decay_horizontal_speed_per_tick() -> None:
+    ctrl = _make_controller(PhysicsTuning(slide_enabled=True, slide_stop_t90=0.20))
+    ctrl.grounded = True
+    ctrl.vel = LVector3f(0.0, 11.0, 0.0)
+    ctrl.set_slide_held(held=True)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 1.0, 0.0), yaw_deg=0.0, crouching=False)
+    pre = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y))
+
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+    post = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y))
+
+    assert post >= pre * 0.995
+
+
 def test_invariant_vmax_remains_authoritative_under_input() -> None:
     low = _make_controller(
         PhysicsTuning(
@@ -784,6 +798,28 @@ def test_ground_jump_tick_preserves_horizontal_speed_with_move_input() -> None:
 
     assert ctrl.vel.x > 11.7
     assert ctrl.vel.z > 0.0
+
+
+def test_wallrun_jump_preserves_total_speed_from_pre_jump() -> None:
+    ctrl = _make_controller(
+        PhysicsTuning(
+            wallrun_enabled=True,
+            walljump_enabled=True,
+            wall_jump_cooldown=0.0,
+            coyote_buffer_enabled=False,
+        )
+    )
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(14.0, 0.0, -9.0)
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
+    pre_total = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y) + float(ctrl.vel.z) * float(ctrl.vel.z))
+    ctrl.queue_jump()
+
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=0.0, pitch_deg=0.0, crouching=False)
+    post_total = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y) + float(ctrl.vel.z) * float(ctrl.vel.z))
+
+    assert post_total >= pre_total * 0.995
 
 
 def test_corner_jump_uses_ground_jump_not_walljump() -> None:

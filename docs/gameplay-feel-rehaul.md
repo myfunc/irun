@@ -238,6 +238,10 @@ Completed now:
   - wallrun jump now hard-exits wallrun state on jump-off so camera tilt recovers immediately.
   - wallrun jump launch now prioritizes stronger opposite-wall peel-away with ground-jump-like horizontal carry.
   - wallrun jump vertical pop now matches normal jump takeoff (full up-pop on wallrun jump-offs).
+- Momentum policy refactor:
+  - regular grounded run/coast is now the only intentional deceleration lane.
+  - trick lanes (air/surf/slide/wallrun/walljump/grapple) now preserve momentum floors to keep chain flow.
+  - policy is centralized in a dedicated controller mixin to make future mechanics (rocketjump/traps/advanced grapple behaviors) composable without per-feature speed hacks.
 
 ## Invariant Motion Refactor Progress (2026-02-09)
 Status: `IN PROGRESS` (core invariants active, slide migration complete, authority hardening active)
