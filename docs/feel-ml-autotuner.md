@@ -119,3 +119,19 @@ Recommended rollout:
 - V1 is intentionally deterministic/rule-based and does not add external ML dependencies.
 - Per-apply trust-region and hard bounds are enforced by invariant-only suggestion logic.
 - Apply safety is shared with existing backup UI/console flows, so rollback behavior remains identical across `autotune_apply`, popup `Revert Last`, and `tuning_restore`.
+
+## How To Use V1
+1. Capture at least two route-tagged runs (`A`, `B`, or `C`) so compare/history data exists.
+2. Preview a proposal:
+   - `autotune_suggest A "too slow and landing harsh"`
+3. Apply a proposal (backup-first):
+   - `autotune_apply A "too slow and landing harsh"`
+4. Evaluate latest run against guardrails:
+   - `autotune_eval A`
+5. Roll back if needed:
+   - latest backup: `autotune_rollback`
+   - specific backup: `autotune_rollback 20260210_120000_surf_bhop_c2_route-a.json`
+
+Notes:
+- Optional output directory can be provided to all commands as the last arg.
+- `autotune_apply` only updates invariant fields and always creates a pre-apply tuning backup before any change.
