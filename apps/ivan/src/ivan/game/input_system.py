@@ -16,9 +16,22 @@ class _InputCommand:
         move_right: int = 0,
         jump_pressed: bool = False,
         jump_held: bool = False,
-        crouch_held: bool = False,
+        slide_pressed: bool = False,
         grapple_pressed: bool = False,
         noclip_toggle_pressed: bool = False,
+        key_w_held: bool = False,
+        key_a_held: bool = False,
+        key_s_held: bool = False,
+        key_d_held: bool = False,
+        arrow_up_held: bool = False,
+        arrow_down_held: bool = False,
+        arrow_left_held: bool = False,
+        arrow_right_held: bool = False,
+        mouse_left_held: bool = False,
+        mouse_right_held: bool = False,
+        raw_wasd_available: bool = False,
+        raw_arrows_available: bool = False,
+        raw_mouse_buttons_available: bool = False,
     ) -> None:
         self.look_dx = int(look_dx)
         self.look_dy = int(look_dy)
@@ -27,11 +40,27 @@ class _InputCommand:
         self.move_right = int(move_right)
         self.jump_pressed = bool(jump_pressed)
         self.jump_held = bool(jump_held)
-        self.crouch_held = bool(crouch_held)
+        self.slide_pressed = bool(slide_pressed)
         self.grapple_pressed = bool(grapple_pressed)
         self.noclip_toggle_pressed = bool(noclip_toggle_pressed)
+        self.key_w_held = bool(key_w_held)
+        self.key_a_held = bool(key_a_held)
+        self.key_s_held = bool(key_s_held)
+        self.key_d_held = bool(key_d_held)
+        self.arrow_up_held = bool(arrow_up_held)
+        self.arrow_down_held = bool(arrow_down_held)
+        self.arrow_left_held = bool(arrow_left_held)
+        self.arrow_right_held = bool(arrow_right_held)
+        self.mouse_left_held = bool(mouse_left_held)
+        self.mouse_right_held = bool(mouse_right_held)
+        self.raw_wasd_available = bool(raw_wasd_available)
+        self.raw_arrows_available = bool(raw_arrows_available)
+        self.raw_mouse_buttons_available = bool(raw_mouse_buttons_available)
 
     def to_demo_frame(self) -> DemoFrame:
+        return self.to_demo_frame_with_telemetry(telemetry=None)
+
+    def to_demo_frame_with_telemetry(self, *, telemetry: dict[str, float | int | bool] | None) -> DemoFrame:
         return DemoFrame(
             look_dx=self.look_dx,
             look_dy=self.look_dy,
@@ -39,9 +68,23 @@ class _InputCommand:
             move_right=self.move_right,
             jump_pressed=self.jump_pressed,
             jump_held=self.jump_held,
-            crouch_held=self.crouch_held,
+            slide_pressed=self.slide_pressed,
             grapple_pressed=self.grapple_pressed,
             noclip_toggle_pressed=self.noclip_toggle_pressed,
+            key_w_held=self.key_w_held,
+            key_a_held=self.key_a_held,
+            key_s_held=self.key_s_held,
+            key_d_held=self.key_d_held,
+            arrow_up_held=self.arrow_up_held,
+            arrow_down_held=self.arrow_down_held,
+            arrow_left_held=self.arrow_left_held,
+            arrow_right_held=self.arrow_right_held,
+            mouse_left_held=self.mouse_left_held,
+            mouse_right_held=self.mouse_right_held,
+            raw_wasd_available=self.raw_wasd_available,
+            raw_arrows_available=self.raw_arrows_available,
+            raw_mouse_buttons_available=self.raw_mouse_buttons_available,
+            telemetry=(dict(telemetry) if isinstance(telemetry, dict) else None),
         )
 
     @classmethod
@@ -54,9 +97,22 @@ class _InputCommand:
             move_right=frame.move_right,
             jump_pressed=frame.jump_pressed,
             jump_held=frame.jump_held,
-            crouch_held=frame.crouch_held,
+            slide_pressed=frame.slide_pressed,
             grapple_pressed=frame.grapple_pressed,
             noclip_toggle_pressed=frame.noclip_toggle_pressed,
+            key_w_held=frame.key_w_held,
+            key_a_held=frame.key_a_held,
+            key_s_held=frame.key_s_held,
+            key_d_held=frame.key_d_held,
+            arrow_up_held=frame.arrow_up_held,
+            arrow_down_held=frame.arrow_down_held,
+            arrow_left_held=frame.arrow_left_held,
+            arrow_right_held=frame.arrow_right_held,
+            mouse_left_held=frame.mouse_left_held,
+            mouse_right_held=frame.mouse_right_held,
+            raw_wasd_available=frame.raw_wasd_available,
+            raw_arrows_available=frame.raw_arrows_available,
+            raw_mouse_buttons_available=frame.raw_mouse_buttons_available,
         )
 
 
@@ -132,15 +188,33 @@ def sample_live_input_command(host, *, menu_open: bool) -> _InputCommand:
     move_forward = 0
     move_right = 0
     jump_held = False
-    crouch_held = False
+    slide_down = False
     grapple_down = False
+    mouse_right_down = False
     noclip_toggle_down = False
     demo_save_down = False
+    key_w_held = False
+    key_a_held = False
+    key_s_held = False
+    key_d_held = False
+    arrow_up_held = False
+    arrow_down_held = False
+    arrow_left_held = False
+    arrow_right_held = False
     if not menu_open:
         move_forward, move_right = move_axes_from_keyboard(host)
+        key_w_held = is_key_down(host, "w") or is_key_down(host, "ц")
+        key_a_held = is_key_down(host, "a") or is_key_down(host, "ф")
+        key_s_held = is_key_down(host, "s") or is_key_down(host, "ы")
+        key_d_held = is_key_down(host, "d") or is_key_down(host, "в")
+        arrow_up_held = bool(host.mouseWatcherNode and host.mouseWatcherNode.isButtonDown(KeyboardButton.up()))
+        arrow_down_held = bool(host.mouseWatcherNode and host.mouseWatcherNode.isButtonDown(KeyboardButton.down()))
+        arrow_left_held = bool(host.mouseWatcherNode and host.mouseWatcherNode.isButtonDown(KeyboardButton.left()))
+        arrow_right_held = bool(host.mouseWatcherNode and host.mouseWatcherNode.isButtonDown(KeyboardButton.right()))
         jump_held = is_key_down(host, "space")
-        crouch_held = host._is_crouching()
+        slide_down = is_key_down(host, "shift")
         grapple_down = is_key_down(host, "mouse1")
+        mouse_right_down = is_key_down(host, "mouse3")
         noclip_toggle_down = is_key_down(host, host._noclip_toggle_key)
         demo_save_down = is_key_down(host, host._demo_save_key)
 
@@ -152,9 +226,23 @@ def sample_live_input_command(host, *, menu_open: bool) -> _InputCommand:
         move_right=move_right,
         jump_pressed=(not menu_open) and jump_held and (not host._prev_jump_down),
         jump_held=(not menu_open) and jump_held,
-        crouch_held=(not menu_open) and crouch_held,
+        # Slide is hold-based (press to engage, release to stop).
+        slide_pressed=(not menu_open) and slide_down,
         grapple_pressed=(not menu_open) and grapple_down and (not host._prev_grapple_down),
         noclip_toggle_pressed=(not menu_open) and noclip_toggle_down and (not host._prev_noclip_toggle_down),
+        key_w_held=(not menu_open) and key_w_held,
+        key_a_held=(not menu_open) and key_a_held,
+        key_s_held=(not menu_open) and key_s_held,
+        key_d_held=(not menu_open) and key_d_held,
+        arrow_up_held=(not menu_open) and arrow_up_held,
+        arrow_down_held=(not menu_open) and arrow_down_held,
+        arrow_left_held=(not menu_open) and arrow_left_held,
+        arrow_right_held=(not menu_open) and arrow_right_held,
+        mouse_left_held=(not menu_open) and grapple_down,
+        mouse_right_held=(not menu_open) and mouse_right_down,
+        raw_wasd_available=(not menu_open),
+        raw_arrows_available=(not menu_open),
+        raw_mouse_buttons_available=(not menu_open),
     )
 
     host._prev_jump_down = (not menu_open) and jump_held
@@ -198,4 +286,3 @@ __all__ = [
     "poll_mouse_look_delta",
     "sample_live_input_command",
 ]
-

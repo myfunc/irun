@@ -36,6 +36,10 @@ Default boot:
   - `assets/imported/halflife/valve/bounce/map.json` (directory bundle), or
   - `assets/imported/halflife/valve/bounce.irunmap` (packed bundle)
   exists.
+- The menu includes `Quick Start: Metropolis` if either:
+  - `assets/imported/source/community/ttt_metropolis/map.json` (directory bundle), or
+  - `assets/imported/source/community/ttt_metropolis.irunmap` (packed bundle)
+  exists.
 - You can still run a bundle directly via `--map`.
 
 Smoke run:
@@ -68,11 +72,13 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 
 ## Controls
 - `WASD`: move (US layout). On RU layout you can use `ЦФЫВ`. Arrow keys also work.
-- `C` (hold): crouch
+- `Shift` (hold): slide (low-profile hull; release to exit)
 - `Space`: jump
 - `R`: reset to spawn
 - `Esc`: opens the in-game menu (Resume / Map Selector / Key Bindings / Back to Main Menu / Quit); in the main menu it acts as back/quit
 - `Esc -> Replays`: open replay browser and load an input-demo file
+  - while replay playback is active, input is locked; press `R` to exit replay and respawn
+  - replay playback shows an input HUD (movement/jump/slide/mouse directions)
 - `` ` `` (tilde/backtick): opens the debug/admin tuning menu
 - `F`: save current demo recording (recording window starts on respawn and ends when saved)
 - `F4`: toggle the in-game console
@@ -139,12 +145,14 @@ Notes:
 - The value is horizontal speed, rounded down to an integer.
 - A classic Half-Life/CS-style center crosshair is shown during active gameplay (hidden in pause/debug/menu).
 - Detailed movement status (`speed/z-vel/grounded/wall`) is shown in the bottom-left corner during gameplay and hidden while the debug/admin panel is open.
+- Vault diagnostics are shown in the status line and `F2` overlay (`vault ok` / explicit reject reason) to debug ledge-vault failures quickly.
 - A health bar/chip is shown in the top-left corner (`HP`).
 - Input debug (F2) and the error console (F3) are shown as boxed overlays that avoid overlapping the HUD bars.
 
 ## Demos (Input Replay)
 - Ivan records input demos automatically from each spawn/respawn window.
-- A demo contains only per-tick input commands (look deltas, movement axes, action presses), not player positions.
+- A demo stores per-tick input commands (look deltas, movement axes, action presses) and replay telemetry
+  snapshots (position/velocity/speeds/camera angles/state/buttons) for feel tuning/diagnostics.
 - Press `F` to save the current demo to `apps/ivan/replays/` in this repository.
 - Replays can be loaded in-game from `Esc -> Replays`.
 - Replay playback re-simulates movement through the normal engine/controller path at fixed `60 Hz`.
@@ -163,29 +171,43 @@ Panel layout:
   - Saving a custom profile updates only that active profile in place.
 
 Numeric settings include normalized sliders + entry fields for precise tuning:
-- Gravity, jump height, ground/air acceleration target speeds
-- Ground acceleration, jump acceleration (bunnyhop/strafe), friction, air control
-- Air counter-strafe brake strength
-- Mouse sensitivity, crouch speed/height/camera
-- Wall jump boost + cooldown, vault jump/speed/ledge window, jump buffer time
-- Grapple hook range, attach boost, post-attach auto-shorten speed/time, rope pull strength, rope min/max length, rope thickness
-- Noclip fly speed
-- Surf acceleration / gravity scale / surfable slope-normal range (inspired by public CS surf server settings)
+- `max_ground_speed` (Vmax)
+- `run_t90`
+- `ground_stop_t90`
+- `air_speed_mult`
+- `air_gain_t90`
+- `wallrun_sink_t90`
+- `jump_height`
+- `jump_apex_time`
+- `grace_period`
+- `slide_stop_t90`
+- `vault_max_ledge_height`
+- `vault_forward_boost`
+- `player_half_height`
 
 Boolean toggles are shown inline as labeled rows with `ON/OFF` buttons:
-- Jump buffer
 - Autojump (hold jump to keep hopping)
-- Noclip
-- Surf
-- Wall jump
-- Wallrun (toggle only, prototype hook)
-- Vault (toggle only)
-- Crouch
-- Grapple hook
+- Coyote/buffer enable
+- Custom friction enable
+- Slide enable
+- Vault enable
+- Wallrun enable
+- Surf enable
+- Harness camera smoothing enable
+- Harness animation/root-motion enable
+- Character scale lock enable
 
 Movement notes:
-- Counter-strafe braking in air decelerates horizontal speed based on `air_counter_strafe_brake` without hidden hardcoded bonus deceleration.
-- Default `air_counter_strafe_brake` is `23.0`.
+- Air speed and bunnyhop gain are controlled by two invariants:
+  - `air_speed_mult` (`air_speed = max_ground_speed * air_speed_mult`)
+  - `air_gain_t90` (`air_accel = 0.9 / air_gain_t90`)
+- Slide feel is controlled by one independent invariant:
+  - `slide_stop_t90` (how slowly slide preserves carried ground speed while held)
+- Slide behavior:
+  - `Shift` is hold-based: press/hold to stay in slide, release to exit slide immediately.
+  - Slide does not apply an entry speed boost; it preserves existing horizontal speed and decays it using `slide_stop_t90`.
+  - Keyboard strafe input is ignored while sliding; heading is controlled by camera yaw (mouse look).
+  - Jump can be triggered while sliding and exits slide on takeoff.
 - Repeated wall-jumps are controlled by `wall_jump_cooldown` (default: `1.0s`).
 - Wall-jump is airborne-only: it cannot trigger while grounded, even if the player is touching a wall.
 - Autojump only queues while grounded; holding jump in fully airborne states will not trigger wall-jump retries.
@@ -193,8 +215,12 @@ Movement notes:
 - Clicking LMB while already attached detaches the grapple.
 - On grapple attach, a one-shot boost is applied toward the rope direction (`grapple_attach_boost`).
 - After attach, rope also auto-shortens for a short configurable window (`grapple_attach_shorten_speed`, `grapple_attach_shorten_time`) for a seamless pull-in feel.
-- Wallrun is lateral; vertical climb gain is capped.
-- `vault_enabled` is OFF by default. If enabled, pressing jump again near a ledge can trigger a vault: feet must be below ledge top, vault jump is higher than normal, and a small forward speed boost is applied.
+- Wallrun camera tilts away from the active wall side.
+- Wallrun vertical sink is timing-driven (`wallrun_sink_t90`) instead of direct velocity clamps.
+- `grace_period` is the shared leniency window used by jump buffering, coyote jump, and vault timing checks.
+- `vault_enabled` is ON by default. Pressing jump near a front-facing ledge can trigger a vault when the obstacle is above step height but not taller than character height; vault adds a small forward boost and upward impulse.
+- `player_half_height` can be changed from debug UI during feel iteration; eye height is auto-scaled from hull height to keep camera proportion stable.
+- `character_scale_lock_enabled` (optional) auto-derives `player_radius` and `step_height` from `player_half_height` while keeping core motion feel invariants unchanged.
 - Step risers are filtered out for wall-contact detection to reduce jitter and accidental wall-state hits on stairs/steps.
 - Surf prototype uses GoldSrc-like air movement on steep ramps: wish direction is projected to ramp plane, then normal air acceleration + collision clipping drive surf movement.
 - On surf ramps, acceleration follows the ramp-plane wish direction (not world-up injection), allowing controlled horizontal-to-vertical momentum transfer.
@@ -202,6 +228,7 @@ Movement notes:
 Lighting notes:
 - GoldSrc/Quake-style animated lightstyles are applied at `~10Hz` (server-like), not every render frame.
 - For performance on large maps, only surfaces that reference an actually-animated style pattern participate in lightstyle updates.
+- If a bundle references lightmap files that are missing on disk, affected faces fall back to base-texture rendering instead of turning fully black.
 - While surfing, horizontal momentum is redirected toward the ramp tangent each frame, enabling natural horizontal<->vertical speed exchange (inertia transfer) on slopes.
 - Surf steering against current momentum preserves carry: it redirects momentum along the ramp and limits per-tick scrub so speed is not hard-stopped.
 - Surf input acceleration contributes vertical velocity only for uphill redirection; downhill acceleration uses normal gravity.
@@ -272,6 +299,23 @@ python3 tools/pack_irunmap.py --input <bundle-dir> --output <bundle>.irunmap
 python -m ivan --map <bundle>.irunmap
 ```
 
+### Source VMF -> BSP -> Bundle
+Use this when you have Source `.vmf` sources and want one-step import into IVAN.
+
+```bash
+python3 tools/importers/source/import_source_vmf.py \
+  --vmf <path-to-map.vmf> \
+  --out <bundle-dir-or-map.json-or.irunmap> \
+  --materials-root <path-to-materials/> \
+  --game-root <optional-source-game-root> \
+  --scale 0.03
+```
+
+Notes:
+- Requires Source compilers (`vbsp`, `vvis`, `vrad`) available in `PATH` or via `--compile-bin` / `--vbsp` / `--vvis` / `--vrad`.
+- If `--game-root` is set, compile can resolve stock assets from that Source install while keeping map-local assets from the VMF folder.
+- The tool compiles in an isolated temporary game root and does not modify your game installation.
+
 ### GoldSrc/Xash3D BSP -> Bundle (WAD + resources)
 Example (Counter-Strike 1.6 / Xash3D style mod folder):
 ```bash
@@ -297,6 +341,28 @@ Notes:
   (step + slide with plane clipping) for stable wall/ceiling/slope handling.
 - The Source build step converts `materials/**/*.vtf` into PNG so Panda3D can load them.
 - Map bundles include per-triangle materials, UVs, and optional vertex colors (used as a baked lighting tint/fallback).
+
+### TrenchBroom `.map` -> GoldSrc BSP -> Bundle
+Use this when you author geometry in TrenchBroom (Half-Life / Valve220 map format) and want one command to compile
+and import into IVAN.
+
+```bash
+python3 tools/importers/goldsrc/import_trenchbroom_map.py \
+  --map <path-to-trenchbroom.map> \
+  --game-root <path-to-mod-root> \
+  --out <bundle>.irunmap \
+  --compile-bin <path-to-hlcsg-hlbsp-hlvis-hlrad> \
+  --scale 0.03
+python -m ivan --map <bundle>.irunmap
+```
+
+Notes:
+- In TrenchBroom, select `Half-Life (experimental)` and `Valve 220` map format for best compatibility with the GoldSrc compiler chain.
+- Requires GoldSrc compile tools (`hlcsg`, `hlbsp`, `hlvis`, `hlrad`) available in `PATH` or via `--compile-bin` / explicit `--hl*` args.
+- The importer auto-detects SDHLT-style tool names (`sdHLCSG`, `sdHLBSP`, `sdHLVIS`, `sdHLRAD`) and omits `-game` for those binaries.
+- The script runs compile stages, finds the produced BSP, then forwards it to `import_goldsrc_bsp.py`.
+- Use `--skip-hlvis` and/or `--skip-hlrad` for fast graybox iteration.
+- Use `--hlcsg-args`, `--hlbsp-args`, `--hlvis-args`, `--hlrad-args` to pass extra compiler flags (string values are shell-split).
 
 ### Per-Map Run Options (run.json)
 If a bundle directory contains `run.json`, IVAN will use it to control defaults for that map (mode/spawn/lighting).

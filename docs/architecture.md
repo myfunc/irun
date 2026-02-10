@@ -34,8 +34,19 @@ See: `docs/ui-kit.md`.
   - `apps/ivan/src/ivan/game/netcode.py`: client prediction/reconciliation + remote interpolation helpers
   - `apps/ivan/src/ivan/game/tuning_profiles.py`: tuning profile defaults + persistence helpers
   - `apps/ivan/src/ivan/game/input_system.py`: mouse/keyboard sampling + input command helpers
+  - `apps/ivan/src/ivan/game/feel_diagnostics.py`: rolling frame/tick diagnostics buffer and JSON dump utility for movement feel analysis
+  - `apps/ivan/src/ivan/game/determinism.py`: per-tick quantized state hashing + rolling determinism trace buffer
+- `apps/ivan/src/ivan/game/camera_observer.py`: read-only camera smoothing observer over solved simulation state
+  - Also smooths read-only camera roll targets (used for wallrun engagement tilt) without mutating simulation.
+- `apps/ivan/src/ivan/game/camera_tilt_observer.py`: read-only movement/wallrun camera tilt observer
+  - Computes gentle motion-relative tilt targets and smooths them with a snappy exponential response.
+  - Applies visual roll/pitch offsets only; simulation authority remains in movement solver/controller.
+- `apps/ivan/src/ivan/game/camera_height_observer.py`: read-only eye-height smoothing observer (slide/vault transitions)
+- `apps/ivan/src/ivan/game/camera_feedback_observer.py`: read-only movement feedback observer (speed FOV + unified event envelope for landing/bhop pulses)
+- `apps/ivan/src/ivan/game/animation_observer.py`: read-only visual offset observer (camera bob/root-motion layer)
   - `apps/ivan/src/ivan/game/menu_flow.py`: main menu controller + import worker glue
   - `apps/ivan/src/ivan/game/grapple_rope.py`: grapple rope rendering helper
+- `apps/ivan/src/ivan/game/feel_metrics.py`: rolling gameplay-feel telemetry (jump/landing/ground flicker/camera jerk proxies)
 - `apps/ivan/src/ivan/maps/map_parser.py`: Valve 220 `.map` file parser (TrenchBroom text format)
 - `apps/ivan/src/ivan/maps/brush_geometry.py`: CSG brush-to-triangle mesh conversion (half-plane clipping, UV projection, Phong normals)
 - `apps/ivan/src/ivan/maps/map_converter.py`: .map to internal map-bundle format converter (orchestrates parser + brush geometry + material defs)
@@ -43,15 +54,38 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/maps/catalog.py`: runtime catalog helpers for shipped bundles and GoldSrc-like map discovery (includes .map file discovery)
 - `apps/ivan/src/ivan/state.py`: small persistent user state (last launched map, last game dir/mod, tuning profiles + active profile snapshot, display/video settings)
 - `apps/ivan/src/ivan/world/scene.py`: Scene building, external map-bundle loading (`--map`), spawn point/yaw
+  - Includes an optional deterministic feel-harness scene (`--feel-harness`) with flat/slope/step/wall/ledge + moving-platform fixtures.
 - `apps/ivan/src/ivan/maps/steam.py`: Steam library scanning helpers (manual Half-Life auto-detect)
+- `apps/ivan/src/ivan/maps/goldsrc_compile.py`: GoldSrc compiler resolver/helpers (`hlcsg`/`hlbsp`/`hlvis`/`hlrad`) used by TrenchBroom import flow
 - `apps/ivan/src/ivan/physics/tuning.py`: Tunable movement/physics parameters (exposed via debug/admin UI)
-- `apps/ivan/src/ivan/physics/player_controller.py`: Kinematic character controller (Quake3-style step + slide)
+- `apps/ivan/src/ivan/physics/motion/`: Invariant-based motion configuration and solver layer
+  - `config.py`: designer invariants + derived runtime constants (`MotionConfig`)
+  - `solver.py`: authority for derived run/jump/gravity/ground-damping operations
+  - `intent.py`, `state.py`: motion pipeline contracts for staged refactor
+- `apps/ivan/src/ivan/physics/player_controller.py`: Kinematic character controller orchestration (intent -> mode -> solver -> collision)
+- `apps/ivan/src/ivan/physics/player_controller_actions.py`: Player action mixin (jump variants, vault, grapple, slide hull, friction)
+- `apps/ivan/src/ivan/physics/player_controller_surf.py`: Air/surf behavior mixin (air steer, surf redirect, wall/surf contact probes)
+- `apps/ivan/src/ivan/physics/player_controller_collision.py`: Collision and step-slide mixin (sweep, snap, graybox fallback)
 - `apps/ivan/src/ivan/physics/collision_world.py`: Bullet collision query world (convex sweeps against static geometry)
-- `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (CS-style grouped boxes, collapsible sections, scrollable content, normalized sliders, profile dropdown/save)
+- `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (CS-style grouped boxes, collapsible sections, scrollable content, real-unit sliders/entries, profile dropdown/save)
 - `apps/ivan/src/ivan/ui/main_menu.py`: main menu controller (bundle list + import flow + video settings)
 - `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game ESC menu (Resume/Map Selector/Key Bindings/Back/Quit) and keybinding controls
+  - Menu page uses a two-column action layout to keep all actions visible at gameplay resolutions.
+  - Includes a Feel Session tab with route radio options (`A/B/C`), replay export, and feedback-driven tuning tweaks.
+- `apps/ivan/src/ivan/ui/feel_capture_ui.py`: in-game quick capture popup (`G`) for route-tagged save/export/apply flow, including one-click `Revert Last` rollback
 - `apps/ivan/src/ivan/ui/replay_browser_ui.py`: in-game replay browser overlay (UI kit list menu)
+- `apps/ivan/src/ivan/ui/replay_input_ui.py`: in-game replay input HUD (UI kit panel) for recorded command visualization
+- `apps/ivan/src/ivan/console/autotune_bindings.py`: console command wiring for route-scoped autotune V1 (`autotune_suggest/apply/eval/rollback`)
 - `apps/ivan/src/ivan/replays/demo.py`: input-demo storage (record/save/load/list) using repository-local storage under `apps/ivan/replays/`
+- `apps/ivan/src/ivan/replays/telemetry.py`: replay telemetry export pipeline (CSV tick dump + JSON summary metrics)
+  - Export summary keeps append-only export metadata history per replay summary file (`route_tag`, optional `route_name`, `run_note`, `feedback_text`, `source_demo`).
+- `apps/ivan/src/ivan/replays/compare.py`: replay comparison pipeline
+  - route-aware compare path selects runs from exported telemetry summaries for the same route (instead of global latest raw replays)
+  - emits latest-vs-reference compare JSON, optional baseline compare JSON, and per-route history context JSON
+- `apps/ivan/src/ivan/game/feel_capture_flow.py`: gameplay-side orchestration for save/export/compare/apply actions (used by pause tab + `G` popup)
+- `apps/ivan/src/ivan/game/feel_feedback.py`: rule-based free-text feedback interpreter for tuning suggestions
+- `apps/ivan/src/ivan/game/autotune.py`: route-scoped autotune core (context load from compare/history, invariant-only bounded suggestions, guardrail evaluation)
+- `apps/ivan/src/ivan/game/tuning_backups.py`: tuning snapshot backup/restore helpers (safety rail for auto-apply/autotune iteration)
 - `apps/ivan/src/ivan/net/server.py`: authoritative multiplayer server loop (TCP bootstrap + UDP input/snapshots)
 - `apps/ivan/src/ivan/net/client.py`: multiplayer client transport for handshake/input send/snapshot poll
 - `apps/ivan/src/ivan/net/protocol.py`: multiplayer packet/message schema and payload codecs
@@ -60,6 +94,9 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/common/aabb.py`: Shared AABB type used for graybox fallback
 - `apps/ivan/tools/build_source_bsp_assets.py`: Source BSP -> IVAN map bundle (triangles + textures; VTF->PNG)
   - Extracts per-face Source lightmaps and basic VMT metadata (e.g. `$basetexture`, translucency hints) into `map.json`.
+- `apps/ivan/tools/importers/source/import_source_vmf.py`: Source VMF -> BSP -> IVAN bundle helper
+  - Uses Source compile tools (`vbsp`/`vvis`/`vrad`) to compile a VMF first, then invokes `build_source_bsp_assets.py`.
+  - Builds in an isolated temporary game root that links VMF-local assets and can optionally reference a real Source game root for fallback content.
 - `apps/ivan/tools/importers/goldsrc/import_goldsrc_bsp.py`: GoldSrc/Xash3D BSP -> IVAN map bundle (triangles + WAD textures + resource copy)
   - Notes: GoldSrc masked textures use `{` prefix; importer emits PNG alpha using palette/index rules and runtime enables binary transparency for those materials.
   - Notes: The importer extracts embedded BSP textures when present and falls back to scanning `--game-root` for `.wad` files if the BSP omits the worldspawn `wad` list.
@@ -72,12 +109,28 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/tools/testmap.py`: Quick-test launcher — runs `python -m ivan --map <file>` and watches the .map for changes (mtime polling), auto-restarting the game on save.
   - Supports `--bake` (ericw-tools pipeline), `--convert-only`, and `--no-watch` modes.
   - Attempts hot-reload via the console bridge (`map_reload` command) before falling back to kill + restart.
+- `apps/ivan/tools/importers/goldsrc/import_trenchbroom_map.py`: TrenchBroom Valve220 `.map` -> GoldSrc BSP compile (`hlcsg`/`hlbsp`/`hlvis`/`hlrad`) -> IVAN bundle helper
+  - Supports both classic `hl*` binaries and SDHLT `sdHL*` binaries (auto-handles toolchain CLI differences).
 
 ## Runtime
 - Start: `python -m ivan` (from `apps/ivan`)
 - Repo root helper: `./runapp ivan` (recommended for quick iteration)
 - The game loop is driven by Panda3D's task manager.
 - Movement simulation runs at a fixed `60 Hz` tick to support deterministic input replay.
+- Movement refactor rollout is staged:
+  - active movement tuning is invariant-first: run, stop damping, jump, air gain/cap, wallrun sink, and slide are derived from timing/target invariants
+  - `PlayerController` now uses `MotionSolver` for derived ground run, ground coasting damping, jump takeoff speed, air gain/cap, wallrun sink response, and gravity
+  - gameplay and authoritative server ticks now feed movement through `MotionIntent` (`step_with_intent`) instead of ad-hoc feature velocity calls
+  - slide invariant (`slide_stop_t90`) derives grounded slide speed decay; slide is hold-driven, preserves carried speed, and owns low-profile hull state while active
+  - shared leniency invariant (`grace_period`) drives jump buffer, coyote window, and vault grace checks from one slider, with runtime distance-derivation (`grace_distance = grace_period * Vmax`) for speed-aware grace timing
+  - optional character scale lock derives geometry-facing values (`player_radius`, `step_height`) from `player_half_height` while keeping motion feel invariants independent
+  - debug tuning UI is intentionally narrow: invariant-first controls plus harness isolation toggles (legacy direct scalars and niche sliders are hidden), with one explicit utility control for `noclip_speed`
+  - legacy direct run/gravity tuning fields are migrated to invariants and no longer part of active tuning schema
+  - legacy air gain scalars are migrated (`max_air_speed`, `jump_accel`, `air_control`, `air_counter_strafe_brake`) and removed from active tuning schema
+- Feel diagnostics:
+  - `F2` overlay now includes frame-time p95, sim steps per frame, motion state, accel, contacts, floor/wall normals, leniency timers, and determinism hash status.
+  - `F10` dumps the rolling 2-5 second diagnostics buffer to `apps/ivan/replays/telemetry_exports/*_feel_rolling.json`.
+  - `F11` dumps rolling determinism trace hashes to `apps/ivan/replays/telemetry_exports/*_det_trace.json`.
 - Multiplayer networking:
   - TCP bootstrap for join/session token assignment.
   - Bootstrap welcome includes server map reference (`map_json`) so connecting clients can auto-load matching content.
@@ -106,7 +159,24 @@ See: `docs/ui-kit.md`.
     - Env: `IRUN_IVAN_CONSOLE_PORT` (default `7779`).
     - Protocol: request `{"line":"echo hi","role":"client","origin":"mcp"}` -> response `{"ok":true,"out":["hi"]}`.
   - Dedicated server process also starts a localhost control bridge on `IRUN_IVAN_SERVER_CONSOLE_PORT` (default `39001`).
+  - Replay telemetry export commands are available in the client console:
+    - `replay_export_latest [out_dir]`
+    - `replay_export <replay_path> [out_dir]`
+    - `replay_compare_latest [out_dir] [route_tag]` (route-scoped exported-run compare when route is provided)
+    - `feel_feedback "<text>" [route_tag]`
+    - `tuning_backup [label]` (save current tuning snapshot to `~/.irun/ivan/tuning_backups/`)
+    - `tuning_restore [name_or_path]` (restore latest or chosen snapshot)
+    - `tuning_backups [limit]` (list recent backups)
+    - `autotune_suggest <route_tag> <feedback_text> [out_dir]` (route-scoped invariant-only proposal from compare/history context)
+    - `autotune_apply <route_tag> <feedback_text> [out_dir]` (backup-first apply of current route-scoped suggestion)
+    - `autotune_eval <route_tag> [out_dir]` (guardrail checks + weighted route score)
+    - `autotune_rollback [backup_ref]` (alias over backup restore flow; defaults to latest backup)
   - `ivan-mcp` runs an MCP stdio server (Python 3.9, no deps) that exposes a single tool: `console_exec`.
+- CLI telemetry export:
+  - `python -m ivan --export-latest-replay-telemetry [--replay-telemetry-out <dir>]` exports latest replay metrics and exits.
+  - `python -m ivan --compare-latest-replays [--replay-telemetry-out <dir>] [--replay-route-tag A]` auto-exports latest+previous and writes comparison JSON.
+  - `python -m ivan --verify-latest-replay-determinism [--determinism-runs N] [--replay-telemetry-out <dir>]` re-simulates latest replay offline multiple times and emits a determinism report JSON.
+  - `python -m ivan --verify-replay-determinism <path> [--determinism-runs N] [--replay-telemetry-out <dir>]` runs the same determinism check for a specific replay file.
 - Display/window:
   - Default: windowed 1280x720 on all platforms (Windows + macOS). Window is user-resizable.
   - Display settings (fullscreen, resolution) persist in `~/.irun/ivan/state.json` and are applied on startup.
@@ -114,10 +184,19 @@ See: `docs/ui-kit.md`.
 - In-game UI/input split:
   - `Esc` opens gameplay menu and unlocks cursor.
   - `` ` `` opens debug/admin tuning menu and unlocks cursor.
+  - `G` opens quick feel-capture popup during active gameplay (route/name/notes/feedback + save/export/apply + `Revert Last` buttons).
   - While either menu is open, gameplay input is blocked but simulation continues.
   - `Esc` menu can open a replay browser (`Replays`) to load saved input demos.
+  - `Esc` menu Feel Session tab can export current run telemetry and apply feedback-based tuning changes.
+  - Any feedback-driven apply path creates a pre-apply tuning backup snapshot for rollback safety.
+  - Apply-feedback flow auto-runs route-scoped compare (latest route run vs prior route run) and reports deltas.
+  - Route compare can also emit baseline + route-history context files for longer tuning sessions.
+  - Replay playback shows a dedicated replay input HUD and keeps gameplay/menu inputs locked until exit (`R`).
+  - Replay input HUD prefers explicitly recorded held states (`WASD`, arrows, mouse buttons) over derived movement axes.
+  - `F2` input debug overlay includes rolling gameplay-feel telemetry (for movement/camera tuning passes).
   - Gameplay movement step supports optional noclip mode, optional autojump queueing, surf behavior on configured slanted surfaces, and grapple-rope constraint movement.
   - Grapple targeting uses collision-world ray queries (`ray_closest`) from camera center.
+  - Camera feedback effects are read-only and isolated behind compact camera invariants (`camera_feedback_enabled`, `camera_base_fov`, `camera_speed_fov_max_add`, `camera_tilt_gain`, `camera_event_gain`).
 
 ## Rendering Notes
 - Baker (paused) shares Ivan's scene builder (`ivan.world.scene.WorldScene`) to keep map preview WYSIWYG.
@@ -126,9 +205,10 @@ See: `docs/ui-kit.md`.
   - Reason: imported GoldSrc maps commonly reference non-power-of-two textures; automatic rescaling breaks BSP UV mapping.
 - Coordinate system: IVAN uses Panda3D's default world axes (`X` right, `Y` forward, `Z` up). GoldSrc BSP imports keep the same axes and only apply a uniform scale.
 - Imported BSP bundles render with baked lightmaps (Source/GoldSrc) and disable dynamic scene lights for map geometry.
+- If a face references missing lightmap files at runtime, IVAN skips lightmap shading for that face and falls back to base-texture rendering (avoids full-black output for partial bundles).
 - Optional visibility culling:
   - GoldSrc bundles can use BSP PVS (VISIBILITY + leaf face lists) to avoid rendering world geometry behind walls.
-  - Currently disabled by default; can be toggled at runtime via debug setting `vis_culling_enabled`.
+  - Currently disabled by default; `vis_culling_enabled` is available in tuning/profile data (not in the compact invariant debug menu).
   - The runtime stores a derived cache next to the bundle as `visibility.goldsrc.json` (directory bundle) or next to the extracted cache (packed bundle).
 - Per-map run options can be stored in:
   - directory bundles: `<bundle>/run.json`

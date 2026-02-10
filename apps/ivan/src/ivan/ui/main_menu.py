@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import inspect
 from pathlib import Path
 import shutil
 
@@ -50,12 +51,21 @@ class MainMenuController:
 
         self._app_root = ivan_app_root()
         self._state = state or load_state()
+        menu_kwargs = {
+            "aspect2d": aspect2d,
+            "theme": theme,
+            "title": "IVAN",
+            "hint": "Click or Enter: choose | Scroll: navigate | Esc: back/quit",
+        }
+        # Keep compatibility with older installed irun_ui_kit builds that don't
+        # expose ListMenu(on_click=...).
+        try:
+            if "on_click" in inspect.signature(ListMenu.__init__).parameters:
+                menu_kwargs["on_click"] = self.on_enter
+        except Exception:
+            pass
         self._ui = ListMenu(
-            aspect2d=aspect2d,
-            theme=theme,
-            title="IVAN",
-            hint="Click or Enter: choose | Scroll: navigate | Esc: back/quit",
-            on_click=self.on_enter,
+            **menu_kwargs,
         )
 
         self._screen: str = "main"  # main | bundles | mods | maps | video
@@ -175,11 +185,17 @@ class MainMenuController:
             label = self._continue_label or self._continue_map_json
             items.append(ListMenuItem(f"Continue: {label}", enabled=self._continue_enabled))
 
-        # Quick start: Bounce if present.
+        # Quick starts: curated one-click bundles.
         bounce_dir = self._app_root / "assets" / "imported" / "halflife" / "valve" / "bounce" / "map.json"
         bounce_packed = self._app_root / "assets" / "imported" / "halflife" / "valve" / f"bounce{PACKED_BUNDLE_EXT}"
         bounce = bounce_dir if bounce_dir.exists() else bounce_packed
         items.append(ListMenuItem("Quick Start: Bounce", enabled=bounce.exists()))
+        metropolis_dir = self._app_root / "assets" / "imported" / "source" / "community" / "ttt_metropolis" / "map.json"
+        metropolis_packed = (
+            self._app_root / "assets" / "imported" / "source" / "community" / f"ttt_metropolis{PACKED_BUNDLE_EXT}"
+        )
+        metropolis = metropolis_dir if metropolis_dir.exists() else metropolis_packed
+        items.append(ListMenuItem("Quick Start: Metropolis", enabled=metropolis.exists()))
 
         items.append(ListMenuItem("Play Imported/Generated Map Bundle"))
         items.append(ListMenuItem("Import GoldSrc/Xash3D Map From Game Directory"))
@@ -242,6 +258,18 @@ class MainMenuController:
             return
 
         if idx == 1:
+            metropolis_dir = self._app_root / "assets" / "imported" / "source" / "community" / "ttt_metropolis" / "map.json"
+            metropolis_packed = (
+                self._app_root / "assets" / "imported" / "source" / "community" / f"ttt_metropolis{PACKED_BUNDLE_EXT}"
+            )
+            metropolis = metropolis_dir if metropolis_dir.exists() else metropolis_packed
+            if not metropolis.exists():
+                self._ui.set_status("Metropolis bundle not found under assets/imported/source/community/ttt_metropolis.")
+                return
+            self._on_start_map_json(str(metropolis), None)
+            return
+
+        if idx == 2:
             self._screen = "bundles"
             self._bundles = find_runnable_bundles(app_root=self._app_root)
             items = [ListMenuItem(b.label) for b in self._bundles]
@@ -251,7 +279,7 @@ class MainMenuController:
             self._ui.set_status(f"{len(items)} bundles found.")
             return
 
-        if idx == 2:
+        if idx == 3:
             if not self._game_root:
                 r = pick_directory(title="Select GoldSrc/Xash3D game directory")
                 if not r.ok or not r.path:
@@ -277,7 +305,7 @@ class MainMenuController:
             self._ui.set_status(f"{len(self._mods)} mods found.")
             return
 
-        if idx == 3:
+        if idx == 4:
             p = None
             try:
                 p = detect_steam_halflife_game_root()
@@ -293,7 +321,7 @@ class MainMenuController:
             self._ui.set_status("Auto-detected Steam Half-Life game directory.")
             return
 
-        if idx == 4:
+        if idx == 5:
             r = pick_directory(title="Select GoldSrc/Xash3D game directory")
             if not r.ok or not r.path:
                 self._ui.set_status(r.error or "Directory pick failed.")
@@ -305,12 +333,12 @@ class MainMenuController:
             self._ui.set_status("Game directory updated.")
             return
 
-        if idx == 5:
+        if idx == 6:
             self._screen = "video"
             self._refresh_video()
             return
 
-        if idx == 6:
+        if idx == 7:
             self._on_quit()
             return
 

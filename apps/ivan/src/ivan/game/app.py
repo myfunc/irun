@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 import errno
 import os
-import subprocess
 import sys
 import threading
 import time
@@ -12,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from direct.showbase.ShowBase import ShowBase
+from direct.showbase.ShowBaseGlobal import globalClock
 from direct.task import Task
 from panda3d.core import (
     ButtonHandle,
@@ -31,19 +31,20 @@ from ivan.console.control_server import ConsoleControlServer
 from ivan.console.core import CommandContext
 from ivan.console.ivan_bindings import build_client_console
 from ivan.console.line_bus import ThreadSafeLineBus
-from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, resolve_bundle_handle
+from ivan.maps.bundle_io import resolve_bundle_handle
 from ivan.maps.run_metadata import RunMetadata, load_run_metadata
 from ivan.modes.base import ModeContext
 from ivan.modes.loader import load_mode
 from ivan.net import EmbeddedHostServer, MultiplayerClient
 from ivan.physics.collision_world import CollisionWorld
+from ivan.physics.motion.intent import MotionIntent
 from ivan.physics.player_controller import PlayerController
 from ivan.physics.tuning import PhysicsTuning
-from ivan.paths import app_root as ivan_app_root
 from ivan.replays import (
     DemoFrame,
     DemoRecording,
     append_frame,
+    compare_latest_replays,
     list_replays,
     load_replay,
     new_recording,
@@ -56,16 +57,27 @@ from ivan.ui.error_console_ui import ErrorConsoleUI
 from ivan.ui.input_debug_ui import InputDebugUI
 from ivan.ui.main_menu import ImportRequest, MainMenuController
 from ivan.ui.pause_menu_ui import PauseMenuUI
+from ivan.ui.feel_capture_ui import FeelCaptureUI
 from ivan.ui.replay_browser_ui import ReplayBrowserUI, ReplayListItem
+from ivan.ui.replay_input_ui import ReplayInputUI
 from ivan.world.scene import WorldScene
 from irun_ui_kit.renderer import UIRenderer
 from irun_ui_kit.theme import Theme
 
+from . import feel_capture_flow as _feel_capture
 from . import grapple_rope as _grapple_rope
 from . import input_system as _input
 from . import menu_flow as _menu
 from . import netcode as _net
 from . import tuning_profiles as _profiles
+from .animation_observer import AnimationObserver
+from .camera_feedback_observer import CameraFeedbackObserver
+from .camera_height_observer import CameraHeightObserver
+from .camera_observer import CameraObserver
+from .camera_tilt_observer import CameraTiltObserver, motion_tilt_targets
+from .determinism import DeterminismTrace, deterministic_state_hash
+from .feel_metrics import FeelMetrics
+from .feel_diagnostics import RollingFeelDiagnostics
 from .hooks import EventHooks
 from .input_system import _InputCommand
 from .netcode import _NetPerfStats, _PredictedInput, _PredictedState, _RemotePlayerVisual
@@ -111,6 +123,7 @@ class RunnerDemo(ShowBase):
         self._debug_menu_open = False
         self._replay_browser_open = False
         self._console_open = False
+        self._feel_capture_open = False
         self._mode: str = "boot"  # boot | menu | game
         self._last_mouse: tuple[float, float] | None = None
         self._input_debug_until: float = 0.0
@@ -160,15 +173,35 @@ class RunnerDemo(ShowBase):
         self._net_reconcile_decay_hz: float = 22.0
         self._net_local_cam_shell_enabled: bool = True
         self._net_local_cam_smooth_hz: float = 28.0
-        self._net_local_cam_ready: bool = False
-        self._net_local_cam_pos = LVector3f(0, 0, 0)
-        self._net_local_cam_yaw: float = 0.0
-        self._net_local_cam_pitch: float = 0.0
         self._net_cfg_apply_pending_version: int = 0
         self._net_cfg_apply_sent_at: float = 0.0
         self._net_perf = _NetPerfStats()
         self._net_perf_last_publish: float = 0.0
         self._net_perf_text: str = ""
+        self._camera_observer = CameraObserver()
+        self._camera_tilt_observer = CameraTiltObserver()
+        self._camera_height_observer = CameraHeightObserver()
+        self._camera_feedback_observer = CameraFeedbackObserver()
+        self._animation_observer = AnimationObserver()
+        self._feel_metrics = FeelMetrics()
+        self._feel_diag = RollingFeelDiagnostics(tick_rate_hz=self._sim_tick_rate_hz)
+        self._det_trace = DeterminismTrace(tick_rate_hz=self._sim_tick_rate_hz)
+        self._det_trace_hash: str = "0" * 16
+        self._playback_last_frame: DemoFrame | None = None
+        self._playback_det_checked: int = 0
+        self._playback_det_mismatch: int = 0
+        self._cam_dbg_fov: float = float(self.tuning.camera_base_fov)
+        self._cam_dbg_target_fov: float = float(self.tuning.camera_base_fov)
+        self._cam_dbg_speed_ratio: float = 0.0
+        self._cam_dbg_speed_t: float = 0.0
+        self._cam_dbg_event_name: str = "none"
+        self._cam_dbg_event_quality: float = 0.0
+        self._cam_dbg_event_amp: float = 0.0
+        self._cam_dbg_event_blocked: str = "none"
+        self._feel_perf_text: str = "feel | collecting..."
+        self._physics_steps_this_frame: int = 0
+        self._last_sim_vel = LVector3f(0, 0, 0)
+        self._last_input_time: float = 0.0
         self._embedded_server: EmbeddedHostServer | None = None
         self._open_to_network: bool = False
         # If no explicit CLI connect target is provided, keep last used host/port for fast iteration.
@@ -235,11 +268,14 @@ class RunnerDemo(ShowBase):
             on_back_to_menu=self._back_to_menu,
             on_quit=self.userExit,
             on_open_replays=self._open_replay_browser,
+            on_open_feel_session=self._open_feel_session_menu,
             on_open_keybindings=self._open_keybindings_menu,
             on_rebind_noclip=self._start_rebind_noclip,
             on_toggle_open_network=self._on_toggle_open_network,
             on_connect_server=self._on_connect_server_from_menu,
             on_disconnect_server=self._on_disconnect_server_from_menu,
+            on_feel_export_latest=self._feel_export_latest,
+            on_feel_apply_feedback=self._feel_apply_feedback,
         )
         self.pause_ui.set_noclip_binding(self._noclip_toggle_key)
         self.pause_ui.set_open_to_network(self._open_to_network)
@@ -247,12 +283,35 @@ class RunnerDemo(ShowBase):
             host=self._runtime_connect_host or "127.0.0.1",
             port=int(self._runtime_connect_port),
         )
+        self.feel_capture_ui = FeelCaptureUI(
+            aspect2d=self.aspect2d,
+            theme=self.ui_theme,
+            on_export=lambda route_tag, route_name, run_note, feedback: self._feel_capture_submit(
+                route_tag=route_tag,
+                route_name=route_name,
+                run_note=run_note,
+                feedback_text=feedback,
+                apply_feedback=False,
+            ),
+            on_export_apply=lambda route_tag, route_name, run_note, feedback: self._feel_capture_submit(
+                route_tag=route_tag,
+                route_name=route_name,
+                run_note=run_note,
+                feedback_text=feedback,
+                apply_feedback=True,
+            ),
+            on_restore=self._feel_capture_restore_latest,
+            on_close=self._close_feel_capture,
+        )
+        self.feel_capture_ui.hide()
         self.replay_browser_ui = ReplayBrowserUI(
             aspect2d=self.aspect2d,
             theme=self.ui_theme,
             on_select=self._load_replay_from_path,
             on_close=self._close_replay_browser,
         )
+        self.replay_input_ui = ReplayInputUI(aspect2d=self.aspect2d, theme=self.ui_theme)
+        self.replay_input_ui.hide()
         self.console_ui = ConsoleUI(aspect2d=self.aspect2d, theme=self.ui_theme, on_submit=self._console_submit_line)
         self.input_debug = InputDebugUI(aspect2d=self.aspect2d, theme=self.ui_theme)
         self._setup_input()
@@ -272,9 +331,10 @@ class RunnerDemo(ShowBase):
 
         # Boot behavior:
         # - --map: run immediately (useful for fast iteration)
+        # - --feel-harness: boot directly into deterministic feel harness scene
         # - smoke: keep existing fast boot path (offscreen)
         # - otherwise: start in the main menu (can still Quick Start a bundled map)
-        if self.cfg.map_json or self.cfg.smoke:
+        if self.cfg.map_json or self.cfg.smoke or bool(self.cfg.feel_harness):
             self._start_game(map_json=self.cfg.map_json)
         else:
             self._enter_main_menu()
@@ -306,7 +366,7 @@ class RunnerDemo(ShowBase):
             props.setFullscreen(False)
             props.setSize(win_w, win_h)
         self.win.requestProperties(props)
-        self.camLens.setFov(96)
+        self.camLens.setFov(float(self.tuning.camera_base_fov))
         # Reduce near-plane clipping when hugging walls in first-person.
         self.camLens.setNearFar(0.03, 5000.0)
         if self._pointer_locked:
@@ -340,9 +400,12 @@ class RunnerDemo(ShowBase):
         self.accept("ascii`", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
         self.accept("grave", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
         self.accept("f4", lambda: self._safe_call("input.console", self._toggle_console))
+        self.accept("g", lambda: self._safe_call("input.feel_capture", self._toggle_feel_capture))
         self.accept("r", lambda: self._safe_call("input.respawn", self._on_respawn_pressed))
         self.accept("f2", self.input_debug.toggle)
         self.accept("f3", self.error_console.toggle)
+        self.accept("f10", lambda: self._safe_call("feel.dump", self._dump_feel_rolling_log))
+        self.accept("f11", lambda: self._safe_call("determinism.dump", self._dump_determinism_trace))
         self.accept("shift-f3", lambda: self._safe_call("errors.clear", self._clear_errors))
         self.accept("arrow_up", lambda: self._menu_nav_press(-1))
         self.accept("arrow_down", lambda: self._menu_nav_press(1))
@@ -470,8 +533,13 @@ class RunnerDemo(ShowBase):
         self._debug_menu_open = False
         self._replay_browser_open = False
         self._console_open = False
+        self._feel_capture_open = False
         self._awaiting_noclip_rebind = False
         self.pause_ui.hide()
+        try:
+            self.feel_capture_ui.hide()
+        except Exception:
+            pass
         self.replay_browser_ui.hide()
         self.ui.hide()
         try:
@@ -483,11 +551,19 @@ class RunnerDemo(ShowBase):
     def _open_pause_menu(self) -> None:
         if self._mode != "game":
             return
+        if self._playback_active:
+            self.ui.set_status("Replay lock: press R to exit replay.")
+            return
         self._pause_menu_open = True
         self._debug_menu_open = False
         self._replay_browser_open = False
         self._console_open = False
+        self._feel_capture_open = False
         self._awaiting_noclip_rebind = False
+        try:
+            self.feel_capture_ui.hide()
+        except Exception:
+            pass
         try:
             self.console_ui.hide()
         except Exception:
@@ -516,6 +592,9 @@ class RunnerDemo(ShowBase):
     def _toggle_debug_menu(self) -> None:
         if self._mode != "game":
             return
+        if self._playback_active:
+            self.ui.set_status("Replay lock: press R to exit replay.")
+            return
         if self._replay_browser_open:
             self._close_replay_browser()
             return
@@ -524,8 +603,13 @@ class RunnerDemo(ShowBase):
             self._pause_menu_open = False
             self._replay_browser_open = False
             self._console_open = False
+            self._feel_capture_open = False
             self.pause_ui.hide()
             self.replay_browser_ui.hide()
+            try:
+                self.feel_capture_ui.hide()
+            except Exception:
+                pass
             try:
                 self.console_ui.hide()
             except Exception:
@@ -534,7 +618,7 @@ class RunnerDemo(ShowBase):
             self._set_pointer_lock(False)
             return
         self.ui.hide()
-        if self._pause_menu_open or self._replay_browser_open:
+        if self._pause_menu_open or self._replay_browser_open or self._feel_capture_open:
             self.pause_ui.show()
             self._set_pointer_lock(False)
         else:
@@ -549,11 +633,17 @@ class RunnerDemo(ShowBase):
                 return
         if self._mode != "game":
             return
+        if self._playback_active:
+            self.ui.set_status("Replay lock: press R to exit replay.")
+            return
         if self._replay_browser_open:
             self._close_replay_browser()
             return
         if self._console_open:
             self._close_console()
+            return
+        if self._feel_capture_open:
+            self._close_feel_capture()
             return
         if self._debug_menu_open or self._pause_menu_open:
             self._close_all_game_menus()
@@ -562,6 +652,9 @@ class RunnerDemo(ShowBase):
 
     def _toggle_console(self) -> None:
         if self._mode != "game":
+            return
+        if self._playback_active:
+            self.ui.set_status("Replay lock: press R to exit replay.")
             return
         if self._console_open:
             self._close_console()
@@ -572,7 +665,7 @@ class RunnerDemo(ShowBase):
         if self._mode != "game":
             return
         # Keep console mutually exclusive with other in-game menus.
-        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open:
+        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._feel_capture_open:
             self._close_all_game_menus()
         self._console_open = True
         self.console_ui.show()
@@ -584,7 +677,7 @@ class RunnerDemo(ShowBase):
             self.console_ui.hide()
         except Exception:
             pass
-        if not (self._pause_menu_open or self._debug_menu_open or self._replay_browser_open):
+        if not (self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._feel_capture_open):
             self._set_pointer_lock(True)
 
     def _console_submit_line(self, line: str) -> list[str]:
@@ -597,10 +690,101 @@ class RunnerDemo(ShowBase):
         self.pause_ui.set_noclip_binding(self._noclip_toggle_key)
         self.pause_ui.set_keybind_status("")
 
+    def _open_feel_session_menu(self) -> None:
+        if self._mode != "game":
+            return
+        self.pause_ui.show_feel_session()
+        self.pause_ui.set_feel_status("Use G for run capture popup, or export/apply from this tab.")
+
+    def _toggle_feel_capture(self) -> None:
+        if self._mode != "game":
+            return
+        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open:
+            return
+        if self._feel_capture_open:
+            return
+        _feel_capture.open_feel_capture(self)
+
+    def _close_feel_capture(self) -> None:
+        _feel_capture.close_feel_capture(self)
+
+    def _feel_capture_submit(
+        self,
+        *,
+        route_tag: str,
+        route_name: str,
+        run_note: str,
+        feedback_text: str,
+        apply_feedback: bool,
+    ) -> None:
+        _feel_capture.submit_feel_capture_export(
+            self,
+            route_tag=route_tag,
+            route_name=route_name,
+            run_note=run_note,
+            feedback_text=feedback_text,
+            apply_feedback=apply_feedback,
+        )
+
+    def _feel_capture_restore_latest(self) -> None:
+        _feel_capture.restore_latest_tuning_backup(self)
+
+    def _feel_export_latest(self, route_tag: str, feedback_text: str) -> None:
+        _feel_capture.feel_export_latest(self, route_tag, feedback_text)
+
+    def _feel_compare_latest(self, route_tag: str) -> None:
+        tag = str(route_tag or "").strip()
+        try:
+            comp = compare_latest_replays(route_tag=tag or None)
+        except Exception as e:
+            msg = f"Feel compare failed: {e}"
+            self.pause_ui.set_feel_status(msg)
+            self.ui.set_status(msg)
+            return
+        msg = (
+            f"Compare complete: +{comp.improved_count} / -{comp.regressed_count} / ={comp.equal_count} "
+            f"({comp.comparison_path.name})"
+        )
+        self.pause_ui.set_feel_status(msg)
+        self.ui.set_status(msg)
+
+    def _dump_feel_rolling_log(self) -> None:
+        stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime(time.time()))
+        out_dir = Path(__file__).resolve().parents[3] / "replays" / "telemetry_exports"
+        out = out_dir / f"{stamp}_feel_rolling.json"
+        try:
+            self._feel_diag.dump_json(out_path=out)
+        except Exception as e:
+            self.ui.set_status(f"Feel log dump failed: {e}")
+            return
+        self.ui.set_status(f"Feel log dumped: {out.name}")
+
+    def _dump_determinism_trace(self) -> None:
+        stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime(time.time()))
+        out_dir = Path(__file__).resolve().parents[3] / "replays" / "telemetry_exports"
+        out = out_dir / f"{stamp}_det_trace.json"
+        try:
+            self._det_trace.dump_json(out_path=out)
+        except Exception as e:
+            self.ui.set_status(f"Determinism dump failed: {e}")
+            return
+        self.ui.set_status(f"Determinism trace dumped: {out.name}")
+
+    def _feel_apply_feedback(self, route_tag: str, feedback_text: str) -> None:
+        _feel_capture.feel_apply_feedback(self, route_tag, feedback_text)
+
     def _open_replay_browser(self) -> None:
         if self._mode != "game":
             return
+        if self._playback_active:
+            self.ui.set_status("Replay lock: press R to exit replay.")
+            return
         self._console_open = False
+        self._feel_capture_open = False
+        try:
+            self.feel_capture_ui.hide()
+        except Exception:
+            pass
         try:
             self.console_ui.hide()
         except Exception:
@@ -638,12 +822,21 @@ class RunnerDemo(ShowBase):
         self._playback_index = 0
         self._playback_active = True
         self._playback_look_scale = max(1, int(rec.metadata.look_scale))
+        self._playback_last_frame = None
+        self._playback_det_checked = 0
+        self._playback_det_mismatch = 0
         self._active_recording = None
         self.replay_browser_ui.hide()
         self._replay_browser_open = False
         self.pause_ui.hide()
         self._pause_menu_open = False
+        self._feel_capture_open = False
+        try:
+            self.feel_capture_ui.hide()
+        except Exception:
+            pass
         self._set_pointer_lock(True)
+        self.replay_input_ui.show()
 
         if self.scene is not None and rec.metadata.map_id != self.scene.map_id:
             # If map differs and replay points to a known map path, reload the scene first.
@@ -651,6 +844,25 @@ class RunnerDemo(ShowBase):
                 self._start_game(map_json=rec.metadata.map_json, lighting=None)
                 return
         self._do_respawn(from_mode=True)
+
+    def _stop_replay_playback(self, *, reason: str) -> None:
+        was_active = bool(self._playback_active)
+        self._playback_active = False
+        self._playback_frames = None
+        self._playback_index = 0
+        self._playback_look_scale = self._look_input_scale
+        self._playback_last_frame = None
+        self._mouse_dx_accum = 0.0
+        self._mouse_dy_accum = 0.0
+        self._last_mouse = None
+        self.replay_input_ui.hide()
+        if was_active and reason:
+            if self._playback_det_checked > 0:
+                self.ui.set_status(
+                    f"{reason} | determinism: checked={self._playback_det_checked} mismatches={self._playback_det_mismatch}"
+                )
+            else:
+                self.ui.set_status(str(reason))
 
     def _start_new_demo_recording(self) -> None:
         if self.scene is None:
@@ -668,15 +880,16 @@ class RunnerDemo(ShowBase):
         )
         self.ui.set_status(f"Recording demo: {self._active_recording.metadata.demo_name}")
 
-    def _save_current_demo(self) -> None:
+    def _save_current_demo(self) -> Path | None:
         if self._active_recording is None:
             self.ui.set_status("No active demo recording.")
-            return
+            return None
         if not self._active_recording.frames:
             self.ui.set_status("Demo not saved (empty recording).")
-            return
+            return None
         out = save_recording(self._active_recording)
         self.ui.set_status(f"Demo saved: {out.name} ({len(self._active_recording.frames)} ticks)")
+        return out
 
     def _start_rebind_noclip(self) -> None:
         if self._mode != "game":
@@ -740,6 +953,9 @@ class RunnerDemo(ShowBase):
             self._mode = "game"
             self._pause_menu_open = False
             self._debug_menu_open = False
+            self._replay_browser_open = False
+            self._console_open = False
+            self._feel_capture_open = False
             self._awaiting_noclip_rebind = False
             self._pointer_locked = True
             self._last_mouse = None
@@ -749,6 +965,10 @@ class RunnerDemo(ShowBase):
             self.ui.set_crosshair_visible(True)
             self.ui.hide()
             self.pause_ui.hide()
+            try:
+                self.feel_capture_ui.hide()
+            except Exception:
+                pass
             if not self.cfg.smoke:
                 self._center_mouse()
                 # Show input debug briefly after loading a map (useful when mouse/keyboard seem dead).
@@ -769,6 +989,7 @@ class RunnerDemo(ShowBase):
             lighting_cfg = lighting if isinstance(lighting, dict) else run_meta.lighting
             cfg = RunConfig(
                 smoke=self.cfg.smoke,
+                feel_harness=bool(self.cfg.feel_harness),
                 map_json=cfg_map_json,
                 hl_root=self.cfg.hl_root,
                 hl_mod=self.cfg.hl_mod,
@@ -794,6 +1015,7 @@ class RunnerDemo(ShowBase):
                 player_half_height=float(self.tuning.player_half_height),
                 render=self.world_root,
             )
+            self.scene.set_collision_updater(self.collision.update_graybox_block)
 
             self.player = PlayerController(
                 tuning=self.tuning,
@@ -802,6 +1024,9 @@ class RunnerDemo(ShowBase):
                 collision=self.collision,
             )
             self._local_hp = 100
+            self._camera_tilt_observer.reset()
+            self._camera_height_observer.reset()
+            self._camera_feedback_observer.reset()
             self._sim_state_ready = False
             self._push_sim_snapshot()
             self._render_interpolated_state(alpha=1.0)
@@ -954,8 +1179,11 @@ class RunnerDemo(ShowBase):
         if self.player is not None:
             player_pos = LVector3f(self.player.pos)
             eye_height = float(self.tuning.player_eye_height)
-            if self.player.crouched and bool(self.tuning.crouch_enabled):
-                eye_height = min(eye_height, float(self.tuning.crouch_eye_height))
+            if self.player.is_sliding():
+                eye_height = min(
+                    eye_height,
+                    eye_height * max(0.40, min(1.0, float(self.tuning.slide_eye_height_mult))),
+                )
             cam_pos = LVector3f(player_pos.x, player_pos.y, player_pos.z + eye_height)
         return (player_pos, cam_pos, float(self._yaw), float(self._pitch))
 
@@ -989,26 +1217,113 @@ class RunnerDemo(ShowBase):
         c = self._lerp_vec(self._sim_prev_cam_pos, self._sim_curr_cam_pos, a)
         y = self._lerp_angle_deg(self._sim_prev_yaw, self._sim_curr_yaw, a)
         pi = self._lerp_angle_deg(self._sim_prev_pitch, self._sim_curr_pitch, a)
+        target_eye_offset_z = float(c.z - p.z)
+        smoothed_eye_offset_z = self._camera_height_observer.observe(
+            dt=float(frame_dt),
+            target_offset_z=float(target_eye_offset_z),
+            enabled=bool(self.tuning.harness_camera_smoothing_enabled),
+        )
+        c.z = float(p.z) + float(smoothed_eye_offset_z)
+        if not bool(self.tuning.harness_camera_smoothing_enabled):
+            c = LVector3f(self._sim_curr_cam_pos)
+            y = float(self._sim_curr_yaw)
+            pi = float(self._sim_curr_pitch)
         if self._net_connected:
             p += self._net_reconcile_pos_offset
         self.player_node.setPos(p)
-        if self._net_connected and self._net_local_cam_shell_enabled:
-            if not self._net_local_cam_ready:
-                self._net_local_cam_pos = LVector3f(c)
-                self._net_local_cam_yaw = float(y)
-                self._net_local_cam_pitch = float(pi)
-                self._net_local_cam_ready = True
-            else:
-                dt = max(0.0, float(frame_dt))
-                blend = 1.0 - math.exp(-max(0.0, float(self._net_local_cam_smooth_hz)) * dt) if dt > 0.0 else 1.0
-                self._net_local_cam_pos = self._lerp_vec(self._net_local_cam_pos, c, blend)
-                self._net_local_cam_yaw = self._lerp_angle_deg(self._net_local_cam_yaw, y, blend)
-                self._net_local_cam_pitch = self._lerp_angle_deg(self._net_local_cam_pitch, pi, blend)
-            self.camera.setPos(self._net_local_cam_pos)
-            self.camera.setHpr(self._net_local_cam_yaw, self._net_local_cam_pitch, 0)
-            return
-        self.camera.setPos(c)
-        self.camera.setHpr(y, pi, 0)
+        use_shell = self._net_connected and self._net_local_cam_shell_enabled and bool(self.tuning.harness_camera_smoothing_enabled)
+        wallrun_roll = 0.0
+        move_roll = 0.0
+        move_pitch = 0.0
+        vault_pitch = 0.0
+        if self.player is not None:
+            if self.player.is_wallrunning():
+                wallrun_roll = float(self.player.wallrun_camera_roll_deg(yaw_deg=float(y)))
+            vault_pitch = float(self.player.vault_camera_pitch_deg())
+            move_tilt = motion_tilt_targets(
+                vel=LVector3f(self.player.vel),
+                yaw_deg=float(y),
+                reference_speed=max(1.0, float(self.tuning.max_ground_speed)),
+            )
+            move_roll = float(move_tilt.roll)
+            move_pitch = float(move_tilt.pitch)
+        if abs(wallrun_roll) > 0.01:
+            # Keep wallrun indication dominant; movement tilt remains subtle while on-wall.
+            move_roll *= 0.35
+            move_pitch *= 0.50
+        tilt_gain = max(0.0, float(self.tuning.camera_tilt_gain))
+        target_roll = float((wallrun_roll + move_roll) * tilt_gain)
+        target_pitch = float((move_pitch + vault_pitch) * tilt_gain)
+        tilt_pose = self._camera_tilt_observer.observe(
+            dt=float(frame_dt),
+            target_roll=float(target_roll),
+            target_pitch=float(target_pitch),
+            enabled=bool(self.tuning.harness_camera_smoothing_enabled),
+            roll_base_hz=16.0,
+            roll_boost_hz_per_deg=2.1,
+            pitch_base_hz=11.0,
+            pitch_boost_hz_per_deg=1.1,
+        )
+        if use_shell:
+            pose = self._camera_observer.observe(
+                target_pos=LVector3f(c),
+                target_yaw=float(y),
+                target_pitch=float(pi),
+                dt=float(frame_dt),
+                smoothing_enabled=True,
+                smoothing_hz=float(self._net_local_cam_smooth_hz),
+                target_roll=0.0,
+            )
+            cam_pos = LVector3f(pose.pos)
+            cam_yaw = float(pose.yaw)
+            cam_pitch = float(pose.pitch) + float(tilt_pose.pitch)
+            cam_roll = float(tilt_pose.roll)
+        else:
+            self._camera_observer.reset()
+            cam_pos = LVector3f(c)
+            cam_yaw = float(y)
+            cam_pitch = float(pi) + float(tilt_pose.pitch)
+            cam_roll = float(tilt_pose.roll)
+
+        hspeed = 0.0
+        if self.player is not None:
+            hspeed = math.sqrt(float(self.player.vel.x) ** 2 + float(self.player.vel.y) ** 2)
+        feedback_pose = self._camera_feedback_observer.observe(
+            dt=float(frame_dt),
+            horizontal_speed=float(hspeed),
+            max_ground_speed=max(0.1, float(self.tuning.max_ground_speed)),
+            enabled=bool(self.tuning.camera_feedback_enabled),
+            base_fov_deg=float(self.tuning.camera_base_fov),
+            speed_fov_max_add_deg=float(self.tuning.camera_speed_fov_max_add),
+            event_gain=float(self.tuning.camera_event_gain),
+        )
+        self._cam_dbg_fov = float(feedback_pose.fov_deg)
+        self._cam_dbg_target_fov = float(feedback_pose.target_fov_deg)
+        self._cam_dbg_speed_ratio = float(feedback_pose.speed_ratio)
+        self._cam_dbg_speed_t = float(feedback_pose.speed_t)
+        self._cam_dbg_event_name = str(feedback_pose.event_name)
+        self._cam_dbg_event_quality = float(feedback_pose.event_quality)
+        self._cam_dbg_event_amp = float(feedback_pose.event_applied_amp)
+        self._cam_dbg_event_blocked = str(feedback_pose.event_blocked_reason)
+        cam_pitch += float(feedback_pose.pitch_deg)
+        cam_roll += float(feedback_pose.roll_deg)
+        try:
+            self.camLens.setFov(float(feedback_pose.fov_deg))
+        except Exception:
+            pass
+        cam_pos.z += self._animation_observer.camera_bob_offset_z(
+            enabled=bool(self.tuning.harness_animation_root_motion_enabled),
+            time_s=float(globalClock.getFrameTime()),
+            horizontal_speed=float(hspeed),
+        )
+        self.camera.setPos(cam_pos)
+        self.camera.setHpr(cam_yaw, cam_pitch, cam_roll)
+        self._feel_metrics.record_camera_sample(
+            pos=cam_pos,
+            yaw=float(cam_yaw),
+            pitch=float(cam_pitch),
+            dt=max(1e-6, float(frame_dt)),
+        )
 
     def _connect_multiplayer_if_requested(self) -> None:
         self._disconnect_multiplayer()
@@ -1066,7 +1381,10 @@ class RunnerDemo(ShowBase):
             self._net_reconcile_pos_offset = LVector3f(0, 0, 0)
             self._net_reconcile_yaw_offset = 0.0
             self._net_reconcile_pitch_offset = 0.0
-            self._net_local_cam_ready = False
+            self._camera_observer.reset()
+            self._camera_tilt_observer.reset()
+            self._camera_height_observer.reset()
+            self._camera_feedback_observer.reset()
             self._net_cfg_apply_pending_version = 0
             self._net_cfg_apply_sent_at = 0.0
             self._net_perf.reset()
@@ -1192,11 +1510,11 @@ class RunnerDemo(ShowBase):
 
     def _sample_replay_input_command(self) -> _InputCommand:
         if not self._playback_frames or self._playback_index >= len(self._playback_frames):
-            self._playback_active = False
-            self.ui.set_status("Replay finished.")
+            self._stop_replay_playback(reason="Replay finished.")
             return _InputCommand()
         frame = self._playback_frames[self._playback_index]
         self._playback_index += 1
+        self._playback_last_frame = frame
         return _InputCommand.from_demo_frame(frame, look_scale=self._playback_look_scale)
 
     def _simulate_input_tick(
@@ -1210,6 +1528,31 @@ class RunnerDemo(ShowBase):
     ) -> None:
         if self.player is None or self.scene is None:
             return
+        pre_grounded = bool(self.player.grounded)
+        pre_vel = LVector3f(self.player.vel)
+        if self._playback_active:
+            self.replay_input_ui.set_input(
+                move_forward=int(cmd.move_forward),
+                move_right=int(cmd.move_right),
+                jump_pressed=bool(cmd.jump_pressed),
+                jump_held=bool(cmd.jump_held),
+                slide_held=bool(cmd.slide_pressed),
+                look_dx=int(cmd.look_dx),
+                look_dy=int(cmd.look_dy),
+                key_w_held=bool(cmd.key_w_held),
+                key_a_held=bool(cmd.key_a_held),
+                key_s_held=bool(cmd.key_s_held),
+                key_d_held=bool(cmd.key_d_held),
+                arrow_up_held=bool(cmd.arrow_up_held),
+                arrow_down_held=bool(cmd.arrow_down_held),
+                arrow_left_held=bool(cmd.arrow_left_held),
+                arrow_right_held=bool(cmd.arrow_right_held),
+                mouse_left_held=bool(cmd.mouse_left_held),
+                mouse_right_held=bool(cmd.mouse_right_held),
+                raw_wasd_available=bool(cmd.raw_wasd_available),
+                raw_arrows_available=bool(cmd.raw_arrows_available),
+                raw_mouse_buttons_available=bool(cmd.raw_mouse_buttons_available),
+            )
 
         self._apply_look_delta(
             dx=cmd.look_dx,
@@ -1222,31 +1565,122 @@ class RunnerDemo(ShowBase):
             self._toggle_noclip()
         if cmd.grapple_pressed:
             self._on_grapple_primary_down()
-        if cmd.jump_pressed:
-            self.player.queue_jump()
 
         wish = self._wish_direction_from_axes(move_forward=cmd.move_forward, move_right=cmd.move_right)
-        crouching = bool(cmd.crouch_held)
+        jump_requested = bool(cmd.jump_pressed)
+        if (
+            int(cmd.move_forward) != 0
+            or int(cmd.move_right) != 0
+            or bool(cmd.jump_pressed)
+            or bool(cmd.jump_held)
+            or bool(cmd.slide_pressed)
+            or bool(cmd.grapple_pressed)
+            or int(cmd.look_dx) != 0
+            or int(cmd.look_dy) != 0
+        ):
+            self._last_input_time = float(globalClock.getFrameTime())
 
         if self.tuning.autojump_enabled and cmd.jump_held and self.player.grounded:
             # Autojump is for chained grounded hops; don't feed airborne wall-jump retries.
-            self.player.queue_jump()
+            jump_requested = True
 
         if self.tuning.noclip_enabled:
-            self._step_noclip(dt=self._sim_fixed_dt, wish_dir=wish, jump_held=bool(cmd.jump_held), crouching=crouching)
+            self._step_noclip(
+                dt=self._sim_fixed_dt,
+                move_forward=int(cmd.move_forward),
+                move_right=int(cmd.move_right),
+                jump_held=bool(cmd.jump_held),
+                slide_pressed=bool(cmd.slide_pressed),
+            )
         else:
             if not bool(self.tuning.grapple_enabled):
                 self.player.detach_grapple()
-            self.player.step(dt=self._sim_fixed_dt, wish_dir=wish, yaw_deg=self._yaw, crouching=crouching)
+            self.player.step_with_intent(
+                dt=self._sim_fixed_dt,
+                intent=MotionIntent(
+                    wish_dir=LVector3f(wish),
+                    jump_requested=bool(jump_requested),
+                    slide_requested=bool(cmd.slide_pressed),
+                ),
+                yaw_deg=self._yaw,
+                pitch_deg=self._pitch,
+            )
 
         if self.scene is not None and self.player.pos.z < float(self.scene.kill_z):
             self._do_respawn(from_mode=True)
+
+        if not bool(self.tuning.noclip_enabled):
+            self._camera_feedback_observer.record_sim_tick(
+                now=float(globalClock.getFrameTime()),
+                jump_pressed=bool(cmd.jump_pressed),
+                jump_held=bool(cmd.jump_held),
+                autojump_enabled=bool(self.tuning.autojump_enabled),
+                grace_period=float(self.tuning.grace_period),
+                max_ground_speed=float(self.tuning.max_ground_speed),
+                pre_grounded=bool(pre_grounded),
+                post_grounded=bool(self.player.grounded),
+                pre_vel=LVector3f(pre_vel),
+                post_vel=LVector3f(self.player.vel),
+            )
+
+        self._feel_metrics.record_tick(
+            now=float(globalClock.getFrameTime()),
+            dt=float(self._sim_fixed_dt),
+            jump_pressed=bool(cmd.jump_pressed),
+            pre_grounded=pre_grounded,
+            post_grounded=bool(self.player.grounded),
+            pre_vel=pre_vel,
+            post_vel=LVector3f(self.player.vel),
+        )
+        now_tick = float(globalClock.getFrameTime())
+        accel = (LVector3f(self.player.vel) - LVector3f(self._last_sim_vel)) / max(1e-6, float(self._sim_fixed_dt))
+        self._last_sim_vel = LVector3f(self.player.vel)
+        self._feel_diag.record_tick(
+            t=now_tick,
+            state=self.player.motion_state_name(),
+            pos=LVector3f(self.player.pos),
+            vel=LVector3f(self.player.vel),
+            accel=LVector3f(accel),
+            contact_count=self.player.contact_count(),
+            floor_normal=self.player.ground_normal(),
+            wall_normal=self.player.wall_normal(),
+            jump_buffer_left=self.player.jump_buffer_left(),
+            coyote_left=self.player.coyote_left(),
+            last_input_age=max(0.0, now_tick - float(self._last_input_time)),
+            inp_mf=int(cmd.move_forward),
+            inp_mr=int(cmd.move_right),
+            inp_jp=bool(cmd.jump_pressed),
+            inp_jh=bool(cmd.jump_held),
+            inp_sp=bool(cmd.slide_pressed),
+        )
+        tick_hash = deterministic_state_hash(
+            pos=LVector3f(self.player.pos),
+            vel=LVector3f(self.player.vel),
+            yaw_deg=float(self._yaw),
+            pitch_deg=float(self._pitch),
+            grounded=bool(self.player.grounded),
+            state=self.player.motion_state_name(),
+            contact_count=self.player.contact_count(),
+            jump_buffer_left=self.player.jump_buffer_left(),
+            coyote_left=self.player.coyote_left(),
+        )
+        self._det_trace_hash = self._det_trace.record(t=now_tick, tick_hash=tick_hash)
+        if self._playback_active and self._playback_last_frame is not None:
+            tm = self._playback_last_frame.telemetry if isinstance(self._playback_last_frame.telemetry, dict) else None
+            exp_hash = str(tm.get("det_h") or "") if tm else ""
+            if exp_hash:
+                self._playback_det_checked += 1
+                if exp_hash != tick_hash:
+                    self._playback_det_mismatch += 1
 
         if capture_snapshot:
             self._push_sim_snapshot()
 
         if record_demo and self._active_recording is not None and not self._playback_active:
-            append_frame(self._active_recording, cmd.to_demo_frame())
+            append_frame(
+                self._active_recording,
+                cmd.to_demo_frame_with_telemetry(telemetry=self._capture_demo_telemetry(cmd=cmd)),
+            )
         if network_send and self._net_connected and self._net_client is not None and not self._playback_active:
             self._net_seq_counter += 1
             seq = int(self._net_seq_counter)
@@ -1263,20 +1697,10 @@ class RunnerDemo(ShowBase):
                     "mr": int(cmd.move_right),
                     "jp": bool(cmd.jump_pressed),
                     "jh": bool(cmd.jump_held),
-                    "ch": bool(cmd.crouch_held),
+                    "sp": bool(cmd.slide_pressed),
                     "gp": bool(cmd.grapple_pressed),
                 },
             )
-
-    def _queue_jump(self) -> None:
-        if (
-            self.player is not None
-            and self._mode == "game"
-            and not self._pause_menu_open
-            and not self._debug_menu_open
-            and not self._console_open
-        ):
-            self.player.queue_jump()
 
     def _on_grapple_primary_down(self) -> None:
         if (
@@ -1305,6 +1729,109 @@ class RunnerDemo(ShowBase):
         if out.lengthSquared() > 1e-12:
             out.normalize()
         return out
+
+    def _capture_demo_telemetry(self, *, cmd: _InputCommand) -> dict[str, float | int | bool]:
+        """
+        Capture per-tick telemetry for feel tuning.
+
+        Replay still re-simulates from input commands only; telemetry is diagnostic.
+        """
+
+        if self.player is None:
+            det_h = deterministic_state_hash(
+                pos=LVector3f(0, 0, 0),
+                vel=LVector3f(0, 0, 0),
+                yaw_deg=float(self._yaw),
+                pitch_deg=float(self._pitch),
+                grounded=False,
+                state="none",
+                contact_count=0,
+                jump_buffer_left=0.0,
+                coyote_left=0.0,
+            )
+            return {
+                "t": float(globalClock.getFrameTime()),
+                "yaw": float(self._yaw),
+                "pitch": float(self._pitch),
+                "det_h": str(det_h),
+                "inp_jp": bool(cmd.jump_pressed),
+                "inp_jh": bool(cmd.jump_held),
+                "inp_sp": bool(cmd.slide_pressed),
+                "inp_gp": bool(cmd.grapple_pressed),
+                "inp_nt": bool(cmd.noclip_toggle_pressed),
+                "inp_mf": int(cmd.move_forward),
+                "inp_mr": int(cmd.move_right),
+                "inp_kw": bool(cmd.key_w_held),
+                "inp_ka": bool(cmd.key_a_held),
+                "inp_ks": bool(cmd.key_s_held),
+                "inp_kd": bool(cmd.key_d_held),
+                "inp_au": bool(cmd.arrow_up_held),
+                "inp_ad": bool(cmd.arrow_down_held),
+                "inp_al": bool(cmd.arrow_left_held),
+                "inp_ar": bool(cmd.arrow_right_held),
+                "inp_m1": bool(cmd.mouse_left_held),
+                "inp_m2": bool(cmd.mouse_right_held),
+            }
+
+        pos = self.player.pos
+        vel = self.player.vel
+        hspeed = math.sqrt(float(vel.x) * float(vel.x) + float(vel.y) * float(vel.y))
+        speed = math.sqrt(float(vel.x) * float(vel.x) + float(vel.y) * float(vel.y) + float(vel.z) * float(vel.z))
+        eye_height = float(self.tuning.player_eye_height)
+        if self.player.is_sliding():
+            eye_height = min(
+                eye_height,
+                eye_height * max(0.40, min(1.0, float(self.tuning.slide_eye_height_mult))),
+            )
+        det_h = deterministic_state_hash(
+            pos=LVector3f(pos),
+            vel=LVector3f(vel),
+            yaw_deg=float(self._yaw),
+            pitch_deg=float(self._pitch),
+            grounded=bool(self.player.grounded),
+            state=self.player.motion_state_name(),
+            contact_count=self.player.contact_count(),
+            jump_buffer_left=self.player.jump_buffer_left(),
+            coyote_left=self.player.coyote_left(),
+        )
+        return {
+            "t": float(globalClock.getFrameTime()),
+            "x": float(pos.x),
+            "y": float(pos.y),
+            "z": float(pos.z),
+            "eye_z": float(pos.z + eye_height),
+            "vx": float(vel.x),
+            "vy": float(vel.y),
+            "vz": float(vel.z),
+            "hs": float(hspeed),
+            "sp": float(speed),
+            "yaw": float(self._yaw),
+            "pitch": float(self._pitch),
+            "det_h": str(det_h),
+            "grounded": bool(self.player.grounded),
+            "sliding": bool(self.player.is_sliding()),
+            # Legacy key retained for compatibility with older telemetry consumers.
+            "crouched": bool(self.player.crouched),
+            "grapple": bool(self.player.is_grapple_attached()),
+            "noclip": bool(self.tuning.noclip_enabled),
+            "inp_jp": bool(cmd.jump_pressed),
+            "inp_jh": bool(cmd.jump_held),
+            "inp_sp": bool(cmd.slide_pressed),
+            "inp_gp": bool(cmd.grapple_pressed),
+            "inp_nt": bool(cmd.noclip_toggle_pressed),
+            "inp_mf": int(cmd.move_forward),
+            "inp_mr": int(cmd.move_right),
+            "inp_kw": bool(cmd.key_w_held),
+            "inp_ka": bool(cmd.key_a_held),
+            "inp_ks": bool(cmd.key_s_held),
+            "inp_kd": bool(cmd.key_d_held),
+            "inp_au": bool(cmd.arrow_up_held),
+            "inp_ad": bool(cmd.arrow_down_held),
+            "inp_al": bool(cmd.arrow_left_held),
+            "inp_ar": bool(cmd.arrow_right_held),
+            "inp_m1": bool(cmd.mouse_left_held),
+            "inp_m2": bool(cmd.mouse_right_held),
+        }
 
     def _fire_grapple(self) -> None:
         if self.player is None or self.collision is None:
@@ -1366,7 +1893,13 @@ class RunnerDemo(ShowBase):
         self._net_reconcile_pos_offset = LVector3f(0, 0, 0)
         self._net_reconcile_yaw_offset = 0.0
         self._net_reconcile_pitch_offset = 0.0
-        self._net_local_cam_ready = False
+        self._camera_observer.reset()
+        self._camera_tilt_observer.reset()
+        self._camera_height_observer.reset()
+        self._camera_feedback_observer.reset()
+        self._det_trace.reset()
+        self._det_trace_hash = "0" * 16
+        self._last_sim_vel = LVector3f(0, 0, 0)
         self._sim_state_ready = False
         self._push_sim_snapshot()
         self._render_interpolated_state(alpha=1.0)
@@ -1375,6 +1908,10 @@ class RunnerDemo(ShowBase):
             self._start_new_demo_recording()
 
     def _on_respawn_pressed(self) -> None:
+        if bool(getattr(self, "_playback_active", False)):
+            self._stop_replay_playback(reason="Exited replay.")
+            self._do_respawn(from_mode=True)
+            return
         if self._net_connected and self._net_client is not None:
             self._net_client.send_respawn()
             self._net_pending_inputs.clear()
@@ -1388,16 +1925,38 @@ class RunnerDemo(ShowBase):
     def _toggle_noclip(self) -> None:
         self.tuning.noclip_enabled = not bool(self.tuning.noclip_enabled)
 
-    def _step_noclip(self, *, dt: float, wish_dir: LVector3f, jump_held: bool, crouching: bool) -> None:
+    def _step_noclip(
+        self,
+        *,
+        dt: float,
+        move_forward: int,
+        move_right: int,
+        jump_held: bool,
+        slide_pressed: bool,
+    ) -> None:
         if self.player is None:
             return
+        forward = self._view_direction()
+        h_rad = math.radians(float(self._yaw))
+        right = LVector3f(math.cos(h_rad), math.sin(h_rad), 0.0)
+        if right.lengthSquared() > 1e-12:
+            right.normalize()
+        move = LVector3f(0.0, 0.0, 0.0)
+        if int(move_forward) > 0:
+            move += forward
+        elif int(move_forward) < 0:
+            move -= forward
+        if int(move_right) > 0:
+            move += right
+        elif int(move_right) < 0:
+            move -= right
         up = 1.0 if jump_held else 0.0
-        down = 1.0 if crouching else 0.0
-        move = LVector3f(wish_dir.x, wish_dir.y, up - down)
+        down = 1.0 if slide_pressed else 0.0
+        move.z += up - down
         if move.lengthSquared() > 1e-12:
             move.normalize()
         speed = max(0.0, float(self.tuning.noclip_speed))
-        self.player.vel = move * speed
+        self.player.set_external_velocity(vel=move * speed, reason="noclip")
         self.player.pos += self.player.vel * dt
         self.player.grounded = False
 
@@ -1413,6 +1972,8 @@ class RunnerDemo(ShowBase):
                 pass
 
             if self._mode == "menu":
+                if self.replay_input_ui.is_visible():
+                    self.replay_input_ui.hide()
                 self.ui.set_crosshair_visible(False)
                 if self._menu is not None:
                     self._menu.tick(globalClock.getFrameTime())
@@ -1428,18 +1989,37 @@ class RunnerDemo(ShowBase):
                     self._pending_map_json = None
                 return Task.cont
             if self._mode != "game" or self.player is None:
+                if self.replay_input_ui.is_visible():
+                    self.replay_input_ui.hide()
                 return Task.cont
 
             frame_dt = min(globalClock.getDt(), 0.25)
             now = float(globalClock.getFrameTime())
-            self._poll_mouse_look_delta()
+            self._feel_diag.record_frame_dt(dt_s=float(frame_dt))
+            if self._playback_active:
+                if not self.replay_input_ui.is_visible():
+                    self.replay_input_ui.show()
+                # Replay must be driven only by recorded input frames.
+                self._mouse_dx_accum = 0.0
+                self._mouse_dy_accum = 0.0
+                self._last_mouse = None
+            else:
+                if self.replay_input_ui.is_visible():
+                    self.replay_input_ui.hide()
+                self._poll_mouse_look_delta()
 
             if self.scene is not None:
                 self.scene.tick(now=now)
             if self._replay_browser_open:
                 self.replay_browser_ui.tick(now)
 
-            menu_open = self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open
+            menu_open = (
+                self._pause_menu_open
+                or self._debug_menu_open
+                or self._replay_browser_open
+                or self._console_open
+                or self._feel_capture_open
+            )
             self.ui.set_crosshair_visible(not menu_open)
 
             # Precompute wish from keyboard so debug overlay can show it even if movement seems dead.
@@ -1447,6 +2027,7 @@ class RunnerDemo(ShowBase):
             wish_dbg = self._wish_direction_from_axes(move_forward=fwd_axis, move_right=right_axis)
 
             if self.mouseWatcherNode is not None:
+                self._feel_perf_text = self._feel_metrics.update_summary(now=now)
                 has_mouse = self.mouseWatcherNode.hasMouse()
                 mx = float(self.mouseWatcherNode.getMouseX()) if has_mouse else 0.0
                 my = float(self.mouseWatcherNode.getMouseY()) if has_mouse else 0.0
@@ -1461,12 +2042,33 @@ class RunnerDemo(ShowBase):
                 pos = self.player.pos if self.player is not None else LVector3f(0, 0, 0)
                 vel = self.player.vel if self.player is not None else LVector3f(0, 0, 0)
                 grounded = bool(self.player.grounded) if self.player is not None else False
+                accel = (
+                    (LVector3f(vel) - LVector3f(self._last_sim_vel)) / max(1e-6, float(self._sim_fixed_dt))
+                    if self.player is not None
+                    else LVector3f(0, 0, 0)
+                )
+                floor_n = self.player.ground_normal() if self.player is not None else LVector3f(0, 0, 1)
+                wall_n = self.player.wall_normal() if self.player is not None else LVector3f(0, 0, 0)
+                contacts = int(self.player.contact_count()) if self.player is not None else 0
+                jump_buf = float(self.player.jump_buffer_left()) if self.player is not None else 0.0
+                coyote = float(self.player.coyote_left()) if self.player is not None else 0.0
+                vault_dbg = self.player.vault_debug_status() if self.player is not None else "idle"
+                state_name = self.player.motion_state_name() if self.player is not None else "none"
+                last_input_age = max(0.0, float(now) - float(self._last_input_time))
                 self.input_debug.set_text(
                     "input debug (F2)\n"
                     f"mode={self._mode} lock={self._pointer_locked} dt={frame_dt:.3f} hasMouse={has_mouse} mouse=({mx:+.2f},{my:+.2f})\n"
+                    f"fps={1.0/max(1e-6,float(frame_dt)):.1f} frame_p95={self._feel_diag.frame_p95_ms():.2f}ms sim={self._sim_tick_rate_hz}hz steps={self._physics_steps_this_frame}\n"
+                    f"det_hash={self._det_trace_hash[:12]} det_samples={self._det_trace.sample_count()} replay_det={self._playback_det_checked}/{self._playback_det_mismatch}\n"
                     f"raw WASD={int(raw_w)}{int(raw_a)}{int(raw_s)}{int(raw_d)} ascii WASD={int(asc_w)}{int(asc_a)}{int(asc_s)}{int(asc_d)}\n"
-                    f"wish=({wish_dbg.x:+.2f},{wish_dbg.y:+.2f}) pos=({pos.x:+.2f},{pos.y:+.2f},{pos.z:+.2f}) vel=({vel.x:+.2f},{vel.y:+.2f},{vel.z:+.2f}) grounded={int(grounded)}\n"
-                    f"{self._net_perf_text if self._net_perf_text else 'net perf | waiting for samples...'}"
+                    f"state={state_name} wish=({wish_dbg.x:+.2f},{wish_dbg.y:+.2f}) pos=({pos.x:+.2f},{pos.y:+.2f},{pos.z:+.2f})\n"
+                    f"vel=({vel.x:+.2f},{vel.y:+.2f},{vel.z:+.2f}) accel=({accel.x:+.2f},{accel.y:+.2f},{accel.z:+.2f}) grounded={int(grounded)} contacts={contacts}\n"
+                    f"floor_n=({floor_n.x:+.2f},{floor_n.y:+.2f},{floor_n.z:+.2f}) wall_n=({wall_n.x:+.2f},{wall_n.y:+.2f},{wall_n.z:+.2f})\n"
+                    f"cam_fov={self._cam_dbg_fov:.2f} cam_tgt={self._cam_dbg_target_fov:.2f} cam_speed_r={self._cam_dbg_speed_ratio:.2f} cam_speed_t={self._cam_dbg_speed_t:.2f}\n"
+                    f"cam_event={self._cam_dbg_event_name} quality={self._cam_dbg_event_quality:.2f} applied_amp={self._cam_dbg_event_amp:.2f} blocked_reason={self._cam_dbg_event_blocked}\n"
+                    f"last_input_age={last_input_age:.3f}s jump_buf={jump_buf:.3f}s coyote={coyote:.3f}s vault={vault_dbg}\n"
+                    f"{self._net_perf_text if self._net_perf_text else 'net perf | waiting for samples...'}\n"
+                    f"{self._feel_perf_text}"
                 )
             if self._input_debug_until and globalClock.getFrameTime() >= self._input_debug_until:
                 self._input_debug_until = 0.0
@@ -1474,6 +2076,7 @@ class RunnerDemo(ShowBase):
 
             self._sim_accumulator = min(0.25, self._sim_accumulator + frame_dt)
             self._poll_network_snapshot()
+            steps = 0
             while self._sim_accumulator >= self._sim_fixed_dt:
                 cmd = (
                     self._sample_replay_input_command()
@@ -1482,6 +2085,8 @@ class RunnerDemo(ShowBase):
                 )
                 self._simulate_input_tick(cmd=cmd, menu_open=menu_open)
                 self._sim_accumulator -= self._sim_fixed_dt
+                steps += 1
+            self._physics_steps_this_frame = int(steps)
             if self._net_connected:
                 decay = math.exp(-max(0.0, float(self._net_reconcile_decay_hz)) * max(0.0, float(frame_dt)))
                 self._net_reconcile_pos_offset *= float(decay)
@@ -1524,13 +2129,14 @@ class RunnerDemo(ShowBase):
                     self._net_perf_last_publish = now_perf
 
             hspeed = math.sqrt(self.player.vel.x * self.player.vel.x + self.player.vel.y * self.player.vel.y)
+            vault_dbg = self.player.vault_debug_status()
             self.ui.set_speed(hspeed)
             self.ui.set_health(self._local_hp)
             self.ui.set_status(
                 f"speed: {hspeed:.2f} | z-vel: {self.player.vel.z:.2f} | grounded: {self.player.grounded} | "
-                f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()} | "
+                f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()} | slide: {self.player.is_sliding()} | "
                 f"grapple: {self.player.is_grapple_attached()} | hp: {self._local_hp} | net: {self._net_connected} | "
-                f"rec: {self._active_recording is not None} | replay: {self._playback_active}"
+                f"rec: {self._active_recording is not None} | replay: {self._playback_active} | vault: {vault_dbg}"
             )
 
             if self._game_mode is not None:
@@ -1548,9 +2154,6 @@ class RunnerDemo(ShowBase):
 
     def _update_menu_hold(self, *, now: float) -> None:
         _menu.update_menu_hold(self, now=now)
-
-    def _is_crouching(self) -> bool:
-        return self._is_key_down("c")
 
     def _smoke_exit(self, task: Task) -> int:
         self._smoke_frames -= 1
@@ -1605,6 +2208,7 @@ def run(
     *,
     smoke: bool = False,
     smoke_screenshot: str | None = None,
+    feel_harness: bool = False,
     map_json: str | None = None,
     hl_root: str | None = None,
     hl_mod: str = "valve",
@@ -1617,6 +2221,7 @@ def run(
         RunConfig(
             smoke=smoke,
             smoke_screenshot=smoke_screenshot,
+            feel_harness=feel_harness,
             map_json=map_json,
             hl_root=hl_root,
             hl_mod=hl_mod,

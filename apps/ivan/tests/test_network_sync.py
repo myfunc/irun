@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from ivan.game import RunnerDemo
+from ivan.game import tuning_profiles as profiles_mod
 from ivan.physics.tuning import PhysicsTuning
 from ivan.net.server import MultiplayerServer
 from panda3d.core import LVector3f
@@ -46,6 +47,17 @@ class _FakePauseUI:
 
     def set_multiplayer_status(self, text: str) -> None:
         self.multiplayer_status = str(text)
+
+
+class _FakeNoclipPlayer:
+    def __init__(self) -> None:
+        self.pos = LVector3f(0.0, 0.0, 0.0)
+        self.vel = LVector3f(0.0, 0.0, 0.0)
+        self.grounded = True
+
+    def set_external_velocity(self, *, vel: LVector3f, reason: str = "external") -> None:
+        _ = reason
+        self.vel = LVector3f(vel)
 
 
 def test_network_respawn_button_sends_server_request() -> None:
@@ -103,7 +115,7 @@ def test_embedded_server_receives_host_tuning_snapshot(monkeypatch) -> None:
     demo._open_to_network = True
     demo._runtime_connect_port = 7777
     demo._current_map_json = "/tmp/test_map.json"
-    demo._current_tuning_snapshot = lambda: {"gravity": 33.0, "surf_enabled": True}
+    demo._current_tuning_snapshot = lambda: {"jump_height": 1.2, "jump_apex_time": 0.3, "surf_enabled": True}
     demo.cfg = SimpleNamespace(net_host=None)
 
     import ivan.game as game_mod
@@ -118,7 +130,7 @@ def test_embedded_server_receives_host_tuning_snapshot(monkeypatch) -> None:
     assert captured["tcp_port"] == 7777
     assert captured["udp_port"] == 7778
     assert captured["map_json"] == "/tmp/test_map.json"
-    assert captured["initial_tuning"] == {"gravity": 33.0, "surf_enabled": True}
+    assert captured["initial_tuning"] == {"jump_height": 1.2, "jump_apex_time": 0.3, "surf_enabled": True}
 
 
 def test_open_to_network_uses_active_client_tuning_snapshot(monkeypatch) -> None:
@@ -141,9 +153,10 @@ def test_open_to_network_uses_active_client_tuning_snapshot(monkeypatch) -> None
     demo.pause_ui = _FakePauseUI()
     demo.cfg = SimpleNamespace(net_host=None)
     demo._current_tuning_snapshot = lambda: {
-        "gravity": 39.6196435546875,
+        "run_t90": 0.04656740038574615,
+        "ground_stop_t90": 0.16841168101466534,
         "surf_enabled": True,
-        "jump_accel": 31.738659286499026,
+        "air_gain_t90": 0.9 / 31.738659286499026,
         "grapple_pull_strength": 30.263092041015625,
     }
     demo._connect_multiplayer_if_requested = lambda: RunnerDemo._start_embedded_server(demo)
@@ -158,9 +171,10 @@ def test_open_to_network_uses_active_client_tuning_snapshot(monkeypatch) -> None
     assert demo.pause_ui.open_to_network is True
     assert captured["started"] is True
     assert captured["initial_tuning"] == {
-        "gravity": 39.6196435546875,
+        "run_t90": 0.04656740038574615,
+        "ground_stop_t90": 0.16841168101466534,
         "surf_enabled": True,
-        "jump_accel": 31.738659286499026,
+        "air_gain_t90": 0.9 / 31.738659286499026,
         "grapple_pull_strength": 30.263092041015625,
     }
 
@@ -168,15 +182,39 @@ def test_open_to_network_uses_active_client_tuning_snapshot(monkeypatch) -> None
 def test_current_tuning_snapshot_reflects_active_client_values() -> None:
     demo = RunnerDemo.__new__(RunnerDemo)
     demo.tuning = PhysicsTuning()
-    demo.tuning.gravity = 41.0
+    demo.tuning.jump_height = 1.7
+    demo.tuning.jump_apex_time = 0.33
     demo.tuning.surf_enabled = True
-    demo.tuning.max_air_speed = 9.25
+    demo.tuning.air_speed_mult = 1.42
 
     snap = RunnerDemo._current_tuning_snapshot(demo)
 
-    assert float(snap["gravity"]) == 41.0
+    assert float(snap["jump_height"]) == 1.7
+    assert float(snap["jump_apex_time"]) == 0.33
     assert bool(snap["surf_enabled"]) is True
-    assert float(snap["max_air_speed"]) == 9.25
+    assert float(snap["air_speed_mult"]) == 1.42
+
+
+def test_noclip_forward_uses_view_pitch_direction() -> None:
+    demo = RunnerDemo.__new__(RunnerDemo)
+    demo.player = _FakeNoclipPlayer()
+    demo.tuning = PhysicsTuning(noclip_speed=5.0)
+    demo._yaw = 0.0
+    demo._pitch = 45.0
+
+    RunnerDemo._step_noclip(
+        demo,
+        dt=1.0,
+        move_forward=1,
+        move_right=0,
+        jump_held=False,
+        slide_pressed=False,
+    )
+
+    assert demo.player.vel.y > 0.0
+    assert demo.player.vel.z > 0.0
+    assert demo.player.pos.y > 0.0
+    assert demo.player.pos.z > 0.0
 
 
 def test_reconcile_uses_ack_state_and_replays_unacked_inputs() -> None:
@@ -234,7 +272,7 @@ def test_reconcile_uses_ack_state_and_replays_unacked_inputs() -> None:
 
 def test_apply_profile_in_network_owner_pushes_to_server() -> None:
     demo = RunnerDemo.__new__(RunnerDemo)
-    demo._profiles = {"p1": {"gravity": 30.0}}
+    demo._profiles = {"p1": {"jump_height": 1.3, "jump_apex_time": 0.30}}
     demo._active_profile_name = "surf_bhop_c2"
     demo._profile_names = lambda: ["p1"]
     demo._net_connected = True
@@ -254,12 +292,12 @@ def test_apply_profile_in_network_owner_pushes_to_server() -> None:
 
 def test_apply_profile_readonly_client_is_blocked() -> None:
     demo = RunnerDemo.__new__(RunnerDemo)
-    demo._profiles = {"p1": {"gravity": 30.0}}
+    demo._profiles = {"p1": {"jump_height": 1.3, "jump_apex_time": 0.30}}
     demo._active_profile_name = "surf_bhop_c2"
     demo._profile_names = lambda: ["p1", "surf_bhop_c2"]
     demo._net_connected = True
     demo._net_can_configure = False
-    demo._net_authoritative_tuning = {"gravity": 39.6}
+    demo._net_authoritative_tuning = {"jump_height": 1.0, "jump_apex_time": 0.22}
     demo.ui = _FakeUI()
     calls = {"apply": 0}
 
@@ -298,12 +336,69 @@ def test_dedicated_server_defaults_match_surf_bhop_c2_core_values(monkeypatch) -
     monkeypatch.setattr(server_mod.socket, "socket", lambda *_a, **_kw: _FakeSock())
     srv = MultiplayerServer(host="127.0.0.1", tcp_port=0, udp_port=0, map_json=None)
     try:
-        assert abs(float(srv.tuning.gravity) - 39.6196435546875) < 1e-6
         assert abs(float(srv.tuning.jump_height) - 1.0108081703186036) < 1e-6
+        assert abs(float(srv.tuning.jump_apex_time) - 0.22585349306495618) < 1e-6
         assert abs(float(srv.tuning.max_ground_speed) - 6.622355737686157) < 1e-6
-        assert abs(float(srv.tuning.max_air_speed) - 6.845157165527343) < 1e-6
+        assert abs(float(srv.tuning.run_t90) - 0.04656740038574615) < 1e-6
+        assert abs(float(srv.tuning.ground_stop_t90) - 0.16841168101466534) < 1e-6
+        assert abs(float(srv.tuning.air_speed_mult) - (6.845157165527343 / 6.622355737686157)) < 1e-6
         assert bool(srv.tuning.surf_enabled) is True
         assert bool(srv.tuning.autojump_enabled) is True
-        assert bool(srv.tuning.enable_jump_buffer) is True
+        assert bool(srv.tuning.coyote_buffer_enabled) is True
+        assert abs(float(srv.tuning.grace_period) - 0.2329816741943359) < 1e-6
     finally:
         srv.close()
+
+
+def test_player_half_height_change_autoscales_eye_height_and_persists_both_fields() -> None:
+    host = SimpleNamespace()
+    host._net_connected = False
+    host._net_can_configure = False
+    host._net_authoritative_tuning = {}
+    host.ui = _FakeUI()
+    host.player = SimpleNamespace(apply_hull_settings=lambda: None)
+    host.scene = None
+    host._active_profile_name = "p1"
+    host._profiles = {"p1": {}}
+    host._suspend_tuning_persist = False
+    persisted: list[str] = []
+    host._persist_tuning_field = lambda field: persisted.append(str(field))
+    host._send_tuning_to_server = lambda: None
+    host.tuning = PhysicsTuning()
+    host.tuning.player_half_height = 1.20
+
+    profiles_mod.on_tuning_change(host, "player_half_height")
+
+    expected_eye = 1.20 * (0.625 / 1.05)
+    assert abs(float(host.tuning.player_eye_height) - float(expected_eye)) < 1e-6
+    assert float(host._profiles["p1"]["player_half_height"]) == 1.20
+    assert abs(float(host._profiles["p1"]["player_eye_height"]) - float(expected_eye)) < 1e-6
+    assert "player_half_height" in persisted
+    assert "player_eye_height" in persisted
+
+
+def test_character_scale_lock_derives_radius_and_step_from_half_height() -> None:
+    host = SimpleNamespace()
+    host._net_connected = False
+    host._net_can_configure = False
+    host._net_authoritative_tuning = {}
+    host.ui = _FakeUI()
+    host.player = SimpleNamespace(apply_hull_settings=lambda: None)
+    host.scene = None
+    host._active_profile_name = "p1"
+    host._profiles = {"p1": {}}
+    host._suspend_tuning_persist = False
+    persisted: list[str] = []
+    host._persist_tuning_field = lambda field: persisted.append(str(field))
+    host._send_tuning_to_server = lambda: None
+    host.tuning = PhysicsTuning(character_scale_lock_enabled=True)
+    host.tuning.player_half_height = 1.30
+
+    profiles_mod.on_tuning_change(host, "player_half_height")
+
+    assert abs(float(host.tuning.player_radius) - (1.30 * (0.42 / 1.05))) < 1e-6
+    assert abs(float(host.tuning.step_height) - (1.30 * (0.55 / 1.05))) < 1e-6
+    assert "player_half_height" in persisted
+    assert "player_eye_height" in persisted
+    assert "player_radius" in persisted
+    assert "step_height" in persisted

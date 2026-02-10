@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import math
 
 from ivan.physics.tuning import PhysicsTuning
 from ivan.state import IvanState, update_state
@@ -10,6 +11,115 @@ def to_persisted_value(value: object) -> float | bool:
     if isinstance(value, bool):
         return value
     return float(value)
+
+
+def _apply_character_scale_lock(tuning: PhysicsTuning) -> None:
+    half_h = max(0.15, float(tuning.player_half_height))
+    eye_ratio = 0.625 / 1.05
+    radius_ratio = 0.42 / 1.05
+    step_ratio = 0.55 / 1.05
+    tuning.player_eye_height = max(0.10, half_h * eye_ratio)
+    tuning.player_radius = max(0.15, min(0.90, half_h * radius_ratio))
+    tuning.step_height = max(0.10, min(1.20, half_h * step_ratio))
+
+
+def _migrate_to_invariants(profile: dict[str, float | bool]) -> dict[str, float | bool]:
+    out = dict(profile)
+    g = max(
+        0.001,
+        float(
+            out.get(
+                "gravity",
+                (2.0 * float(out.get("jump_height", 1.48)))
+                / (max(1e-4, float(out.get("jump_apex_time", 0.351))) ** 2),
+            )
+        ),
+    )
+    h = max(0.01, float(out.get("jump_height", 1.48)))
+    ga = max(0.001, float(out.get("ground_accel", math.log(10.0) / max(1e-4, float(out.get("run_t90", 0.24))))))
+    gf = max(
+        0.001,
+        float(out.get("friction", math.log(10.0) / max(1e-4, float(out.get("ground_stop_t90", 0.22))))),
+    )
+    vmax = max(0.01, float(out.get("max_ground_speed", 6.643)))
+    legacy_air_speed = max(0.01, float(out.get("max_air_speed", vmax * float(out.get("air_speed_mult", 1.695)))))
+    legacy_air_accel = max(
+        0.001,
+        float(out.get("jump_accel", 0.9 / max(1e-4, float(out.get("air_gain_t90", 0.24))))),
+    )
+    out["jump_apex_time"] = math.sqrt((2.0 * h) / g)
+    out["run_t90"] = max(0.03, min(1.2, math.log(10.0) / ga))
+    out["ground_stop_t90"] = max(0.03, min(1.2, math.log(10.0) / gf))
+    out["air_speed_mult"] = max(0.50, min(4.0, legacy_air_speed / vmax))
+    out["air_gain_t90"] = max(0.03, min(1.2, 0.9 / legacy_air_accel))
+    out["wallrun_sink_t90"] = max(0.03, min(1.2, float(out.get("wallrun_sink_t90", 0.22))))
+    legacy_slide_duration = max(1e-4, float(out.get("slide_duration", out.get("dash_duration", 0.24))))
+    legacy_slide_stop_t90 = math.log(10.0) / (math.log(2.0) / legacy_slide_duration)
+    out["slide_stop_t90"] = max(
+        0.10,
+        min(8.0, float(out.get("slide_stop_t90", max(2.0, legacy_slide_stop_t90)))),
+    )
+    if "slide_half_height_mult" not in out:
+        crouch_h = float(out.get("crouch_half_height", 0.68))
+        stand_h = max(0.15, float(out.get("player_half_height", 1.05)))
+        out["slide_half_height_mult"] = max(0.30, min(1.0, crouch_h / stand_h))
+    if "slide_eye_height_mult" not in out:
+        crouch_eye = float(out.get("crouch_eye_height", 0.42))
+        stand_eye = max(0.1, float(out.get("player_eye_height", 0.625)))
+        out["slide_eye_height_mult"] = max(0.40, min(1.0, crouch_eye / stand_eye))
+    out["slide_enabled"] = bool(out.get("slide_enabled", out.get("dash_enabled", True)))
+    out["coyote_buffer_enabled"] = bool(out.get("coyote_buffer_enabled", out.get("enable_jump_buffer", True)))
+    out["camera_speed_fov_max_add"] = max(
+        0.0,
+        min(
+            30.0,
+            float(out.get("camera_speed_fov_max_add", out.get("camera_speed_fov_gain", 9.0))),
+        ),
+    )
+    legacy_landing_gain = max(0.0, float(out.get("camera_landing_shake_gain", 1.0)))
+    legacy_bhop_gain = max(0.0, float(out.get("camera_bhop_pulse_gain", 0.9)))
+    out["camera_event_gain"] = max(
+        0.0,
+        min(3.0, float(out.get("camera_event_gain", (legacy_landing_gain + legacy_bhop_gain) * 0.5))),
+    )
+    out["camera_tilt_gain"] = max(0.0, min(2.5, float(out.get("camera_tilt_gain", 1.0))))
+    legacy_coyote = float(out.get("coyote_time", 0.0))
+    legacy_buffer = float(out.get("jump_buffer_time", 0.0))
+    out["grace_period"] = max(
+        0.0,
+        min(0.35, float(out.get("grace_period", max(legacy_coyote, legacy_buffer, 0.120)))),
+    )
+    out["custom_friction_enabled"] = True
+    for legacy in (
+        "invariant_motion_enabled",
+        "run_tfull",
+        "run_use_tfull",
+        "gravity",
+        "ground_accel",
+        "friction",
+        "max_air_speed",
+        "jump_accel",
+        "air_control",
+        "air_counter_strafe_brake",
+        "dash_distance",
+        "dash_duration",
+        "dash_enabled",
+        "dash_sweep_enabled",
+        "slide_duration",
+        "slide_speed_mult",
+        "enable_jump_buffer",
+        "jump_buffer_time",
+        "coyote_time",
+        "crouch_speed_multiplier",
+        "crouch_half_height",
+        "crouch_eye_height",
+        "crouch_enabled",
+        "camera_speed_fov_gain",
+        "camera_landing_shake_gain",
+        "camera_bhop_pulse_gain",
+    ):
+        out.pop(legacy, None)
+    return out
 
 
 def build_default_profiles() -> dict[str, dict[str, float | bool]]:
@@ -25,18 +135,20 @@ def build_default_profiles() -> dict[str, dict[str, float | bool]]:
         {
             "surf_enabled": True,
             "autojump_enabled": True,
-            "enable_jump_buffer": True,
-            "gravity": 39.6196435546875,
-            "jump_height": 1.0108081703186036,
-            "max_ground_speed": 6.622355737686157,
-            "max_air_speed": 6.845157165527343,
-            "ground_accel": 49.44859447479248,
-            "jump_accel": 31.738659286499026,
-            "friction": 13.672204017639162,
-            "air_control": 0.24100000381469727,
-            "air_counter_strafe_brake": 23.000001525878908,
+            "coyote_buffer_enabled": True,
+            # Live-tuned baseline for current flow pass (metropolis route set).
+            "jump_height": 1.2523488998413086,
+            "jump_apex_time": 0.26081255078315735,
+            "max_ground_speed": 6.622355937957764,
+            "run_t90": 0.0465652272105217,
+            "ground_stop_t90": 0.16841359436511993,
+            "air_speed_mult": 1.0336438417434692,
+            "air_gain_t90": 0.03,
+            "wallrun_sink_t90": 0.22000000953674315,
             "mouse_sensitivity": 0.09978364143371583,
-            "jump_buffer_time": 0.2329816741943359,
+            "grace_period": 0.23298166692256927,
+            "player_half_height": 1.48477303981781,
+            "player_eye_height": 0.8837934760820297,
             "wall_jump_cooldown": 0.9972748947143555,
             "surf_accel": 23.521632385253906,
             "surf_gravity_scale": 0.33837084770202636,
@@ -48,6 +160,9 @@ def build_default_profiles() -> dict[str, dict[str, float | bool]]:
             "grapple_pull_strength": 30.263092041015625,
             "grapple_min_length": 0.7406494271755218,
             "grapple_rope_half_width": 0.015153287963867187,
+            "vault_max_ledge_height": 2.0999999046325684,
+            "vault_forward_boost": 0.8500000238418579,
+            "vault_height_boost": 0.10000000149011612,
         }
     )
     surf_bhop = dict(surf_bhop_c2)
@@ -57,12 +172,11 @@ def build_default_profiles() -> dict[str, dict[str, float | bool]]:
         {
             "surf_enabled": False,
             "autojump_enabled": True,
-            "enable_jump_buffer": True,
-            "jump_accel": 34.0,
-            "max_air_speed": 14.0,
-            "air_control": 0.30,
-            "air_counter_strafe_brake": 18.0,
-            "friction": 4.8,
+            "coyote_buffer_enabled": True,
+            "run_t90": max(0.03, min(1.2, math.log(10.0) / 34.0)),
+            "ground_stop_t90": max(0.03, min(1.2, math.log(10.0) / 4.8)),
+            "air_speed_mult": 14.0 / float(base.max_ground_speed),
+            "air_gain_t90": 0.9 / 34.0,
         }
     )
 
@@ -71,44 +185,46 @@ def build_default_profiles() -> dict[str, dict[str, float | bool]]:
         {
             "surf_enabled": True,
             "autojump_enabled": False,
-            "enable_jump_buffer": False,
-            "jump_accel": 10.0,
-            "max_air_speed": 22.0,
-            "air_control": 0.10,
-            "air_counter_strafe_brake": 9.0,
+            "coyote_buffer_enabled": False,
+            "run_t90": max(0.03, min(1.2, math.log(10.0) / 10.0)),
+            "ground_stop_t90": max(0.03, min(1.2, math.log(10.0) / 3.8)),
+            "air_speed_mult": 22.0 / float(base.max_ground_speed),
+            "air_gain_t90": 0.9 / 10.0,
             "surf_accel": 70.0,
             "surf_gravity_scale": 0.82,
             "surf_min_normal_z": 0.05,
             "surf_max_normal_z": 0.76,
-            "friction": 3.8,
         }
     )
 
     surf_sky2_server = dict(snap)
     surf_sky2_server.update(
         {
-            # Approximation of publicly listed surf_ski_2/surf_sky_2 server cvars:
-            # sv_accelerate 5, sv_airaccelerate 100, sv_friction 4, sv_maxspeed 900, sv_gravity 800.
-            "gravity": 24.0,
+            # Approximation of publicly listed surf_ski_2/surf_sky_2 server cvars mapped to invariants.
             "max_ground_speed": 23.90,
-            "max_air_speed": 23.90,
-            "ground_accel": 5.0,
-            "jump_accel": 3.0,
-            "friction": 4.0,
-            "air_control": 0.10,
-            "air_counter_strafe_brake": 8.0,
+            "run_t90": max(0.03, min(1.2, math.log(10.0) / 5.0)),
+            "ground_stop_t90": max(0.03, min(1.2, math.log(10.0) / 4.0)),
+            "air_speed_mult": 1.0,
+            "air_gain_t90": 0.9 / 3.0,
             "surf_enabled": True,
             "surf_accel": 10.0,
             "surf_gravity_scale": 1.0,
             "surf_min_normal_z": 0.05,
             "surf_max_normal_z": 0.72,
             "autojump_enabled": False,
-            "enable_jump_buffer": False,
+            "coyote_buffer_enabled": False,
             "walljump_enabled": False,
             "wallrun_enabled": False,
             "vault_enabled": False,
         }
     )
+
+    surf_bhop_c2 = _migrate_to_invariants(surf_bhop_c2)
+    surf_bhop = _migrate_to_invariants(surf_bhop)
+    bhop = _migrate_to_invariants(bhop)
+    surf = _migrate_to_invariants(surf)
+    surf_sky2_server = _migrate_to_invariants(surf_sky2_server)
+
     return {
         "surf_bhop_c2": surf_bhop_c2,
         "surf_bhop": surf_bhop,
@@ -129,6 +245,11 @@ def load_profiles_from_state(host, state: IvanState) -> None:
     for name, values in state.tuning_profiles.items():
         host._profiles[name] = dict(values)
 
+    for profile in host._profiles.values():
+        migrated = _migrate_to_invariants(profile)
+        profile.clear()
+        profile.update(migrated)
+
     active = state.active_tuning_profile or "surf_bhop_c2"
     if active not in host._profiles:
         active = "surf_bhop_c2"
@@ -137,7 +258,8 @@ def load_profiles_from_state(host, state: IvanState) -> None:
     # Apply those values to the chosen active profile once at load time.
     if state.tuning_overrides and not state.tuning_profiles and active in host._profiles:
         fields = set(PhysicsTuning.__annotations__.keys())
-        for k, v in state.tuning_overrides.items():
+        migrated_overrides = _migrate_to_invariants(dict(state.tuning_overrides))
+        for k, v in migrated_overrides.items():
             if k in fields:
                 host._profiles[active][k] = v
 
@@ -164,6 +286,8 @@ def apply_profile_snapshot(host, values: dict[str, float | bool], *, persist: bo
             setattr(host.tuning, field, value)
     finally:
         host._suspend_tuning_persist = False
+    if bool(getattr(host.tuning, "character_scale_lock_enabled", False)):
+        _apply_character_scale_lock(host.tuning)
     if getattr(host, "player", None) is not None:
         host.player.apply_hull_settings()
     if hasattr(host, "ui") and host.ui is not None:
@@ -238,7 +362,20 @@ def on_tuning_change(host, field: str) -> None:
             host._apply_profile_snapshot(dict(host._net_authoritative_tuning), persist=False)
         host.ui.set_status("Server config is host-only. Local tuning changes are blocked.")
         return
-    if field in ("player_radius", "player_half_height", "crouch_half_height"):
+    persist_fields: list[str] = [str(field)]
+    if field == "player_half_height":
+        # Keep camera framing proportional to hull height while iterating character scale.
+        default_eye_ratio = 0.625 / 1.05
+        host.tuning.player_eye_height = max(0.10, float(host.tuning.player_half_height) * float(default_eye_ratio))
+        persist_fields.append("player_eye_height")
+
+    if field in ("player_half_height", "character_scale_lock_enabled") and bool(host.tuning.character_scale_lock_enabled):
+        _apply_character_scale_lock(host.tuning)
+        for dep in ("player_eye_height", "player_radius", "step_height"):
+            if dep not in persist_fields:
+                persist_fields.append(dep)
+
+    if any(f in ("player_radius", "player_half_height", "slide_half_height_mult") for f in persist_fields):
         if host.player is not None:
             host.player.apply_hull_settings()
     if field == "vis_culling_enabled":
@@ -248,9 +385,13 @@ def on_tuning_change(host, field: str) -> None:
             except Exception:
                 pass
     if host._active_profile_name in host._profiles:
-        host._profiles[host._active_profile_name][field] = to_persisted_value(getattr(host.tuning, field))
+        for persist_field in persist_fields:
+            host._profiles[host._active_profile_name][persist_field] = to_persisted_value(
+                getattr(host.tuning, persist_field)
+            )
     if not host._suspend_tuning_persist:
-        host._persist_tuning_field(field)
+        for persist_field in persist_fields:
+            host._persist_tuning_field(persist_field)
     if host._net_connected and host._net_can_configure:
         host._send_tuning_to_server()
 

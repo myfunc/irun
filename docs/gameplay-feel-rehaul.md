@@ -1,0 +1,406 @@
+# Gameplay Feel Rehaul Plan
+
+## Goal
+Bring IVAN movement/camera feel closer to top-tier movement games (including Bloodthief-style smoothness targets) while preserving IVAN's deterministic tick model and live tuning workflow.
+
+## Success Criteria
+- Input feels immediate and predictable:
+  - Low perceived delay from key/mouse action to motion response.
+  - Consistent jump behavior (buffer/coyote windows perform as configured).
+- Movement continuity:
+  - Reduced speed loss on common transitions (landing, stair/step, slope handoff).
+  - Reduced ground-state flicker on uneven geometry.
+- Camera readability and comfort:
+  - Lower camera jerk on high-speed movement and reconciliation.
+  - Camera motion supports aiming/pathing and does not obscure velocity cues.
+- Tooling:
+  - Measurable feel metrics available in-game and exportable for tune sessions.
+  - Repeatable tune scenarios and acceptance checklist for each pass.
+
+## Constraints
+- Keep movement simulation authoritative at fixed `60 Hz`.
+- New gameplay parameters must be globally configurable and exposed in debug/admin UI.
+- Prefer incremental, reviewable slices; avoid one large rewrite.
+- Preserve existing map import/runtime compatibility.
+
+## Workstreams
+1. Instrumentation and baselines
+2. Camera pipeline rework
+3. Ground/air transition and step/slope stability
+4. Acceleration/friction/air-control polish
+5. QA harness, profile packaging, and rollout
+
+## Agent Execution Model
+Use parallel agents with strict ownership boundaries:
+
+- Agent A (Telemetry/QA):
+  - Implements runtime feel metrics collection and logging/export.
+  - Adds repeatable benchmark scenarios and acceptance scripts.
+- Agent B (Camera):
+  - Implements render camera shell improvements (smoothing, FOV/tilt policy).
+  - Owns camera tuning defaults and profile deltas.
+- Agent C (Movement Core):
+  - Implements controller stability passes (step/slope/transition logic).
+  - Owns friction/accel model refinements and invariants.
+- Agent D (Integration/Docs):
+  - Merges profiles, updates docs, verifies debug menu exposure.
+  - Tracks milestone status, risks, and rollback notes.
+
+## Phase Plan
+
+### Phase 0: Baseline and Instrumentation (Start Here)
+Status: `IN PROGRESS`
+
+Deliverables:
+- Runtime feel metrics aggregator:
+  - jump input -> takeoff success window
+  - landing horizontal speed retention/loss
+  - ground-state transition flicker count
+  - camera jerk signal (linear/angular acceleration proxies)
+- F2 overlay shows rolling feel metrics summary.
+- Optional text export path for benchmark sessions.
+- Replay telemetry export tooling:
+  - per-run CSV tick dump
+  - per-run JSON summary metrics
+  - latest-replay export trigger (CLI + in-game console command)
+  - latest-vs-previous comparator utility with metric and tuning deltas
+  - in-game Feel Session panel for export/compare/feedback actions
+  - pre-apply tuning backup snapshots for all auto-feedback apply actions
+
+Acceptance:
+- Metrics update during normal gameplay.
+- No movement behavior changes required in this phase.
+- Smoke run remains stable.
+- Rollback path exists for every auto-apply tuning action.
+
+### Phase 1: Camera Feel Rehaul
+Status: `IN PROGRESS`
+
+Deliverables:
+- Decoupled camera render shell with critically-damped smoothing policy.
+- Speed-aware but bounded camera effects:
+  - FOV response curve
+  - landing response (micro-tilt/bob)
+  - optional strafe lean with strict caps
+- Config exposure in debug/admin UI (all new camera params).
+
+Acceptance:
+- Reduced camera jerk metric vs Phase 0 baseline on same route.
+- No visible camera pop on respawn, pause/unpause, replay start/end.
+
+### Camera Rehaul Subtask (2026-02-09)
+Status: `IN PROGRESS` (execution started)
+
+Scope:
+- Treat camera as an invariant-driven system (same philosophy as movement rehaul).
+- Keep a compact, decoupled camera tuning surface.
+- Remove normalized `0..100` tuning representation from debug UI; show real values and units.
+
+Execution checklist:
+- [x] Write and publish this camera-subtask plan under the global feel rehaul board.
+- [x] Replace split event gains (`landing` + `bhop`) with one core invariant-driven camera event gain.
+- [x] Add one camera tilt gain invariant to scale movement/wallrun/vault tilt response coherently.
+- [x] Keep speed-FOV policy invariant-based:
+  - no widening at/below `Vmax`
+  - widening above `Vmax`
+  - cap at configured max addition by `10x Vmax`
+- [x] Extend F2 diagnostics with camera event internals (`event`, `quality`, `applied_amp`, `blocked_reason`).
+- [x] Convert debug numeric controls to real-unit slider/entry values (no normalized 0..100 entry/slider).
+- [x] Update default-profile migration so old camera fields map forward to new compact fields.
+- [x] Update global docs (`features`, `architecture`, `roadmap`) and brainstorm notes.
+- [x] Update project skill guidance to preserve invariant-first camera/movement design for future features.
+
+### Phase 2: Movement Stability Rehaul
+Status: `PENDING`
+
+Deliverables:
+- Step-up/step-down robustness pass:
+  - fewer false-ground/fall toggles
+  - stable traversal over stair-like geometry
+- Slope transition pass:
+  - smoother slope entry/exit with controlled momentum preservation
+- Ground/air handoff cleanup:
+  - coyote/jump-buffer behavior verified against configured windows
+
+Acceptance:
+- Ground flicker metric reduced vs baseline.
+- Landing speed retention improves in benchmark routes.
+
+### Phase 3: Accel/Friction Polish
+Status: `PENDING`
+
+Deliverables:
+- Re-tuned acceleration/friction/air-control interactions with explicit invariants.
+- Counter-strafe and surf edge-case cleanup.
+- New curated profile:
+  - `bloodthief_inspired` (working name)
+
+Acceptance:
+- Route consistency and speed retention improved across 3 benchmark maps.
+- No major regressions in existing profiles (`surf_bhop_c2`, etc.).
+
+### Phase 4: QA, Rollout, and Guardrails
+Status: `PENDING`
+
+Deliverables:
+- Benchmark checklist and acceptance matrix in docs.
+- Regression tests for critical movement/camera invariants.
+- Final profile defaults recommendation and rollback strategy.
+- Explicit autotune rollback SOP (backup/restore + compare gate before accepting changes).
+
+Acceptance:
+- All milestone checks pass.
+- Team agrees on default profile behavior.
+
+## Benchmark Protocol
+- Keep one canonical route set:
+  - Route A: flat strafe and jump chain
+  - Route B: stair/step stress route
+  - Route C: slope/surf transition route
+- Record at least 3 runs per route per phase.
+- Compare:
+  - jump success %
+  - landing speed loss
+  - ground flickers per minute
+  - camera jerk (avg/max)
+- Baseline checklist document:
+  - `docs/gameplay-baseline-checklist.md`
+
+## Risks and Mitigations
+- Risk: "Smoother camera" hides simulation problems.
+  - Mitigation: always track movement and camera metrics independently.
+- Risk: one-off tuning overfits a single map.
+  - Mitigation: benchmark on multiple route types before merge.
+- Risk: parameter explosion in debug menu.
+  - Mitigation: group settings into camera/movement bundles and keep defaults curated.
+
+## Execution Checklist (Immediate)
+- [x] Create this plan document.
+- [x] Implement Phase 0 feel metrics aggregator.
+- [x] Surface metrics in F2 overlay.
+- [x] Add replay telemetry export + comparator tooling.
+- [ ] Capture initial baseline run metrics for Route A/B/C.
+- [ ] Open follow-up tasks for Phase 1 and Phase 2 implementation slices.
+- [ ] Add constrained autotuner loop (feedback + route history metrics -> invariant deltas with rollback-first flow).
+  - V1 console control-plane landed: `autotune_suggest`, `autotune_apply`, `autotune_eval`, `autotune_rollback`.
+  - `autotune_apply` is backup-first and reuses the same restore path as popup `Revert Last` / `tuning_restore`.
+  - Remaining gap for this checklist item: automated iterative loop/orchestration across repeated capture/eval rounds.
+
+## Current Progress (2026-02-09)
+Completed now:
+- Replay reliability/input-safety pass:
+  - Replay playback is now hard-locked from live gameplay/menu input contamination.
+  - During replay, only `R` exits playback and returns to normal respawned play.
+  - Replay stop path resets playback and input accumulators consistently.
+- Replay observability pass:
+  - Demo frame format upgraded (`format_version=3`) with backward-compatible loading of v1/v2 demos.
+  - Each recorded tick now stores telemetry useful for feel analysis:
+    - position/eye height
+    - velocity and horizontal/total speed
+    - camera yaw/pitch
+    - grounded/sliding/grapple/noclip state
+    - per-tick command snapshot (jump/slide/grapple/noclip/move/look/raw held keys)
+  - Replay telemetry summary now includes:
+    - landing speed loss/retention metrics
+    - camera linear/angular jerk metrics
+    - recorded tuning snapshot in exported summary payload
+- Replay analytics workflow pass:
+  - Added replay comparator utility (auto-export latest+previous and emit delta JSON).
+  - Added in-game Feel Session tab (ESC menu) to:
+    - save+export current run telemetry
+    - compare route-scoped latest vs prior run
+    - apply free-text feedback driven tuning adjustments
+  - Added in-game quick capture popup (`G`) for route-tagged run capture:
+    - route selector (`A/B/C`) + route name + run notes + feedback prompt
+    - `Save + Export` and `Export + Apply` actions
+    - route history context output (latest-vs-reference, optional baseline compare, route history metrics)
+- Replay UX pass:
+  - Added replay-only input HUD (UI kit based) showing:
+    - movement cluster (left/right + forward/back)
+    - dedicated jump section
+    - dedicated slide section
+    - dedicated mouse-direction section (+ raw dx/dy)
+
+Validation completed:
+- Replay format/telemetry/comparison tests pass (`test_replay_demo.py`, `test_replay_telemetry_export.py`, `test_replay_compare.py`).
+- Runtime smoke runs pass in menu boot and map boot paths.
+
+## Current Progress (2026-02-10)
+Completed now:
+- Route-scoped autotune V1 command surface in console:
+  - `autotune_suggest <route_tag> <feedback_text> [out_dir]`
+  - `autotune_apply <route_tag> <feedback_text> [out_dir]`
+  - `autotune_eval <route_tag> [out_dir]`
+  - `autotune_rollback [backup_ref]`
+- Autotune suggestion/apply flow is invariant-only and consumes route A/B/C compare + history context.
+- Apply path now always snapshots tuning backup before any change and stays compatible with existing backup restore entry points.
+- Wallrun jump feel fix:
+  - wallrun jump now hard-exits wallrun state on jump-off so camera tilt recovers immediately.
+  - wallrun jump launch now prioritizes stronger opposite-wall peel-away with ground-jump-like horizontal carry.
+  - wallrun jump vertical pop now matches normal jump takeoff (full up-pop on wallrun jump-offs).
+
+## Invariant Motion Refactor Progress (2026-02-09)
+Status: `IN PROGRESS` (core invariants active, slide migration complete, authority hardening active)
+
+Completed in this slice:
+- Added a dedicated movement package: `apps/ivan/src/ivan/physics/motion/`
+  - `MotionConfig` now holds one object with designer invariants + derived constants.
+  - Added derivation formulas for jump/run/slide constants.
+- Added new tuning invariants (debug/profile/persistence compatible):
+  - `run_t90`, `ground_stop_t90`
+  - `jump_apex_time`
+  - `air_speed_mult`, `air_gain_t90`
+  - `wallrun_sink_t90`
+  - `slide_stop_t90`
+  - `grace_period` (shared jump-buffer/coyote/vault leniency window)
+- Wired `PlayerController` to consume `MotionSolver` for:
+  - ground run response (derived model)
+  - ground coasting damping derived from stop timing invariant
+  - gravity application
+  - jump takeoff speed derivation
+  - coyote-time jump consume path
+- Removed legacy direct run/gravity tuning fields from active tuning schema.
+
+Completed in follow-up slice:
+- Added powerslide mode integration (dash/crouch replacement):
+  - input command path now uses held `slide_pressed` (`Shift`) across live input, record/replay, and network packets.
+  - slide parameters are invariant-driven (`slide_stop_t90` -> derived ground damping rate).
+  - slide does not add entry boost; it preserves carried horizontal speed and decays while grounded.
+  - slide ignores keyboard strafe steering; heading follows camera yaw (mouse look).
+  - slide owns low-profile hull while active and cleanly restores standing hull on exit.
+- Added motion authority hardening:
+  - non-solver velocity writes are routed through explicit controller velocity interface methods.
+  - write sources are tagged (`solver`, `impulse`, `collision`, `constraint`, `external`) for diagnostics and contract clarity.
+  - state priority now includes explicit override lanes (`knockback` > `slide` > `run/air`, hitstop pause lane).
+- Added deterministic feel harness bootstrap (`--feel-harness`):
+  - flat, slope approximation, step, wall, ledge, and moving platform fixtures.
+  - runtime harness toggles exposed in debug UI for subsystem isolation.
+- Expanded on-screen diagnostics + rolling logs:
+  - frame p95, sim step count, state, velocity/accel, contacts, floor/wall normals, leniency windows.
+  - `F10` JSON dump of rolling (2-5s) diagnostics buffer.
+  - deterministic state hashing in HUD (`F2`) and trace dump (`F11`).
+- Added regression tests for:
+  - invariant derivation formulas (`test_motion_config.py`)
+  - coyote window behavior and slide hold/release behavior.
+- Reduced debug tuning menu to a compact invariant-first control set:
+  - removed redundant direct-scalar sliders from runtime tuning surface.
+  - surf debug section is now toggle-only (`surf_enabled`) with no surf scalar sliders.
+  - invariant mode is now default-on and default profiles are migrated to invariant timing fields.
+  - debug panel internals were split into `debug_ui.py` + `debug_ui_schema.py` to keep file ownership scoped and avoid oversized UI modules.
+- Fixed Vmax authority regression:
+  - ground friction now damps only coasting (no movement input), so changing `max_ground_speed` reliably changes terminal ground speed under held input.
+- Fixed bunnyhop landing/takeoff carry regression:
+  - normal grounded run shaping converges horizontal speed toward `Vmax` again (prevents persistent overspeed running).
+  - grounded jump-consume tick now bypasses ground run + coasting damping to preserve successful hop timing momentum.
+  - `autojump_enabled` is restored in the compact debug surface.
+- Wallrun UX pass:
+  - `wallrun_enabled` is restored in the compact debug surface for live iteration.
+  - camera now applies slight roll tilt away from the wall while wallrun is active (read-only observer effect).
+  - wallrun jump now biases launch direction toward camera forward heading while retaining wall peel-away behavior.
+  - wallrun jump now guarantees a minimum opposite-wall horizontal component so wallrun exits gain consistent peel-away distance.
+  - wallrun descent now uses invariant timing (`wallrun_sink_t90`) via solver response instead of per-feature velocity clamps.
+- Camera animation responsiveness pass:
+  - introduced `camera_tilt_observer.py` as a read-only camera animation layer.
+  - wallrun roll transition now smooths with a snappy response curve (reduces one-frame roll snap/jank).
+  - wallrun roll now starts returning to neutral immediately on wallrun exit/jump, avoiding delayed recentering.
+  - added gentle movement-relative tilt targets (strafe roll + backpedal pitch) to improve perceived responsiveness.
+- Camera feedback slice (Phase 1 rehaul pass):
+  - `camera_feedback_observer.py` remains the read-only camera feedback layer driven by sim events.
+  - speed FOV stays invariant-driven from horizontal speed vs `Vmax`:
+    - no change at/below `Vmax`, rise above `Vmax`, saturate by `10x Vmax`.
+    - curve is tuned to be stronger in practical `2x-5x` speed windows common in airborne/slide flow.
+  - landing + successful-bhop camera pulses were collapsed into a single event envelope with one shared invariant gain.
+  - camera tilt intensity is now controlled by one explicit invariant gain (movement/wallrun/vault tilt scale).
+  - compact camera controls are now:
+    - `camera_base_fov`
+    - `camera_speed_fov_max_add`
+    - `camera_tilt_gain`
+    - `camera_event_gain`
+    - `camera_feedback_enabled`
+  - observer reset paths include map start/respawn/network reconnect to avoid stale camera states.
+  - `F2` diagnostics now include camera event internals (`cam_event`, `quality`, `applied_amp`, `blocked_reason`).
+- Air-gain decoupling pass:
+  - removed direct air gain scalars from active tuning (`max_air_speed`, `jump_accel`, `air_control`, `air_counter_strafe_brake`).
+  - introduced two core invariants:
+    - `air_speed_mult` -> derived `air_speed = Vmax * air_speed_mult`
+    - `air_gain_t90` -> derived `air_accel = 0.9 / air_gain_t90`
+  - this keeps bhop gain behavior coupled to one speed-scale axis and one timing axis, with no hidden overlap sliders.
+- Vault reliability pass:
+  - vault can now trigger from airborne jump intents (not only grounded/coyote-like timing paths).
+  - low-obstacle "stepable" rejection is now grounded-only to preserve in-air flow vaulting.
+  - mantle assist changed to phased clearance (up then forward) with longer smoothing window to prevent "vault ok" states that fail to clear the obstacle.
+  - ledge probe now samples contact-point and player-origin columns with near/outside offsets to reduce false `no ledge top` failures.
+- Grace-window distance pass:
+  - jump-buffer/coyote/vault grace now uses one distance-derived runtime window:
+    - `grace_distance = grace_period * Vmax`
+    - effective grace time scales with horizontal speed and is clamped to never be less forgiving than the old fixed `grace_period` baseline.
+  - this preserves current feel safety while allowing better consistency across slow/fast movement contexts.
+- Vault ceiling + camera/exit polish:
+  - vault max obstacle height cap increased to `3x` previous cap (slider range raised to `7.5`).
+  - added `vault_height_boost` slider for explicit vault vertical tuning without re-coupling jump invariants.
+  - vault camera pitch now follows a smooth dip/recover envelope (no instant snap on start frame).
+  - vault completion now applies a small guaranteed airborne pop to keep combo flow after mantle.
+  - airborne jump buffering can now convert to vault on late wall contact while still within grace.
+  - vault horizontal handling now preserves carried speed and applies only a small additive forward gain (no hard reset toward low caps).
+  - vault vertical impulse and exit pop were reduced, and mantle assist timing is slower + more forward-weighted for less teleport-like upward motion.
+  - vault assist now temporarily relaxes only the active vaulted-obstacle collision plane to prevent snagging, while still honoring new blocker collisions ahead.
+- Unified command ingestion via motion intent:
+  - both client sim tick and authoritative server tick now call `PlayerController.step_with_intent(...)`.
+  - jump/slide/wish direction are routed through one intent contract before solver/collision.
+- Split oversized controller file into ownership modules (all under 500 LOC):
+  - orchestration (`player_controller.py`)
+  - actions (`player_controller_actions.py`)
+  - surf/air/wall probes (`player_controller_surf.py`)
+  - collision/sweep/step-slide (`player_controller_collision.py`)
+- Integrated read-only observer layers:
+  - `camera_observer.py` handles camera shell smoothing from solved motion only.
+  - `animation_observer.py` applies optional visual bob/root-motion offsets without mutating movement state.
+- Replay determinism validation now runs during playback:
+  - recorded telemetry includes per-tick deterministic state hash.
+  - playback compares expected vs simulated hash and reports mismatch counts on exit.
+- Added CLI/automation wrapper for repeated determinism verification:
+  - `python -m ivan --verify-latest-replay-determinism --determinism-runs N`
+  - `python -m ivan --verify-replay-determinism <path> --determinism-runs N`
+  - both commands export determinism report JSON under telemetry export output.
+
+Still pending:
+- Capture initial baseline datasets (3 runs per route) using `docs/gameplay-baseline-checklist.md`.
+- Continue Phase 1 camera pass with optional audio/VFX event cues and final balancing of feedback gains.
+- Start Phase 2 movement stability pass (step/slope/ground-air transitions) against baseline metrics.
+- Reintroduce dash as a separate movement mode after the current invariant baseline pass; keep slide as non-boost hold-based momentum preservation.
+- Implement constrained ML/autotune loop per `docs/feel-ml-autotuner.md`.
+
+## Why This Helps Future Phases
+- Phase 0 baselining: replay telemetry gives us a stable per-tick data source to compare tuning passes, not just subjective feel.
+- Phase 1 camera work: camera-angle and input data in demos lets us quantify camera response quality against identical inputs.
+- Phase 2 movement stability: grounded transitions + speed data in demos makes step/slope/landing regressions measurable and reviewable.
+- Phase 3 polish: replay HUD and telemetry reduce iteration cost by making route-level behavior visible during every test run.
+
+## Next Steps (Execution Order)
+1. Capture initial baseline datasets (3 runs per route) using `docs/gameplay-baseline-checklist.md`.
+2. Start Phase 1 camera pipeline pass behind explicit tuning params.
+3. Build the constrained autotune prototype (`suggest` + `apply` + rollback gate) using route history files.
+
+## Rehaul Board Snapshot
+- Overall status: `Phase 0 active`, `Phase 1 active` (camera invariant pass in progress).
+- What is complete:
+  - feel-metrics overlay in gameplay (`F2`)
+  - replay data expansion (v3 frames with movement/camera/state telemetry + raw held inputs)
+  - replay input lock + deterministic playback safety improvements
+  - replay input HUD for visual command verification during playback
+  - replay telemetry export summaries with landing/camera metrics
+  - replay comparator utility (route-scoped latest vs reference deltas + baseline/history context)
+  - in-game Feel Session + `G` quick-capture export/compare/feedback loop
+  - `G` quick-capture rollback control (`Revert Last`) for one-click tuning restore
+  - camera invariant surface compacted (`camera_base_fov`, `camera_speed_fov_max_add`, `camera_tilt_gain`, `camera_event_gain`)
+  - camera event feedback unified under one shared envelope/gain path
+  - debug numeric controls switched to real-unit values (no normalized 0..100)
+  - explicit `noclip_speed` debug slider for fly-mode iteration
+- What is next:
+  - baseline capture pack for Route A/B/C (3 runs each)
+  - camera balancing pass on top of compact invariants using route telemetry exports
+  - optional camera audio/VFX cues once baseline camera tuning stabilizes
+- Why this sequence matters:
+  - we now have objective data and deterministic replays before camera/movement retuning
+  - every future tuning slice can be validated against the same recorded inputs
+  - regression detection is now practical for both movement and camera feel

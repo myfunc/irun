@@ -101,7 +101,9 @@ class MultiplayerClient:
             "mr": max(-1, min(1, int(cmd.get("mr") or 0))),
             "jp": bool(cmd.get("jp")),
             "jh": bool(cmd.get("jh")),
-            "ch": bool(cmd.get("ch")),
+            "sp": bool(cmd.get("sp")) or bool(cmd.get("dp")),
+            # Backward-compatible alias used by older servers.
+            "dp": bool(cmd.get("sp")) or bool(cmd.get("dp")),
             "gp": bool(cmd.get("gp")),
         }
         payload = json.dumps(pkt, separators=(",", ":"), ensure_ascii=True).encode("utf-8")

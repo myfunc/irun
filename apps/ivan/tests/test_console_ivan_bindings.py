@@ -1,0 +1,177 @@
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+
+from ivan.console.core import CommandContext
+from ivan.console.ivan_bindings import build_client_console
+
+
+class _FakeRunner:
+    def __init__(self) -> None:
+        self.tuning = SimpleNamespace()
+        self._runtime_connect_port = 7777
+
+    def _on_connect_server_from_menu(self, host: str, port_text: str) -> None:
+        self.connected = (host, port_text)
+
+    def _on_disconnect_server_from_menu(self) -> None:
+        self.disconnected = True
+
+    def _on_tuning_change(self, _field: str) -> None:
+        return
+
+    def _feel_apply_feedback(self, route_tag: str, text: str) -> None:
+        self.feedback_call = (route_tag, text)
+
+
+def test_console_replay_export_latest_command(monkeypatch) -> None:
+    runner = _FakeRunner()
+    con = build_client_console(runner)
+
+    called = {"count": 0}
+
+    def _fake_export_latest(*, out_dir=None):
+        called["count"] += 1
+        return SimpleNamespace(
+            source_demo="/tmp/sample.ivan_demo.json",
+            csv_path="/tmp/sample.telemetry.csv",
+            summary_path="/tmp/sample.summary.json",
+            tick_count=120,
+            telemetry_tick_count=120,
+        )
+
+    monkeypatch.setattr("ivan.console.ivan_bindings.export_latest_replay_telemetry", _fake_export_latest)
+
+    out = con.execute_line(ctx=CommandContext(role="client", origin="test"), line="replay_export_latest")
+
+    assert called["count"] == 1
+    assert any("sample.telemetry.csv" in line for line in out)
+
+
+def test_console_replay_compare_latest_command(monkeypatch) -> None:
+    runner = _FakeRunner()
+    con = build_client_console(runner)
+
+    def _fake_compare(*, out_dir=None, route_tag=None):
+        _ = out_dir, route_tag
+        return SimpleNamespace(
+            latest_export=SimpleNamespace(source_demo="/tmp/latest.ivan_demo.json"),
+            reference_export=SimpleNamespace(source_demo="/tmp/ref.ivan_demo.json"),
+            comparison_path="/tmp/compare.json",
+            improved_count=3,
+            regressed_count=1,
+            equal_count=2,
+        )
+
+    monkeypatch.setattr("ivan.console.ivan_bindings.compare_latest_replays", _fake_compare)
+    out = con.execute_line(ctx=CommandContext(role="client", origin="test"), line="replay_compare_latest")
+
+    assert any("compare.json" in line for line in out)
+    assert any("+3" in line for line in out)
+
+
+def test_console_feel_feedback_command() -> None:
+    runner = _FakeRunner()
+    con = build_client_console(runner)
+    out = con.execute_line(ctx=CommandContext(role="client", origin="test"), line='feel_feedback "too fast" A')
+    assert runner.feedback_call == ("A", "too fast")
+    assert any("feel_feedback applied" in line for line in out)
+
+
+def test_console_tuning_backup_restore_and_list(monkeypatch) -> None:
+    runner = _FakeRunner()
+    con = build_client_console(runner)
+
+    backup_path = Path("/tmp/20260210_120000_surf_bhop_c2_route-a.json")
+
+    monkeypatch.setattr(
+        "ivan.game.tuning_backups.create_tuning_backup",
+        lambda _runner, label=None, reason=None: backup_path,
+    )
+    monkeypatch.setattr(
+        "ivan.game.tuning_backups.restore_tuning_backup",
+        lambda _runner, backup_ref=None: backup_path,
+    )
+    monkeypatch.setattr(
+        "ivan.game.tuning_backups.list_tuning_backups",
+        lambda limit=20: [backup_path],
+    )
+    monkeypatch.setattr(
+        "ivan.game.tuning_backups.backup_metadata",
+        lambda _path: {
+            "active_profile_name": "surf_bhop_c2",
+            "label": "route-a",
+            "field_count": 42,
+        },
+    )
+
+    out_backup = con.execute_line(ctx=CommandContext(role="client", origin="test"), line='tuning_backup "route A"')
+    out_restore = con.execute_line(ctx=CommandContext(role="client", origin="test"), line="tuning_restore latest")
+    out_list = con.execute_line(ctx=CommandContext(role="client", origin="test"), line="tuning_backups")
+
+    assert any("backup:" in line for line in out_backup)
+    assert any("restored:" in line for line in out_restore)
+    assert any("profile=surf_bhop_c2" in line for line in out_list)
+
+
+def test_console_autotune_commands(monkeypatch) -> None:
+    runner = _FakeRunner()
+    con = build_client_console(runner)
+
+    context = SimpleNamespace(
+        route_tag="A",
+        note="route compare ready (+4/-1/=1)",
+        latest_summary_path=Path("/tmp/latest.summary.json"),
+        comparison_path=Path("/tmp/compare.json"),
+        history_path=Path("/tmp/history.json"),
+    )
+    adjustments = [
+        SimpleNamespace(
+            field="max_ground_speed",
+            before=6.0,
+            after=6.3,
+            reason="intent: raise top speed",
+        )
+    ]
+    eval_result = SimpleNamespace(
+        route_tag="A",
+        passed=True,
+        score=0.24,
+        improved_count=4,
+        regressed_count=1,
+        equal_count=1,
+        comparison_path=Path("/tmp/compare.json"),
+        history_path=Path("/tmp/history.json"),
+        checks=[SimpleNamespace(name="jump_success_drop", passed=True, detail="delta=+0.0300")],
+    )
+    backup_path = Path("/tmp/backup.json")
+
+    monkeypatch.setattr(
+        "ivan.console.autotune_bindings.autotune_suggest",
+        lambda runner, route_tag, feedback_text, out_dir=None: (context, adjustments),
+    )
+    monkeypatch.setattr(
+        "ivan.console.autotune_bindings.autotune_apply",
+        lambda runner, route_tag, feedback_text, out_dir=None: (context, adjustments, backup_path),
+    )
+    monkeypatch.setattr(
+        "ivan.console.autotune_bindings.autotune_eval",
+        lambda route_tag, out_dir=None: eval_result,
+    )
+    monkeypatch.setattr(
+        "ivan.console.autotune_bindings.autotune_rollback",
+        lambda runner, backup_ref=None: backup_path,
+    )
+
+    out_suggest = con.execute_line(ctx=CommandContext(role="client", origin="test"), line='autotune_suggest A "too slow"')
+    out_apply = con.execute_line(ctx=CommandContext(role="client", origin="test"), line='autotune_apply A "too slow"')
+    out_eval = con.execute_line(ctx=CommandContext(role="client", origin="test"), line="autotune_eval A")
+    out_rollback = con.execute_line(ctx=CommandContext(role="client", origin="test"), line="autotune_rollback")
+
+    assert any("suggested: 1" in line for line in out_suggest)
+    assert any("comparison:" in line for line in out_suggest)
+    assert any("applied: 1" in line for line in out_apply)
+    assert any("backup:" in line for line in out_apply)
+    assert any("guardrails: pass" in line for line in out_eval)
+    assert any("restored:" in line for line in out_rollback)

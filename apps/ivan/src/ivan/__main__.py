@@ -3,9 +3,14 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
+import sys
 
 from ivan.game import run
 from ivan.net import run_server
+from ivan.replays.compare import compare_latest_replays
+from ivan.replays.determinism_verify import verify_latest_replay_determinism, verify_replay_determinism
+from ivan.replays.telemetry import export_latest_replay_telemetry
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -23,6 +28,11 @@ def main(argv: list[str] | None = None) -> None:
         "--smoke-screenshot",
         default=None,
         help="Optional PNG output path (only used with --smoke). Saves a single screenshot before exit.",
+    )
+    parser.add_argument(
+        "--feel-harness",
+        action="store_true",
+        help="Boot directly into the deterministic movement feel harness scene.",
     )
     parser.add_argument(
         "--map",
@@ -78,7 +88,89 @@ def main(argv: list[str] | None = None) -> None:
         default="player",
         help="Multiplayer player name.",
     )
+    parser.add_argument(
+        "--export-latest-replay-telemetry",
+        action="store_true",
+        help="Export telemetry (CSV + JSON summary) for the latest replay and exit.",
+    )
+    parser.add_argument(
+        "--replay-telemetry-out",
+        default=None,
+        help="Optional output directory for replay telemetry exports.",
+    )
+    parser.add_argument(
+        "--compare-latest-replays",
+        action="store_true",
+        help="Auto-export latest+previous replay telemetry and write a comparison summary, then exit.",
+    )
+    parser.add_argument(
+        "--replay-route-tag",
+        default=None,
+        help="Optional route tag (A/B/C) attached to replay compare output.",
+    )
+    parser.add_argument(
+        "--verify-latest-replay-determinism",
+        action="store_true",
+        help="Replay the latest demo input N times in offline sim and report determinism stability, then exit.",
+    )
+    parser.add_argument(
+        "--verify-replay-determinism",
+        default=None,
+        help="Replay a specific demo input N times in offline sim and report determinism stability, then exit.",
+    )
+    parser.add_argument(
+        "--determinism-runs",
+        type=int,
+        default=5,
+        help="Number of repeated offline replay simulations used for determinism verification (default: 5).",
+    )
     args = parser.parse_args(argv)
+
+    if args.export_latest_replay_telemetry:
+        out_dir = Path(args.replay_telemetry_out) if args.replay_telemetry_out else None
+        result = export_latest_replay_telemetry(out_dir=out_dir)
+        print(f"source: {result.source_demo}")
+        print(f"csv: {result.csv_path}")
+        print(f"summary: {result.summary_path}")
+        print(f"ticks: {result.tick_count} (telemetry: {result.telemetry_tick_count})")
+        return
+
+    if args.compare_latest_replays:
+        out_dir = Path(args.replay_telemetry_out) if args.replay_telemetry_out else None
+        result = compare_latest_replays(out_dir=out_dir, route_tag=args.replay_route_tag)
+        print(f"latest: {result.latest_export.source_demo}")
+        print(f"reference: {result.reference_export.source_demo}")
+        print(f"comparison: {result.comparison_path}")
+        print(f"result: +{result.improved_count} / -{result.regressed_count} / ={result.equal_count}")
+        return
+
+    if args.verify_latest_replay_determinism:
+        out_dir = Path(args.replay_telemetry_out) if args.replay_telemetry_out else None
+        result = verify_latest_replay_determinism(runs=int(args.determinism_runs), out_dir=out_dir)
+        print(f"source: {result.source_demo}")
+        print(f"report: {result.report_path}")
+        print(f"runs: {result.runs} ticks: {result.tick_count}")
+        print(
+            f"stable: {result.stable} divergence_runs: {result.divergence_runs} "
+            f"recorded_hash_mismatches: {result.recorded_hash_mismatches}/{result.recorded_hash_checked}"
+        )
+        return
+
+    if args.verify_replay_determinism:
+        out_dir = Path(args.replay_telemetry_out) if args.replay_telemetry_out else None
+        result = verify_replay_determinism(
+            replay_path=Path(args.verify_replay_determinism),
+            runs=int(args.determinism_runs),
+            out_dir=out_dir,
+        )
+        print(f"source: {result.source_demo}")
+        print(f"report: {result.report_path}")
+        print(f"runs: {result.runs} ticks: {result.tick_count}")
+        print(
+            f"stable: {result.stable} divergence_runs: {result.divergence_runs} "
+            f"recorded_hash_mismatches: {result.recorded_hash_mismatches}/{result.recorded_hash_checked}"
+        )
+        return
 
     if args.server:
         run_server(
@@ -93,6 +185,7 @@ def main(argv: list[str] | None = None) -> None:
     run(
         smoke=args.smoke,
         smoke_screenshot=args.smoke_screenshot,
+        feel_harness=args.feel_harness,
         map_json=map_json,
         hl_root=args.hl_root,
         hl_mod=args.hl_mod,

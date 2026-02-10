@@ -4,8 +4,42 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ivan.console.autotune_bindings import register_autotune_commands
 from ivan.console.core import CommandContext, Console
 from ivan.physics.tuning import PhysicsTuning
+
+
+def export_latest_replay_telemetry(*, out_dir=None, route_tag=None, comment=None, route_name=None, run_note=None, feedback_text=None):
+    from ivan.replays.telemetry import export_latest_replay_telemetry as _impl
+
+    return _impl(
+        out_dir=out_dir,
+        route_tag=route_tag,
+        comment=comment,
+        route_name=route_name,
+        run_note=run_note,
+        feedback_text=feedback_text,
+    )
+
+
+def export_replay_telemetry(*, replay_path, out_dir=None, route_tag=None, comment=None, route_name=None, run_note=None, feedback_text=None):
+    from ivan.replays.telemetry import export_replay_telemetry as _impl
+
+    return _impl(
+        replay_path=replay_path,
+        out_dir=out_dir,
+        route_tag=route_tag,
+        comment=comment,
+        route_name=route_name,
+        run_note=run_note,
+        feedback_text=feedback_text,
+    )
+
+
+def compare_latest_replays(*, out_dir=None, route_tag=None, latest_comment=None):
+    from ivan.replays.compare import compare_latest_replays as _impl
+
+    return _impl(out_dir=out_dir, route_tag=route_tag, latest_comment=latest_comment)
 
 
 def _read_exec_lines(path: Path) -> list[str]:
@@ -75,6 +109,118 @@ def build_client_console(runner: Any) -> Console:
     def _cmd_disconnect(_ctx: CommandContext, _argv: list[str]) -> list[str]:
         runner._on_disconnect_server_from_menu()  # noqa: SLF001
         return ["disconnect"]
+
+    def _cmd_replay_export_latest(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        out_dir = Path(str(argv[0])) if argv else None
+        try:
+            result = export_latest_replay_telemetry(out_dir=out_dir)
+        except Exception as e:
+            return [f"error: {e}"]
+        return [
+            f"source: {result.source_demo}",
+            f"csv: {result.csv_path}",
+            f"summary: {result.summary_path}",
+            f"ticks: {result.tick_count} (telemetry: {result.telemetry_tick_count})",
+        ]
+
+    def _cmd_replay_export(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        if not argv:
+            return ["usage: replay_export <replay_path> [out_dir]"]
+        replay_path = Path(str(argv[0]))
+        if not replay_path.is_absolute():
+            replay_path = Path.cwd() / replay_path
+        out_dir = Path(str(argv[1])) if len(argv) >= 2 else None
+        try:
+            result = export_replay_telemetry(replay_path=replay_path, out_dir=out_dir)
+        except Exception as e:
+            return [f"error: {e}"]
+        return [
+            f"source: {result.source_demo}",
+            f"csv: {result.csv_path}",
+            f"summary: {result.summary_path}",
+            f"ticks: {result.tick_count} (telemetry: {result.telemetry_tick_count})",
+        ]
+
+    def _cmd_replay_compare_latest(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        out_dir = Path(str(argv[0])) if argv else None
+        route_tag = str(argv[1]).strip() if len(argv) >= 2 else None
+        try:
+            result = compare_latest_replays(out_dir=out_dir, route_tag=route_tag)
+        except Exception as e:
+            return [f"error: {e}"]
+        return [
+            f"latest: {result.latest_export.source_demo}",
+            f"reference: {result.reference_export.source_demo}",
+            f"comparison: {result.comparison_path}",
+            f"result: +{result.improved_count} / -{result.regressed_count} / ={result.equal_count}",
+        ]
+
+    def _cmd_feel_feedback(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        if not argv:
+            return ["usage: feel_feedback <text> [route_tag]"]
+        text = str(argv[0])
+        route_tag = str(argv[1]).strip() if len(argv) >= 2 else ""
+        fn = getattr(runner, "_feel_apply_feedback", None)
+        if not callable(fn):
+            return ["error: feel feedback is unavailable in this runtime"]
+        try:
+            fn(route_tag, text)
+        except Exception as e:
+            return [f"error: {e}"]
+        return [f'feel_feedback applied for route="{route_tag or "none"}"']
+
+    def _cmd_tuning_backup(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        from ivan.game.tuning_backups import create_tuning_backup
+
+        label = " ".join(str(x) for x in argv).strip() if argv else ""
+        try:
+            out = create_tuning_backup(
+                runner,
+                label=(label or None),
+                reason="manual-console",
+            )
+        except Exception as e:
+            return [f"error: {e}"]
+        return [f"backup: {out}"]
+
+    def _cmd_tuning_restore(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        from ivan.game.tuning_backups import restore_tuning_backup
+
+        ref = " ".join(str(x) for x in argv).strip() if argv else None
+        try:
+            out = restore_tuning_backup(runner, backup_ref=(ref or None))
+        except Exception as e:
+            return [f"error: {e}"]
+        try:
+            runner.ui.set_status(f"Tuning restored from backup: {Path(out).name}")
+        except Exception:
+            pass
+        return [f"restored: {out}"]
+
+    def _cmd_tuning_backups(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        from ivan.game.tuning_backups import backup_metadata, list_tuning_backups
+
+        limit = 12
+        if argv:
+            try:
+                limit = max(1, min(100, int(str(argv[0]))))
+            except Exception:
+                return ["usage: tuning_backups [limit]"]
+        rows = list_tuning_backups(limit=limit)
+        if not rows:
+            return ["no tuning backups found"]
+        out: list[str] = []
+        for p in rows:
+            try:
+                md = backup_metadata(p)
+            except Exception:
+                out.append(f"{p.name}")
+                continue
+            profile = str(md.get("active_profile_name") or "-")
+            label = str(md.get("label") or md.get("reason") or "-")
+            fields = int(md.get("field_count") or 0)
+            out.append(f"{p.name} | profile={profile} | fields={fields} | tag={label}")
+        return out
 
     def _registry() -> dict[str, Any]:
         # Treat these as "entities" for now. We'll extend once map v3 entities exist.
@@ -230,6 +376,42 @@ def build_client_console(runner: Any) -> Console:
     con.register_command(name="exec", help="Execute a .cfg-like script file.", handler=_cmd_exec)
     con.register_command(name="connect", help="Connect to a multiplayer server.", handler=_cmd_connect)
     con.register_command(name="disconnect", help="Disconnect from multiplayer.", handler=_cmd_disconnect)
+    con.register_command(
+        name="replay_export_latest",
+        help="Export telemetry (CSV + JSON summary) for latest replay.",
+        handler=_cmd_replay_export_latest,
+    )
+    con.register_command(
+        name="replay_export",
+        help="Export telemetry (CSV + JSON summary) for a replay path.",
+        handler=_cmd_replay_export,
+    )
+    con.register_command(
+        name="replay_compare_latest",
+        help="Auto-export latest+previous replay telemetry and write a comparison summary.",
+        handler=_cmd_replay_compare_latest,
+    )
+    con.register_command(
+        name="feel_feedback",
+        help="Apply rule-based tuning tweaks from feedback text + latest replay metrics.",
+        handler=_cmd_feel_feedback,
+    )
+    con.register_command(
+        name="tuning_backup",
+        help="Save a tuning snapshot backup (optional label).",
+        handler=_cmd_tuning_backup,
+    )
+    con.register_command(
+        name="tuning_restore",
+        help="Restore tuning from latest backup or by name/path.",
+        handler=_cmd_tuning_restore,
+    )
+    con.register_command(
+        name="tuning_backups",
+        help="List recent tuning backups.",
+        handler=_cmd_tuning_backups,
+    )
+    register_autotune_commands(con=con, runner=runner)
     con.register_command(name="ent_list", help="List registered entities/objects.", handler=_cmd_ent_list)
     con.register_command(name="ent_get", help="Get a property by path (dot-separated).", handler=_cmd_ent_get)
     con.register_command(name="ent_set", help="Set a property by path using JSON value.", handler=_cmd_ent_set)

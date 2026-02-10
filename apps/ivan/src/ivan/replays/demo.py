@@ -8,7 +8,7 @@ from pathlib import Path
 from ivan.paths import app_root
 
 
-DEMO_FORMAT_VERSION = 1
+DEMO_FORMAT_VERSION = 3
 DEMO_EXT = ".ivan_demo.json"
 
 
@@ -20,9 +20,23 @@ class DemoFrame:
     move_right: int
     jump_pressed: bool
     jump_held: bool
-    crouch_held: bool
+    slide_pressed: bool
     grapple_pressed: bool
     noclip_toggle_pressed: bool
+    key_w_held: bool = False
+    key_a_held: bool = False
+    key_s_held: bool = False
+    key_d_held: bool = False
+    arrow_up_held: bool = False
+    arrow_down_held: bool = False
+    arrow_left_held: bool = False
+    arrow_right_held: bool = False
+    mouse_left_held: bool = False
+    mouse_right_held: bool = False
+    raw_wasd_available: bool = False
+    raw_arrows_available: bool = False
+    raw_mouse_buttons_available: bool = False
+    telemetry: dict[str, float | int | bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -109,9 +123,22 @@ def save_recording(rec: DemoRecording) -> Path:
                 "mr": int(f.move_right),
                 "jp": bool(f.jump_pressed),
                 "jh": bool(f.jump_held),
-                "ch": bool(f.crouch_held),
+                "sp": bool(f.slide_pressed),
+                # Backward-compatible alias for older tools.
+                "dp": bool(f.slide_pressed),
                 "gp": bool(f.grapple_pressed),
                 "nt": bool(f.noclip_toggle_pressed),
+                "kw": bool(f.key_w_held),
+                "ka": bool(f.key_a_held),
+                "ks": bool(f.key_s_held),
+                "kd": bool(f.key_d_held),
+                "au": bool(f.arrow_up_held),
+                "ad": bool(f.arrow_down_held),
+                "al": bool(f.arrow_left_held),
+                "ar": bool(f.arrow_right_held),
+                "m1": bool(f.mouse_left_held),
+                "m2": bool(f.mouse_right_held),
+                "tm": dict(f.telemetry) if isinstance(f.telemetry, dict) else None,
             }
             for f in rec.frames
         ],
@@ -125,7 +152,8 @@ def load_replay(path: Path) -> DemoRecording:
     if not isinstance(raw, dict):
         raise ValueError("Invalid replay payload")
     ver = raw.get("format_version")
-    if int(ver) != DEMO_FORMAT_VERSION:
+    iver = int(ver)
+    if iver not in (1, 2, DEMO_FORMAT_VERSION):
         raise ValueError(f"Unsupported replay format_version={ver}")
 
     meta = raw.get("metadata")
@@ -151,6 +179,9 @@ def load_replay(path: Path) -> DemoRecording:
     for row in frames_in:
         if not isinstance(row, dict):
             continue
+        has_raw_wasd = all(k in row for k in ("kw", "ka", "ks", "kd"))
+        has_raw_arrows = all(k in row for k in ("au", "ad", "al", "ar"))
+        has_raw_mouse_buttons = all(k in row for k in ("m1", "m2"))
         frames.append(
             DemoFrame(
                 look_dx=int(row.get("dx") or 0),
@@ -159,9 +190,25 @@ def load_replay(path: Path) -> DemoRecording:
                 move_right=max(-1, min(1, int(row.get("mr") or 0))),
                 jump_pressed=bool(row.get("jp")),
                 jump_held=bool(row.get("jh")),
-                crouch_held=bool(row.get("ch")),
+                slide_pressed=bool(row.get("sp")) or bool(row.get("dp")),
                 grapple_pressed=bool(row.get("gp")),
                 noclip_toggle_pressed=bool(row.get("nt")),
+                # v3+ explicit held states for accurate replay HUD.
+                # Fallbacks preserve readable behavior for older demos.
+                key_w_held=bool(row.get("kw")) if "kw" in row else int(row.get("mf") or 0) > 0,
+                key_a_held=bool(row.get("ka")) if "ka" in row else int(row.get("mr") or 0) < 0,
+                key_s_held=bool(row.get("ks")) if "ks" in row else int(row.get("mf") or 0) < 0,
+                key_d_held=bool(row.get("kd")) if "kd" in row else int(row.get("mr") or 0) > 0,
+                arrow_up_held=bool(row.get("au")) if "au" in row else False,
+                arrow_down_held=bool(row.get("ad")) if "ad" in row else False,
+                arrow_left_held=bool(row.get("al")) if "al" in row else False,
+                arrow_right_held=bool(row.get("ar")) if "ar" in row else False,
+                mouse_left_held=bool(row.get("m1")) if "m1" in row else bool(row.get("gp")),
+                mouse_right_held=bool(row.get("m2")) if "m2" in row else False,
+                raw_wasd_available=bool(has_raw_wasd),
+                raw_arrows_available=bool(has_raw_arrows),
+                raw_mouse_buttons_available=bool(has_raw_mouse_buttons),
+                telemetry=(dict(row.get("tm")) if isinstance(row.get("tm"), dict) else None),
             )
         )
     return DemoRecording(metadata=md, frames=frames)

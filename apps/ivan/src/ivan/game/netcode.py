@@ -198,7 +198,12 @@ def disconnect_multiplayer(host) -> None:
     host._net_reconcile_pos_offset = LVector3f(0, 0, 0)
     host._net_reconcile_yaw_offset = 0.0
     host._net_reconcile_pitch_offset = 0.0
-    host._net_local_cam_ready = False
+    host._camera_observer.reset()
+    host._camera_tilt_observer.reset()
+    if hasattr(host, "_camera_height_observer"):
+        host._camera_height_observer.reset()
+    if hasattr(host, "_camera_feedback_observer"):
+        host._camera_feedback_observer.reset()
     host._net_cfg_apply_pending_version = 0
     host._net_cfg_apply_sent_at = 0.0
     host._net_perf.reset()
@@ -381,7 +386,12 @@ def poll_network_snapshot(host) -> None:
                     host._net_reconcile_pos_offset = LVector3f(0, 0, 0)
                     host._net_reconcile_yaw_offset = 0.0
                     host._net_reconcile_pitch_offset = 0.0
-                    host._net_local_cam_ready = False
+                    host._camera_observer.reset()
+                    host._camera_tilt_observer.reset()
+                    if hasattr(host, "_camera_height_observer"):
+                        host._camera_height_observer.reset()
+                    if hasattr(host, "_camera_feedback_observer"):
+                        host._camera_feedback_observer.reset()
                     if not host._playback_active:
                         host._start_new_demo_recording()
                     continue

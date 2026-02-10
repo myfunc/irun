@@ -17,7 +17,7 @@ class InputCommand:
     move_right: int
     jump_pressed: bool
     jump_held: bool
-    crouch_held: bool
+    slide_pressed: bool
     grapple_pressed: bool
 
 
@@ -58,7 +58,7 @@ def decode_input_packet(payload: bytes) -> tuple[str, InputCommand] | None:
         move_right=max(-1, min(1, int(obj.get("mr") or 0))),
         jump_pressed=bool(obj.get("jp")),
         jump_held=bool(obj.get("jh")),
-        crouch_held=bool(obj.get("ch")),
+        slide_pressed=bool(obj.get("sp")) or bool(obj.get("dp")),
         grapple_pressed=bool(obj.get("gp")),
     )
     return (token, cmd)

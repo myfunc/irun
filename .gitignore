@@ -27,7 +27,25 @@ coverage.xml
 
 # Repo scratch
 .tmp/
+*.irunmap
 
 # Imported assets (kept locally to avoid bloating git history)
 apps/ivan/assets/imported/
 apps/ivan/assets/imported/halflife/valve/pool_party/
+
+# Local TrenchBroom/compile scratch outputs (do not commit)
+apps/ivan/assets/maps/*.map
+apps/ivan/assets/maps/*.bsp
+apps/ivan/assets/maps/*.log
+apps/ivan/assets/maps/*.lin
+apps/ivan/assets/maps/*.pts
+apps/ivan/assets/maps/*.err
+apps/ivan/assets/maps/*.ext
+apps/ivan/assets/maps/*.wa_
+
+# Local compiler binaries
+apps/ivan/tools/bin/sdhlt/
+
+# Replay artifacts (local tooling output)
+apps/ivan/replays/*.ivan_demo.json
+apps/ivan/replays/telemetry_exports/

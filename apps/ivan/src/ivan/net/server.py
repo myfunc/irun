@@ -9,7 +9,6 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from pathlib import Path
 
 from panda3d.core import LVector3f, NodePath, PandaNode
 
@@ -19,6 +18,7 @@ from ivan.console.server_bindings import build_server_console
 from ivan.console.line_bus import ThreadSafeLineBus
 from ivan.maps.bundle_io import resolve_bundle_handle
 from ivan.physics.collision_world import CollisionWorld
+from ivan.physics.motion.intent import MotionIntent
 from ivan.physics.player_controller import PlayerController
 from ivan.physics.tuning import PhysicsTuning
 from ivan.net.protocol import (
@@ -150,18 +150,17 @@ class MultiplayerServer:
             {
                 "surf_enabled": True,
                 "autojump_enabled": True,
-                "enable_jump_buffer": True,
-                "gravity": 39.6196435546875,
+                "coyote_buffer_enabled": True,
                 "jump_height": 1.0108081703186036,
+                "jump_apex_time": 0.22585349306495618,
                 "max_ground_speed": 6.622355737686157,
-                "max_air_speed": 6.845157165527343,
-                "ground_accel": 49.44859447479248,
-                "jump_accel": 31.738659286499026,
-                "friction": 13.672204017639162,
-                "air_control": 0.24100000381469727,
-                "air_counter_strafe_brake": 23.000001525878908,
+                "run_t90": 0.04656740038574615,
+                "ground_stop_t90": 0.16841168101466534,
+                "air_speed_mult": 6.845157165527343 / 6.622355737686157,
+                "air_gain_t90": 0.9 / 31.738659286499026,
+                "wallrun_sink_t90": 0.22,
                 "mouse_sensitivity": 0.09978364143371583,
-                "jump_buffer_time": 0.2329816741943359,
+                "grace_period": 0.2329816741943359,
                 "wall_jump_cooldown": 0.9972748947143555,
                 "surf_accel": 23.521632385253906,
                 "surf_gravity_scale": 0.33837084770202636,
@@ -385,7 +384,7 @@ class MultiplayerServer:
                         move_right=0,
                         jump_pressed=False,
                         jump_held=False,
-                        crouch_held=False,
+                        slide_pressed=False,
                         grapple_pressed=False,
                     ),
                     rewind_history=deque(maxlen=240),
@@ -574,10 +573,9 @@ class MultiplayerServer:
                 88.0,
             )
 
-            if cmd.jump_pressed:
-                st.ctrl.queue_jump()
+            jump_requested = bool(cmd.jump_pressed)
             if self.tuning.autojump_enabled and cmd.jump_held and st.ctrl.grounded:
-                st.ctrl.queue_jump()
+                jump_requested = True
 
             if cmd.grapple_pressed:
                 self._grapple_or_damage(st)
@@ -589,11 +587,15 @@ class MultiplayerServer:
                 move_forward=int(cmd.move_forward),
                 move_right=int(cmd.move_right),
             )
-            st.ctrl.step(
+            st.ctrl.step_with_intent(
                 dt=self.fixed_dt,
-                wish_dir=wish,
+                intent=MotionIntent(
+                    wish_dir=LVector3f(wish),
+                    jump_requested=bool(jump_requested),
+                    slide_requested=bool(cmd.slide_pressed),
+                ),
                 yaw_deg=st.yaw,
-                crouching=bool(cmd.crouch_held),
+                pitch_deg=st.pitch,
             )
             if float(st.ctrl.pos.z) < float(self.kill_z):
                 st.ctrl.respawn()

@@ -5,7 +5,7 @@
 - Ivan: bhop/strafe-style movement prototype
 - Ivan: in-game debug/admin panel with live movement parameter tuning
 - Ivan: debug-tuned parameters persist to local state and load as next-run defaults
-- Ivan: debug panel upgraded to grouped, collapsible, scrollable CS-style boxed layout with normalized sliders
+- Ivan: debug panel upgraded to grouped, collapsible, scrollable CS-style boxed layout with real-unit sliders/entries
 - Ivan: debug profile manager with default presets (`surf_bhop_c2`, `surf_bhop`, `bhop`, `surf`, `surf_sky2_server`), immediate per-profile setting restore on switch, and persistent custom profile saves
 - Ivan: in-game menu on `Esc` (Resume, Map Selector, Key Bindings, Back to Main Menu, Quit)
 - Ivan: debug/admin panel moved to `` ` `` (tilde/backtick)
@@ -13,9 +13,104 @@
 - Ivan: in-game menu/debug UI block gameplay input but keep simulation running (no pause)
 - Ivan: classic center crosshair (Half-Life/CS style) visible during active gameplay
 - Ivan: input debug overlay (`F2`) for keyboard/mouse troubleshooting
+- Ivan: gameplay feel telemetry in `F2` overlay (rolling jump success, landing speed loss, ground flicker, camera jerk proxies)
+- Ivan: staged invariant-motion refactor foundation
+  - added invariant fields for run/stop/jump/air/slide/wallrun timing windows (`run_t90`, `ground_stop_t90`, `jump_apex_time`, `air_speed_mult`, `air_gain_t90`, `wallrun_sink_t90`, `slide_stop_t90`, `grace_period`)
+  - added `physics.motion` package with single config object (`MotionConfig`: invariants + derived constants)
+  - `PlayerController` now consumes `MotionSolver` for derived run response, ground damping, gravity, and jump takeoff speed
+  - gameplay/client/server simulation now routes through `MotionIntent` (`step_with_intent`) for unified movement command ingestion
+  - legacy run/gravity direct movement fields were removed from active tuning and migrated into invariant timing fields
+  - legacy air gain scalars (`max_air_speed`, `jump_accel`, `air_control`, `air_counter_strafe_brake`) are migrated for compatibility and removed from active tuning schema
+- Ivan: powerslide prototype integrated into input + movement pipeline
+  - slide trigger: `Shift` (hold-to-slide, release-to-exit)
+  - slide parameters are invariant-driven (`slide_stop_t90` controls grounded slide deceleration)
+  - slide has no entry boost; it preserves carried horizontal speed and decays via solver damping
+  - slide lowers hull height while active and restores standing hull on exit
+  - slide steering is camera-yaw driven (mouse look); keyboard strafe input does not steer slide
+- Ivan: deterministic feel harness bootstrap (`--feel-harness`)
+  - harness geometry includes: flat ground, slope approximation, step, wall, ledge, and a deterministic moving-platform fixture
+  - harness isolation toggles exposed in debug UI:
+    - camera smoothing on/off
+    - animation/root-motion visual layer on/off
+    - custom friction on/off
+    - slide enable on/off
+    - coyote/buffer leniency on/off
+- Ivan: expanded runtime feel diagnostics
+  - `F2` now includes FPS + frame p95, sim steps, state, accel, contacts, normals, leniency timers, and rolling determinism hash summary
+  - `F2` now includes live camera feedback diagnostics (`cam_fov`, target fov, speed ratio/curve factor, camera event quality/amplitude/reject reason) for fast camera tuning
+  - `F2` + gameplay status line now include vault diagnostics (`ok` or explicit reject reason) for ledge-vault iteration
+  - `F10` dumps rolling diagnostics buffer to JSON for offline jank analysis
+  - `F11` dumps rolling determinism trace hash buffer for replay/harness checks
+- Ivan: debug tuning surface reduced to invariant-first controls
+  - removed most legacy/direct scalar sliders from the runtime debug menu
+  - kept compact controls for `Vmax`, run response timing, ground stop timing, air speed/gain, wallrun sink timing, jump height/apex timing, slide stop timing, leniency windows, and vault iteration (`vault_max_ledge_height`, `vault_height_boost`, `vault_forward_boost`)
+  - added explicit `noclip_speed` slider for fly-mode iteration without touching movement invariants
+  - added character-height iteration slider (`player_half_height`) with automatic eye-height proportional update
+  - added optional character scale lock toggle to auto-derive `player_radius` + `step_height` from `player_half_height` without touching core feel invariants
+  - restored `autojump_enabled` in compact toggles for bhop-chain validation
+  - restored `wallrun_enabled` toggle for wallrun iteration
+  - surf section is now isolation-only toggle (`surf_enabled`) with no surf-specific scalar sliders in the debug surface
+- Ivan: wallrun feedback polish
+  - while wallrunning, camera now applies slight roll tilt away from the wall as an engagement indicator
+  - wallrun jump now biases horizontal launch direction toward camera forward heading (while still peeling off wall)
+  - wallrun jump now enforces a minimum peel-away horizontal component opposite the wall so jump-off gains reliable wall-exit distance
+  - wallrun jump now exits wallrun state immediately, so camera roll starts recovering right after jump-off
+  - wallrun jump horizontal launch now prioritizes opposite-wall peel-away and carries ground-jump-like launch speed (instead of over-biasing along-wall camera-forward drift)
+  - wallrun jump vertical launch now uses full jump takeoff pop on wallrun jump-offs
+  - wallrun vertical sink is now invariant-driven (`wallrun_sink_t90`) instead of ad-hoc per-feature velocity edits
+  - debug UI now maps `wallrun_sink_t90` in intuitive direction (higher slider value = stronger wallrun hold / less height loss)
+  - wallrun tilt recovery now begins immediately when wallrun ends (including jump-off), avoiding delayed recentering
+- Ivan: read-only camera tilt animation pass
+  - wallrun roll transitions are now smoothed (snappy exponential response instead of one-frame snap)
+  - camera adds gentle movement-relative tilt:
+    - strafe left/right -> subtle roll
+    - backpedal -> subtle pitch
+  - all tilt is camera-only and does not write gameplay motion/velocity
+- Ivan: read-only camera feedback pass (movement feedback, not movement authority)
+  - added speed-driven FOV response (`camera_base_fov`, `camera_speed_fov_max_add`) with explicit policy:
+    - no FOV widening at or below `Vmax`
+    - widening starts only above `Vmax`
+    - speed-FOV reaches configured max addition by ~`10x Vmax`, with stronger visible response in common `2x-5x` flow speeds
+  - added unified event envelope feedback (`camera_event_gain`) shared by landing + successful-bhop pulses
+  - added tilt scaling invariant (`camera_tilt_gain`) for movement/wallrun/vault camera tilt intensity
+  - feedback can be isolated with `camera_feedback_enabled` in the debug menu camera section
+- Ivan: read-only camera height smoothing pass
+  - slide and vault eye-height transitions are smoothed through a dedicated `CameraHeightObserver`
+  - camera observer state resets on map start/respawn/network reconcile paths to avoid stale offset snaps
+- Ivan: pause menu layout refresh for iteration ergonomics
+  - ESC menu panel is wider/taller to avoid clipping in gameplay resolutions
+  - top tabs use concise labels to avoid truncation
+  - Menu tab action buttons use a two-column grid so all actions remain visible without overlap
+- Ivan: vault leniency and trigger criteria refactor
+  - vault is enabled by default for movement iteration
+  - vault timing now uses the same `grace_period` invariant used by jump buffering and coyote windows
+  - grace windows are now distance-derived at runtime (`grace_distance = grace_period * Vmax`) and stay backward-safe (never less forgiving than base period)
+  - vault requires a front-facing, non-stepable obstacle and uses a raised runtime max-height cap (`3x` previous cap)
+  - airborne vault attempts are now allowed (not gated to grounded coyote-only paths)
+  - grounded-only stepable rejection keeps low obstacles on normal step-up while preserving in-air vault flow
+  - successful vault mantle assist now runs in phased clearance (up first, then forward) to avoid "vault ok but still blocked" outcomes
+  - ledge-top probing now samples dual origins and near/outside wall offsets to reduce false `no ledge top` rejects
+  - vault max obstacle slider range increased to `7.5` and runtime cap raised to `3x` previous height limit
+  - new `vault_height_boost` slider controls extra vault vertical clearance/pop
+  - vault now preserves carried horizontal speed (plus small forward gain) instead of clamping toward low fixed caps
+  - vault vertical impulse/pop was reduced; mantle assist is now slower/smoother and more forward-biased than upward
+  - vault temporarily relaxes collision against the currently vaulted obstacle during assist to avoid snagging/drag, while still blocking new front walls
+  - vault camera dip now uses a smooth dip/recover curve; vault exit enforces slight airborne pop so successful vault chains continue in air
+  - if jump is buffered shortly before wall contact while airborne, vault can now still trigger on contact
+- Ivan: controller module split for ownership clarity and reviewability
+  - `player_controller.py`: orchestration + authority loop
+  - `player_controller_actions.py`: jump/vault/grapple/slide-hull/friction
+  - `player_controller_surf.py`: surf/air behavior + wall/surf probes
+  - `player_controller_collision.py`: collision/step-slide/sweep logic
+- Ivan: camera and animation are now explicit read-only observers
+  - `camera_observer.py`: render-shell camera smoothing that follows solved simulation state only
+  - `animation_observer.py`: optional visual bob/root-motion layer that applies camera-only offsets and never writes movement state
 - Ivan: error console overlay (`F3`) that captures and shows unhandled exceptions without crashing the app (cycles hidden/collapsed/feed)
 - Ivan: generated test course with walls and jump obstacles
 - Ivan: BSP-to-map-bundle asset pipeline and runtime map loading (`--map`, including assets-relative aliases)
+- Ivan: Source VMF import pipeline (`tools/importers/source/import_source_vmf.py`) that compiles VMF -> BSP (`vbsp`/`vvis`/`vrad`) and then builds IVAN map bundles
+- Ivan: TrenchBroom map import pipeline (`tools/importers/goldsrc/import_trenchbroom_map.py`) that compiles Valve220 `.map` via GoldSrc tools (`hlcsg`/`hlbsp`/`hlvis`/`hlrad`) and then builds IVAN map bundles
+  - Supports SDHLT binary naming (`sdHLCSG`/`sdHLBSP`/`sdHLVIS`/`sdHLRAD`) including their no-`-game` CLI behavior
 - Ivan: packed map bundles (`.irunmap`) for imported maps (zip archive with runtime auto-extract cache)
 - Ivan: Source material extraction (VTF->PNG conversion), textured rendering, and skybox hookup
   - Basic VMT parsing for translucency/additive/alphatest and `$basetexture` indirection
@@ -25,8 +120,9 @@
   - Supports masked transparency for `{` textures via GoldSrc-style blue colorkey / palette index 255
   - Converts GoldSrc skybox textures from `gfx/env/` into bundle `materials/skybox/` (when present)
   - Extracts baked GoldSrc lightmaps (RGB) into bundle `lightmaps/` and renders them in runtime (supports up to 4 light styles per face)
+  - Runtime now falls back to base textures for faces whose referenced lightmap files are missing (prevents full-black map rendering for partial bundles)
 - Ivan: GoldSrc PVS visibility culling (BSP VISIBILITY + leaf surface lists) to avoid rendering geometry hidden behind walls (when cache is available)
-  - Currently disabled by default (can be toggled ON in the debug menu via `vis_culling_enabled`).
+  - Currently disabled by default (`vis_culling_enabled` remains a tuning field/profile value but is not in the compact invariant debug menu).
 - Ivan: main menu (UI kit) with map bundle selection and on-demand GoldSrc/Xash3D import from a chosen game directory
   - Mouse-driven: click menu items to select, mouse wheel to scroll; keyboard navigation still supported (Up/Down/Enter)
   - Fast navigation: hold Up/Down for accelerated scrolling, Left/Right page jump, and `Cmd+F`/`Ctrl+F` search
@@ -46,7 +142,42 @@
   - recording starts on spawn/respawn and can be saved with `F`
   - saved demos are stored in-repo under `apps/ivan/replays/`
   - replay browser available from `Esc -> Replays`
-  - playback re-simulates recorded per-tick input (no position samples) at fixed `60 Hz`
+  - playback re-simulates recorded per-tick input at fixed `60 Hz`
+  - replay mode includes a compact input HUD visualizer (movement/jump/slide/mouse direction)
+  - replay HUD now shows explicit held input states (`WASD`, arrow keys, mouse buttons) captured per tick to avoid derived-axis flicker
+  - per-tick replay frames now also include telemetry for feel tuning (position/velocity/speeds/camera angles/state/buttons)
+  - replay telemetry export tooling:
+    - `replay_export_latest` (in-game console command) exports latest replay to CSV + JSON summary
+    - `replay_export <path> [out_dir]` exports a selected replay to CSV + JSON summary
+    - summary now includes Phase 0 feel metrics: landing speed loss/retention and camera jerk (avg/max)
+    - `replay_compare_latest [out_dir] [route_tag]` compares route-tagged exported runs when `route_tag` is provided (latest route run vs preferred prior route run) and writes comparison JSON
+    - `python -m ivan --export-latest-replay-telemetry [--replay-telemetry-out <dir>]` exports without launching gameplay
+    - `python -m ivan --compare-latest-replays [--replay-telemetry-out <dir>] [--replay-route-tag A]` compares latest vs previous without launching gameplay
+    - `python -m ivan --verify-latest-replay-determinism [--determinism-runs N] [--replay-telemetry-out <dir>]` runs repeated offline replay sim determinism checks and emits JSON
+    - route export metadata now stores: `route_tag`, optional `route_name`, optional `run_note`, optional `feedback_text`, and `source_demo` path
+  - while replay is active, gameplay/menu input is locked; `R` exits replay and respawns to normal play
+- Ivan: in-game Feel Session tab (ESC menu)
+  - route tagging via radio-style options (`A/B/C`)
+  - export now saves the current in-progress run first, exports that exact replay, then starts a fresh recording
+  - free-text feedback action applies intent-driven tuning adjustments and auto-compares latest vs previous run
+  - free-text apply path now auto-creates a tuning backup snapshot before applying any tweak
+  - export/apply flow stores route/comment metadata into replay summary export history, clears feedback input, and confirms save in-panel
+- Ivan: quick feel capture popup (`G` while playing)
+  - route selector (`A/B/C`) + free text fields (`route name`, `run notes`, `feedback`)
+  - one-click `Save + Export` writes current run telemetry and route-scoped comparisons
+  - optional `Export + Apply` runs the same export path, snapshots current tuning backup, and then applies feedback-driven tuning suggestions
+  - added `Revert Last` button to restore the latest tuning backup directly from popup UI (no console command needed)
+  - route compare history now includes:
+    - latest vs preferred prior run (prefers prior runs with notes/feedback)
+    - latest vs baseline run (first run on route, when available)
+    - route history context JSON summarizing how latest ranks against prior route runs
+  - tuning backup control-plane is available in console commands (`tuning_backup`, `tuning_restore`, `tuning_backups`) for quick rollback during autotune passes
+  - route-scoped ML autotune V1 commands are available in console:
+    - `autotune_suggest <route_tag> <feedback_text> [out_dir]`
+    - `autotune_apply <route_tag> <feedback_text> [out_dir]` (always creates backup before apply)
+    - `autotune_eval <route_tag> [out_dir]`
+    - `autotune_rollback [backup_ref]` (restore latest by default; same backup pipeline as `tuning_restore` and `G` popup Revert Last)
+  - ML autotune design/implementation details are tracked in `docs/feel-ml-autotuner.md`
 - Ivan: multiplayer foundation (authoritative server + connected clients)
   - dedicated server mode with TCP bootstrap + UDP gameplay packets
   - normal client sessions are offline by default; ESC menu `Open To Network` starts/stops embedded host mode for LAN joinability while keeping the local player in-session
@@ -73,12 +204,13 @@
   - health system with grapple damage (`20` per hit) and corner HP HUD
 - Ivan: autojump toggle (hold jump to continue hopping)
 - Ivan: grapple hook traversal (attach/detach on LMB, one-shot attach boost, rope swing constraint)
-- Ivan: vault is disabled by default (runtime toggle in debug menu)
+- Ivan: vault is enabled by default (runtime toggle in debug menu)
 - Ivan: surf prototype on slanted surfaces (strafe-held surf with live tuning controls)
 - Ivan: legacy-style surf preset (`surf_sky2_server`) approximating public surf_ski_2/surf_sky_2 server cvars
 - Ivan: surf steering preserves inertia (momentum can redirect on ramps without single-frame horizontal direction flips)
 - Ivan: surf vertical input redirection applies uphill only; downhill acceleration remains gravity-driven
 - Ivan: surf-specific acceleration/gravity modifiers stop immediately after contact is lost (no post-leave surf boost)
+- Ivan: debug/admin tuning UI now explicitly includes course marker extents (`course_marker_half_extent_xy/z`) in grouped controls
 - Game modes: maps can declare how they should run via bundle metadata (`run.json`)
   - `free_run`: default "just run around"
   - `time_trial`: local time trial with restart and local PB/leaderboard (per `map_id`)
@@ -118,6 +250,7 @@
 - Rendering: retro texture filtering options (nearest-neighbor, mipmap strategy)
 - Game loop: pause, restart, level select
 - Debug: in-game tweakables and metrics
+- Gameplay feel rehaul plan and phased execution tracker: `docs/gameplay-feel-rehaul.md`
 - UI: extend the procedural UI kit to cover remaining runtime UI needs (avoid one-off custom UI)
 
 ## Paused

@@ -26,11 +26,14 @@ class PauseMenuUI:
         on_back_to_menu,
         on_quit,
         on_open_replays,
+        on_open_feel_session,
         on_open_keybindings,
         on_rebind_noclip,
         on_toggle_open_network,
         on_connect_server,
         on_disconnect_server,
+        on_feel_export_latest,
+        on_feel_apply_feedback,
     ) -> None:
         aspect_ratio = 16.0 / 9.0
         if getattr(ShowBaseGlobal, "base", None) is not None:
@@ -40,14 +43,15 @@ class PauseMenuUI:
                 pass
 
         panel_top = 0.95
-        panel_bottom = -0.70
-        panel_width = 0.88
+        panel_bottom = -0.86
+        panel_width = min(1.28, max(0.96, aspect_ratio * 0.70))
         right = aspect_ratio - 0.02
         left = right - panel_width
 
         w = panel_width
         h = panel_top - panel_bottom
         self._theme = theme
+        self._feel_route_tag: str = "A"
 
         self._panel = Panel.build(
             parent=aspect2d,
@@ -96,7 +100,7 @@ class PauseMenuUI:
             w=content_w,
             tab_h=tab_h,
             page_h=page_h,
-            labels=["Menu", "Key Bindings", "Multiplayer"],
+            labels=["Menu", "Keys", "Net", "Feel"],
             active=0,
         )
 
@@ -129,19 +133,23 @@ class PauseMenuUI:
             pos=(0.0, 0, theme.pad),
             text_wordwrap=22,
         )
-
-        btn_h = 0.13
+        btn_h = 0.12
         btn_w = content_w
 
-        # Main page buttons (stacked).
+        # Main page buttons (2-column grid to keep everything visible on smaller windows).
         y0 = page_h - theme.pad - btn_h / 2.0
-        gap = theme.gap + 0.03
+        row_gap = theme.gap + 0.02
+        row_step = btn_h + row_gap
+        col_gap = theme.gap
+        col_w = (btn_w - col_gap) * 0.5
+        left_x = col_w * 0.5
+        right_x = col_w + col_gap + col_w * 0.5
         self._btn_resume = Button.build(
             parent=self._tabs.page(0),
             theme=theme,
-            x=btn_w / 2.0,
+            x=left_x,
             y=y0,
-            w=btn_w,
+            w=col_w,
             h=btn_h,
             label="Resume",
             on_click=on_resume,
@@ -149,9 +157,9 @@ class PauseMenuUI:
         self._btn_map_selector = Button.build(
             parent=self._tabs.page(0),
             theme=theme,
-            x=btn_w / 2.0,
-            y=y0 - gap - btn_h,
-            w=btn_w,
+            x=right_x,
+            y=y0,
+            w=col_w,
             h=btn_h,
             label="Map Selector",
             on_click=on_map_selector,
@@ -164,9 +172,9 @@ class PauseMenuUI:
         self._btn_keybindings = Button.build(
             parent=self._tabs.page(0),
             theme=theme,
-            x=btn_w / 2.0,
-            y=y0 - (gap + btn_h) * 2,
-            w=btn_w,
+            x=left_x,
+            y=y0 - row_step,
+            w=col_w,
             h=btn_h,
             label="Key Bindings",
             on_click=_open_keys,
@@ -174,9 +182,9 @@ class PauseMenuUI:
         self._btn_replays = Button.build(
             parent=self._tabs.page(0),
             theme=theme,
-            x=btn_w / 2.0,
-            y=y0 - (gap + btn_h) * 3,
-            w=btn_w,
+            x=right_x,
+            y=y0 - row_step,
+            w=col_w,
             h=btn_h,
             label="Replays",
             on_click=on_open_replays,
@@ -184,19 +192,29 @@ class PauseMenuUI:
         self._btn_multiplayer = Button.build(
             parent=self._tabs.page(0),
             theme=theme,
-            x=btn_w / 2.0,
-            y=y0 - (gap + btn_h) * 4,
-            w=btn_w,
+            x=left_x,
+            y=y0 - row_step * 2.0,
+            w=col_w,
             h=btn_h,
             label="Multiplayer",
             on_click=self.show_multiplayer,
         )
+        self._btn_feel = Button.build(
+            parent=self._tabs.page(0),
+            theme=theme,
+            x=right_x,
+            y=y0 - row_step * 2.0,
+            w=col_w,
+            h=btn_h,
+            label="Feel Session",
+            on_click=lambda: (on_open_feel_session(), self.show_feel_session()),
+        )
         self._btn_back_to_menu = Button.build(
             parent=self._tabs.page(0),
             theme=theme,
-            x=btn_w / 2.0,
-            y=y0 - (gap + btn_h) * 5,
-            w=btn_w,
+            x=left_x,
+            y=y0 - row_step * 3.0,
+            w=col_w,
             h=btn_h,
             label="Back to Main Menu",
             on_click=on_back_to_menu,
@@ -204,20 +222,22 @@ class PauseMenuUI:
         self._btn_quit = Button.build(
             parent=self._tabs.page(0),
             theme=theme,
-            x=btn_w / 2.0,
-            y=y0 - (gap + btn_h) * 6,
-            w=btn_w,
+            x=right_x,
+            y=y0 - row_step * 3.0,
+            w=col_w,
             h=btn_h,
             label="Quit",
             on_click=on_quit,
         )
+        open_network_h = btn_h * 0.55
+        open_network_y = max(theme.pad + open_network_h / 2.0, y0 - row_step * 4.0)
         self._open_network_checkbox = Checkbox.build(
             parent=self._tabs.page(0),
             theme=theme,
             x=btn_w / 2.0,
-            y=max(theme.pad + 0.06, y0 - (gap + btn_h) * 6.7),
+            y=open_network_y,
             w=btn_w,
-            h=btn_h * 0.55,
+            h=open_network_h,
             label="Open To Network",
             checked=False,
             on_change=lambda checked: on_toggle_open_network(bool(checked)),
@@ -321,6 +341,140 @@ class PauseMenuUI:
             on_click=self.show_main,
         )
 
+        # Feel Session page.
+        feel_label_y0 = page_h - theme.pad - theme.small_scale * 1.0
+        self._feel_route_label = DirectLabel(
+            parent=self._tabs.page(3),
+            text="Route",
+            text_scale=theme.small_scale,
+            text_align=TextNode.ALeft,
+            text_fg=theme.text,
+            frameColor=(0, 0, 0, 0),
+            pos=(0.0, 0, feel_label_y0),
+        )
+        self._feel_hint_label = DirectLabel(
+            parent=self._tabs.page(3),
+            text="Tip: press G in-game for quick Save+Export popup.",
+            text_scale=theme.small_scale * 0.90,
+            text_align=TextNode.ALeft,
+            text_fg=theme.text_muted,
+            frameColor=(0, 0, 0, 0),
+            pos=(btn_w * 0.42, 0, feel_label_y0),
+        )
+        route_w = (btn_w / 3.0) - theme.gap
+        route_y = feel_label_y0 - input_h * 0.70
+        self._feel_route_a = Checkbox.build(
+            parent=self._tabs.page(3),
+            theme=theme,
+            x=(route_w * 0.5),
+            y=route_y,
+            w=route_w,
+            h=input_h * 0.85,
+            label="A",
+            checked=True,
+            on_change=lambda checked: self._on_feel_route_change("A", bool(checked)),
+        )
+        self._feel_route_b = Checkbox.build(
+            parent=self._tabs.page(3),
+            theme=theme,
+            x=(route_w * 1.5) + theme.gap,
+            y=route_y,
+            w=route_w,
+            h=input_h * 0.85,
+            label="B",
+            checked=False,
+            on_change=lambda checked: self._on_feel_route_change("B", bool(checked)),
+        )
+        self._feel_route_c = Checkbox.build(
+            parent=self._tabs.page(3),
+            theme=theme,
+            x=(route_w * 2.5) + (theme.gap * 2.0),
+            y=route_y,
+            w=route_w,
+            h=input_h * 0.85,
+            label="C",
+            checked=False,
+            on_change=lambda checked: self._on_feel_route_change("C", bool(checked)),
+        )
+        self._feel_feedback_label = DirectLabel(
+            parent=self._tabs.page(3),
+            text="Feedback",
+            text_scale=theme.small_scale,
+            text_align=TextNode.ALeft,
+            text_fg=theme.text,
+            frameColor=(0, 0, 0, 0),
+            pos=(0.0, 0, feel_label_y0 - input_h * 2.1),
+        )
+        self._feel_feedback_input = TextInput.build(
+            parent=self._tabs.page(3),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=feel_label_y0 - input_h * 2.9,
+            w=btn_w,
+            h=input_h,
+            initial="",
+            on_submit=lambda _text: None,
+            frame_color=theme.panel2,
+            text_fg=theme.text,
+        )
+        try:
+            self._feel_feedback_input.entry["width"] = 96
+        except Exception:
+            pass
+        try:
+            self._feel_feedback_input.entry.guiItem.setMaxChars(800)
+        except Exception:
+            pass
+        self._feel_export_button = Button.build(
+            parent=self._tabs.page(3),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=feel_label_y0 - input_h * 4.4,
+            w=btn_w,
+            h=btn_h,
+            label="Export Latest Replay",
+            on_click=lambda: on_feel_export_latest(self.feel_route_tag, self.feel_feedback_text),
+        )
+        self._feel_apply_feedback_button = Button.build(
+            parent=self._tabs.page(3),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=feel_label_y0 - input_h * 5.65,
+            w=btn_w,
+            h=btn_h,
+            label="Apply Feedback Tuning",
+            on_click=lambda: on_feel_apply_feedback(self.feel_route_tag, self.feel_feedback_text),
+        )
+        status_h = max(0.12, btn_h * 1.25)
+        status_y = theme.pad + btn_h + theme.gap + 0.02
+        self._feel_status_panel = DirectFrame(
+            parent=self._tabs.page(3),
+            frameColor=theme.panel2,
+            relief=DGG.FLAT,
+            frameSize=(0.0, btn_w, 0.0, status_h),
+            pos=(0.0, 0.0, status_y),
+        )
+        self._feel_status = DirectLabel(
+            parent=self._feel_status_panel,
+            text="",
+            text_scale=theme.small_scale * 0.95,
+            text_align=TextNode.ALeft,
+            text_fg=theme.text,
+            frameColor=(0, 0, 0, 0),
+            pos=(theme.pad * 0.65, 0.0, status_h * 0.33),
+            text_wordwrap=26,
+        )
+        self._feel_back_button = Button.build(
+            parent=self._tabs.page(3),
+            theme=theme,
+            x=btn_w / 2.0,
+            y=theme.pad + btn_h / 2.0,
+            w=btn_w,
+            h=btn_h,
+            label="Back",
+            on_click=self.show_main,
+        )
+
         self.show_main()
         self.root.hide()
 
@@ -372,6 +526,16 @@ class PauseMenuUI:
             inactive_text_fg=self._theme.text_muted,
         )
 
+    def show_feel_session(self) -> None:
+        self._tabs.select(
+            3,
+            active_color=self._theme.panel2,
+            inactive_color=self._theme.panel,
+            active_text_fg=self._theme.text,
+            inactive_text_fg=self._theme.text_muted,
+        )
+        self._set_feel_route_tag(self._feel_route_tag)
+
     def set_noclip_binding(self, key_name: str) -> None:
         self._noclip_bind_label["text"] = f"Current noclip key: {str(key_name).upper()}"
 
@@ -407,3 +571,42 @@ class PauseMenuUI:
 
     def set_multiplayer_status(self, text: str) -> None:
         self._multiplayer_status["text"] = str(text)
+
+    def set_feel_status(self, text: str) -> None:
+        self._feel_status["text"] = str(text)
+
+    @property
+    def feel_route_tag(self) -> str:
+        return str(self._feel_route_tag)
+
+    @property
+    def feel_feedback_text(self) -> str:
+        try:
+            return str(self._feel_feedback_input.entry.get()).strip()
+        except Exception:
+            return ""
+
+    def set_feel_feedback_text(self, text: str) -> None:
+        try:
+            self._feel_feedback_input.entry.enterText(str(text))
+        except Exception:
+            pass
+
+    def clear_feel_feedback(self) -> None:
+        self.set_feel_feedback_text("")
+
+    def _set_feel_route_tag(self, tag: str) -> None:
+        t = str(tag or "").strip().upper()
+        if t not in {"A", "B", "C"}:
+            t = "A"
+        self._feel_route_tag = t
+        self._feel_route_a.set_checked(t == "A")
+        self._feel_route_b.set_checked(t == "B")
+        self._feel_route_c.set_checked(t == "C")
+
+    def _on_feel_route_change(self, tag: str, checked: bool) -> None:
+        if not checked:
+            # Keep radio semantics: one option always selected.
+            self._set_feel_route_tag(self._feel_route_tag)
+            return
+        self._set_feel_route_tag(tag)

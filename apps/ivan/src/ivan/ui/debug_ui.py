@@ -18,6 +18,13 @@ from irun_ui_kit.widgets.tooltip import Tooltip
 from irun_ui_kit.widgets.window import Window
 
 from ivan.physics.tuning import PhysicsTuning
+from ivan.ui.debug_ui_schema import (
+    FIELD_HELP as UI_FIELD_HELP,
+    FIELD_LABELS as UI_FIELD_LABELS,
+    GROUPS as UI_GROUPS,
+    NUMERIC_CONTROLS as UI_NUMERIC_CONTROLS,
+    TOGGLE_CONTROLS as UI_TOGGLE_CONTROLS,
+)
 
 
 @dataclass
@@ -29,207 +36,14 @@ class _GroupUI:
 
 class DebugUI:
     # Keep these lists as stable wiring contracts (tests rely on them).
-    NUMERIC_CONTROLS: list[tuple[str, float, float]] = [
-        ("gravity", 8.0, 60.0),
-        ("jump_height", 0.2, 4.0),
-        ("max_ground_speed", 3.0, 40.0),
-        ("max_air_speed", 3.0, 45.0),
-        ("ground_accel", 5.0, 140.0),
-        ("jump_accel", 1.0, 140.0),
-        ("friction", 0.0, 25.0),
-        ("air_control", 0.0, 1.0),
-        ("air_counter_strafe_brake", 0.0, 90.0),
-        ("mouse_sensitivity", 0.02, 0.40),
-        ("crouch_speed_multiplier", 0.2, 1.0),
-        ("crouch_half_height", 0.30, 1.20),
-        ("crouch_eye_height", 0.15, 1.20),
-        ("wall_jump_boost", 1.0, 20.0),
-        ("wall_jump_cooldown", 0.0, 3.0),
-        ("surf_accel", 0.0, 120.0),
-        ("surf_gravity_scale", 0.0, 2.5),
-        ("surf_min_normal_z", 0.01, 0.50),
-        ("surf_max_normal_z", 0.20, 0.95),
-        ("vault_jump_multiplier", 1.0, 2.5),
-        ("vault_forward_boost", 0.0, 6.0),
-        ("vault_min_ledge_height", 0.05, 0.8),
-        ("vault_max_ledge_height", 0.4, 2.5),
-        ("vault_cooldown", 0.0, 1.0),
-        ("jump_buffer_time", 0.0, 0.35),
-        ("noclip_speed", 1.0, 35.0),
-        ("grapple_fire_range", 10.0, 400.0),
-        ("grapple_attach_boost", 0.0, 40.0),
-        ("grapple_attach_shorten_speed", 0.0, 80.0),
-        ("grapple_attach_shorten_time", 0.0, 0.80),
-        ("grapple_pull_strength", 0.0, 160.0),
-        ("grapple_min_length", 0.5, 10.0),
-        ("grapple_max_length", 5.0, 300.0),
-        ("grapple_rope_half_width", 0.002, 0.08),
-        ("max_ground_slope_deg", 20.0, 70.0),
-        ("step_height", 0.0, 1.2),
-        ("ground_snap_dist", 0.0, 0.6),
-        ("player_radius", 0.20, 0.80),
-        ("player_half_height", 0.70, 1.60),
-        ("player_eye_height", 0.20, 1.30),
-        ("course_marker_half_extent_xy", 0.5, 20.0),
-        ("course_marker_half_extent_z", 0.25, 20.0),
-    ]
-    TOGGLE_CONTROLS: list[str] = [
-        "enable_jump_buffer",
-        "autojump_enabled",
-        "noclip_enabled",
-        "surf_enabled",
-        "walljump_enabled",
-        "wallrun_enabled",
-        "vault_enabled",
-        "crouch_enabled",
-        "grapple_enabled",
-        "vis_culling_enabled",
-    ]
-
-    GROUPS: list[tuple[str, list[str], list[str]]] = [
-        (
-            "Movement Core",
-            [
-                "gravity",
-                "max_ground_speed",
-                "ground_accel",
-                "friction",
-                "max_air_speed",
-                "jump_accel",
-                "air_control",
-                "air_counter_strafe_brake",
-                "mouse_sensitivity",
-            ],
-            [],
-        ),
-        (
-            "Surf / Air Tech",
-            [
-                "surf_accel",
-                "surf_gravity_scale",
-                "surf_min_normal_z",
-                "surf_max_normal_z",
-                "wall_jump_boost",
-                "wall_jump_cooldown",
-            ],
-            ["surf_enabled", "walljump_enabled", "wallrun_enabled"],
-        ),
-        (
-            "Jump / Vault",
-            [
-                "jump_height",
-                "jump_buffer_time",
-                "vault_jump_multiplier",
-                "vault_forward_boost",
-                "vault_min_ledge_height",
-                "vault_max_ledge_height",
-                "vault_cooldown",
-                "grapple_fire_range",
-                "grapple_attach_boost",
-                "grapple_attach_shorten_speed",
-                "grapple_attach_shorten_time",
-                "grapple_pull_strength",
-                "grapple_min_length",
-                "grapple_max_length",
-                "grapple_rope_half_width",
-            ],
-            ["enable_jump_buffer", "autojump_enabled", "vault_enabled"],
-        ),
-        (
-            "Collision / Hull",
-            [
-                "max_ground_slope_deg",
-                "step_height",
-                "ground_snap_dist",
-                "player_radius",
-                "player_half_height",
-                "player_eye_height",
-                "crouch_speed_multiplier",
-                "crouch_half_height",
-                "crouch_eye_height",
-                "noclip_speed",
-            ],
-            ["crouch_enabled", "noclip_enabled", "grapple_enabled"],
-        ),
-        (
-            "Rendering / Visibility",
-            [],
-            ["vis_culling_enabled"],
-        ),
-    ]
-
-    FIELD_LABELS: dict[str, str] = {
-        "max_ground_speed": "ground accel target speed",
-        "max_air_speed": "air accel target speed",
-        "jump_accel": "air accel strength",
-        "air_counter_strafe_brake": "air reverse brake",
-        "surf_accel": "surf accel strength",
-        "surf_gravity_scale": "surf gravity scale",
-        "grapple_fire_range": "grapple fire range",
-        "grapple_attach_boost": "grapple attach boost",
-        "grapple_attach_shorten_speed": "grapple auto-shorten speed",
-        "grapple_attach_shorten_time": "grapple auto-shorten time",
-        "grapple_pull_strength": "grapple rope pull strength",
-        "grapple_min_length": "grapple min rope length",
-        "grapple_max_length": "grapple max rope length",
-        "grapple_rope_half_width": "grapple rope width",
-    }
-
+    NUMERIC_CONTROLS: list[tuple[str, float, float]] = UI_NUMERIC_CONTROLS
+    TOGGLE_CONTROLS: list[str] = UI_TOGGLE_CONTROLS
+    GROUPS: list[tuple[str, list[str], list[str]]] = UI_GROUPS
+    FIELD_LABELS: dict[str, str] = UI_FIELD_LABELS
     # Tooltips (tests rely on Lower/Higher guidance strings).
-    FIELD_HELP: dict[str, str] = {
-        "gravity": "Lower: floatier movement and longer airtime. Higher: faster fall and snappier landings.",
-        "jump_height": "Lower: shorter hop height. Higher: higher jump apex and longer time before landing.",
-        "max_ground_speed": "Lower: lower ground acceleration target speed. Higher: higher target speed (not a strict hard cap).",
-        "max_air_speed": "Lower: lower air acceleration target speed. Higher: higher target speed (momentum can still exceed it).",
-        "ground_accel": "Lower: slower speed build-up on ground. Higher: faster acceleration to top ground speed.",
-        "jump_accel": "Lower: weaker bunnyhop/strafe acceleration in air. Higher: stronger airborne speed gain.",
-        "friction": "Lower: keep momentum longer on ground. Higher: lose ground speed faster when input stops.",
-        "air_control": "Lower: less steering authority in air. Higher: tighter mid-air steering.",
-        "air_counter_strafe_brake": "Lower: softer airborne counter-strafe braking. Higher: much more aggressive speed reduction.",
-        "mouse_sensitivity": "Lower: slower camera turn response. Higher: faster camera turn response.",
-        "crouch_speed_multiplier": "Lower: much slower movement while crouched. Higher: crouched speed closer to normal speed.",
-        "crouch_half_height": "Lower: shorter crouch collision height. Higher: taller crouch collision height.",
-        "crouch_eye_height": "Lower: camera sits lower while crouched. Higher: camera sits higher while crouched.",
-        "wall_jump_boost": "Lower: weaker horizontal push from wall jumps. Higher: stronger push away from wall.",
-        "wall_jump_cooldown": "Lower: wall-jumps can repeat rapidly. Higher: longer lockout between wall-jumps.",
-        "surf_accel": "Lower: weaker strafe-driven gain on surf ramps. Higher: stronger strafe acceleration.",
-        "surf_gravity_scale": "Lower: gentler gravity pull while surfing. Higher: stronger gravity pull along the ramp.",
-        "surf_min_normal_z": "Lower: allows surfing on flatter ramps. Higher: requires steeper ramps to enter surf state.",
-        "surf_max_normal_z": "Lower: only very steep ramps are surfable. Higher: allows less-steep ramps to count as surf.",
-        "vault_jump_multiplier": "Lower: vault jump closer to normal jump height. Higher: vault launches higher.",
-        "vault_forward_boost": "Lower: little forward speed from vault. Higher: stronger vault forward burst.",
-        "vault_min_ledge_height": "Lower: vault can trigger on smaller ledges. Higher: requires a taller ledge.",
-        "vault_max_ledge_height": "Lower: only low-to-mid ledges are vaultable. Higher: allows taller ledges.",
-        "vault_cooldown": "Lower: vault can retrigger sooner. Higher: longer delay between vaults.",
-        "jump_buffer_time": "Lower: tighter jump timing before landing. Higher: more forgiving early jump presses.",
-        "noclip_speed": "Lower: slower free-fly movement in noclip mode. Higher: faster noclip traversal speed.",
-        "grapple_fire_range": "Lower: shorter grapple reach from crosshair. Higher: longer grapple reach.",
-        "grapple_attach_boost": "Lower: weaker one-time pull toward anchor on attach. Higher: stronger attach boost.",
-        "grapple_attach_shorten_speed": "Lower: less rope shortening after attach. Higher: faster post-attach rope shortening.",
-        "grapple_attach_shorten_time": "Lower: shorter auto-shorten window after attach. Higher: longer auto-shorten window.",
-        "grapple_pull_strength": "Lower: softer rope correction when taut. Higher: stronger pull toward rope length.",
-        "grapple_min_length": "Lower: allows tighter rope radius. Higher: keeps a larger minimum swing radius.",
-        "grapple_max_length": "Lower: limits how far rope can extend. Higher: allows longer rope extension.",
-        "grapple_rope_half_width": "Lower: thinner visible rope. Higher: thicker visible rope.",
-        "max_ground_slope_deg": "Lower: fewer slopes count as walkable. Higher: steeper slopes remain walkable.",
-        "step_height": "Lower: smaller obstacles can be stepped over. Higher: taller steps are auto-climbed.",
-        "ground_snap_dist": "Lower: less ground sticking on small drops. Higher: stronger snap to nearby walkable ground.",
-        "player_radius": "Lower: narrower collision capsule. Higher: wider body collision.",
-        "player_half_height": "Lower: shorter collision capsule. Higher: taller collision capsule.",
-        "player_eye_height": "Lower: camera sits lower. Higher: camera sits higher.",
-        "course_marker_half_extent_xy": "Lower: smaller Start/Finish trigger volumes (harder to hit). Higher: larger trigger volumes (easier to hit).",
-        "course_marker_half_extent_z": "Lower: shorter Start/Finish trigger volumes (harder to hit). Higher: taller trigger volumes (easier to hit).",
-        "enable_jump_buffer": "Lower (OFF): no jump input buffering. Higher (ON): buffered jump before landing.",
-        "autojump_enabled": "Lower (OFF): jump on press only. Higher (ON): holding jump re-queues only while grounded.",
-        "noclip_enabled": "Lower (OFF): normal collision movement. Higher (ON): collision-free noclip movement.",
-        "surf_enabled": "Lower (OFF): slanted-surface surfing disabled. Higher (ON): surf ramps work with strafe hold.",
-        "walljump_enabled": "Lower (OFF): wall-jumps disabled. Higher (ON): wall-jumps enabled.",
-        "wallrun_enabled": "Lower (OFF): wallrun disabled. Higher (ON): side wallrun enabled.",
-        "vault_enabled": "Lower (OFF): ledge vault disabled. Higher (ON): second-jump ledge vault enabled.",
-        "crouch_enabled": "Lower (OFF): crouch input ignored. Higher (ON): hold C to crouch.",
-        "grapple_enabled": "Lower (OFF): grapple hook disabled. Higher (ON): LMB click attach/detach.",
-        "vis_culling_enabled": "Lower (OFF): disable GoldSrc PVS culling (stable visuals). Higher (ON): enable visibility culling (may pop).",
-    }
+    FIELD_HELP: dict[str, str] = UI_FIELD_HELP
+    # UI-only inversion for fields where "move right = stronger effect" is more intuitive.
+    _INVERTED_UI_NUMERIC_FIELDS: set[str] = {"wallrun_sink_t90"}
 
     def __init__(
         self,
@@ -484,7 +298,7 @@ class DebugUI:
     def sync_from_tuning(self) -> None:
         for g in self._groups.values():
             for field, ctrl in g.numeric.items():
-                value = float(getattr(self._tuning, field))
+                value = self._to_ui_numeric(field, float(getattr(self._tuning, field)))
                 ctrl.set_value(value, emit=False)
             for field, cb in g.toggles.items():
                 cb.set_checked(bool(getattr(self._tuning, field)))
@@ -528,13 +342,13 @@ class DebugUI:
                 y=y_cursor,
                 w=row_w,
                 label=self._label_for_field(field),
-                value=float(getattr(self._tuning, field)),
+                value=self._to_ui_numeric(field, float(getattr(self._tuning, field))),
                 minimum=low,
                 maximum=high,
-                on_change=lambda val, f=field: self._set_tuning(f, float(val)),
-                normalized_slider=True,
-                normalized_entry=True,
-                precision=3 if high <= 3.0 else 2,
+                on_change=lambda val, f=field: self._set_tuning_from_ui(f, float(val)),
+                normalized_slider=False,
+                normalized_entry=False,
+                precision=self._precision_for_range(low=low, high=high),
             )
             numeric[field] = ctrl
             tip = self.FIELD_HELP.get(field)
@@ -635,6 +449,19 @@ class DebugUI:
         setattr(self._tuning, field, float(value))
         self._on_tuning_change(field)
 
+    def _set_tuning_from_ui(self, field: str, value: float) -> None:
+        self._set_tuning(field, self._from_ui_numeric(field, value))
+
+    def _to_ui_numeric(self, field: str, value: float) -> float:
+        if field not in self._INVERTED_UI_NUMERIC_FIELDS:
+            return float(value)
+        low, high = self._numeric_ranges.get(field, (0.0, 1.0))
+        return float(low + high - float(value))
+
+    def _from_ui_numeric(self, field: str, value: float) -> float:
+        # Reflection around [low, high] midpoint is its own inverse.
+        return self._to_ui_numeric(field, value)
+
     def _set_bool_field(self, field: str, checked: bool) -> None:
         setattr(self._tuning, field, bool(checked))
         self._on_tuning_change(field)
@@ -643,6 +470,17 @@ class DebugUI:
         if field in self.FIELD_LABELS:
             return self.FIELD_LABELS[field]
         return field.replace("_", " ")
+
+    @staticmethod
+    def _precision_for_range(*, low: float, high: float) -> int:
+        span = abs(float(high) - float(low))
+        if span <= 0.5:
+            return 4
+        if span <= 4.0:
+            return 3
+        if span <= 40.0:
+            return 2
+        return 1
 
     def _on_profile_select_click(self, name: str) -> None:
         self._on_profile_select(str(name))
