@@ -41,6 +41,7 @@ apps/ivan/assets/maps/*.pts
 apps/ivan/assets/maps/*.err
 apps/ivan/assets/maps/*.ext
 apps/ivan/assets/maps/*.wa_
+apps/ivan/assets/maps/**/autosave/
 
 # Local compiler binaries
 apps/ivan/tools/bin/sdhlt/
