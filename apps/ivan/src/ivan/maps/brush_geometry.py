@@ -342,10 +342,13 @@ def _compute_uv(
     sx = face.scale_x if face.scale_x != 0.0 else 1.0
     sy = face.scale_y if face.scale_y != 0.0 else 1.0
 
-    u = (_dot(vertex, u_axis) + face.u_offset) / (sx * tex_w)
+    # Valve 220 semantics:
+    #   texel_u = dot(P, UAxis) / scale_x + u_offset
+    # (u_offset is in texture-space units and must NOT be scaled).
+    u = ((_dot(vertex, u_axis) / sx) + face.u_offset) / tex_w
     # Negate V: GoldSrc textures have V=0 at the top (V increases downward),
     # while Panda3D / OpenGL have V=0 at the bottom (V increases upward).
-    v = -(_dot(vertex, v_axis) + face.v_offset) / (sy * tex_h)
+    v = -((_dot(vertex, v_axis) / sy) + face.v_offset) / tex_h
     return (u, v)
 
 

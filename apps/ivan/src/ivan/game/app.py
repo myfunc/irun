@@ -106,6 +106,11 @@ class RunnerDemo(ShowBase):
         self.ui_theme = self.ui_renderer.theme
         self.tuning = PhysicsTuning()
         self._loaded_state = load_state()
+        self._window_resize_persist_enabled: bool = sys.platform.startswith("win")
+        self._last_persisted_window_size: tuple[int, int] = (
+            int(self._loaded_state.window_width),
+            int(self._loaded_state.window_height),
+        )
         self._suspend_tuning_persist: bool = False
         self._default_profiles = self._build_default_profiles()
         self._profiles: dict[str, dict[str, float | bool]] = {}
@@ -369,8 +374,31 @@ class RunnerDemo(ShowBase):
         self.camLens.setFov(float(self.tuning.camera_base_fov))
         # Reduce near-plane clipping when hugging walls in first-person.
         self.camLens.setNearFar(0.03, 5000.0)
+        if self._window_resize_persist_enabled:
+            self.accept("window-event", self._on_window_event)
         if self._pointer_locked:
             self._center_mouse()
+
+    def _on_window_event(self, window) -> None:
+        if self.cfg.smoke or not self._window_resize_persist_enabled or self.win is None:
+            return
+        if window is not None and window is not self.win:
+            return
+        try:
+            props = self.win.getProperties()
+            if props.getFullscreen():
+                return
+            width = int(self.win.getXSize())
+            height = int(self.win.getYSize())
+        except Exception:
+            return
+        if width < 320 or height < 240:
+            return
+        size = (width, height)
+        if size == self._last_persisted_window_size:
+            return
+        self._last_persisted_window_size = size
+        update_state(fullscreen=False, window_width=width, window_height=height)
 
     def _apply_video_settings(self, *, fullscreen: bool, width: int, height: int) -> None:
         """Apply display settings at runtime and persist them to user state."""
@@ -383,6 +411,7 @@ class RunnerDemo(ShowBase):
         else:
             props.setFullscreen(False)
             props.setSize(int(width), int(height))
+            self._last_persisted_window_size = (int(width), int(height))
         self.win.requestProperties(props)
         update_state(fullscreen=fullscreen, window_width=int(width), window_height=int(height))
 
