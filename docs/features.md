@@ -51,6 +51,7 @@
   - restored `wallrun_enabled` toggle for wallrun iteration
   - surf section is now isolation-only toggle (`surf_enabled`) with no surf-specific scalar sliders in the debug surface
 - Ivan: wallrun feedback polish
+  - wallrun is now enabled by default in the base tuning profile (`wallrun_enabled=True`)
   - while wallrunning, camera now applies slight roll tilt away from the wall as an engagement indicator
   - wallrun jump now biases horizontal launch direction toward camera forward heading (while still peeling off wall)
   - wallrun jump now enforces a minimum peel-away horizontal component opposite the wall so jump-off gains reliable wall-exit distance

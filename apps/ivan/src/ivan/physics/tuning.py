@@ -55,7 +55,7 @@ class PhysicsTuning:
     noclip_speed: float = 9.0
     surf_enabled: bool = True
     walljump_enabled: bool = True
-    wallrun_enabled: bool = False
+    wallrun_enabled: bool = True
     vault_enabled: bool = True
     grapple_enabled: bool = False
     grapple_fire_range: float = 180.0
