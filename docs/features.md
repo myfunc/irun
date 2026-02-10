@@ -46,10 +46,19 @@
   - kept compact controls for `Vmax`, run response timing, ground stop timing, air speed/gain, wallrun sink timing, jump height/apex timing, slide stop timing, leniency windows, and vault iteration (`vault_max_ledge_height`, `vault_height_boost`, `vault_forward_boost`)
   - added explicit `noclip_speed` slider for fly-mode iteration without touching movement invariants
   - added character-height iteration slider (`player_half_height`) with automatic eye-height proportional update
+  - added `step_height` slider for live step-up / uneven-ground footing iteration
   - added optional character scale lock toggle to auto-derive `player_radius` + `step_height` from `player_half_height` without touching core feel invariants
   - restored `autojump_enabled` in compact toggles for bhop-chain validation
   - restored `wallrun_enabled` toggle for wallrun iteration
   - surf section is now isolation-only toggle (`surf_enabled`) with no surf-specific scalar sliders in the debug surface
+- Ivan: slide grounding stability pass
+  - short slide ground-loss grace prevents one-tick grounded/airborne flicker from forcing repeated crouch/stand transitions on sloped descents
+  - ground probing now incorporates step-aware distance/hysteresis to reduce slope contact jitter
+  - step-slide path choice now prefers progress along intended move direction (not only raw distance), reducing diagonal "push along step face" behavior
+  - step-slide now preserves grounded state from the selected path result (fixes false airborne flags on stair descent path comparisons)
+- Ivan: pointer-capture focus safety
+  - mouse center-snap is suspended while the game window is unfocused/minimized, so alt-tab no longer drags cursor back to center
+  - on focus return, one recenter frame is swallowed to avoid a large first-frame look spike
 - Ivan: wallrun feedback polish
   - wallrun is now enabled by default in the base tuning profile (`wallrun_enabled=True`)
   - while wallrunning, camera now applies slight roll tilt away from the wall as an engagement indicator
@@ -185,9 +194,15 @@
 - Ivan: multiplayer foundation (authoritative server + connected clients)
   - dedicated server mode with TCP bootstrap + UDP gameplay packets
   - normal client sessions are offline by default; ESC menu `Open To Network` starts/stops embedded host mode for LAN joinability while keeping the local player in-session
-  - if the local host port is already in use, host-toggle falls back to connecting an existing local server instead of crashing
+  - host toggle now always restarts the embedded local host first (prevents reconnecting stale in-process server state)
+  - if the local host port is already in use, host-toggle now fails fast and does not auto-connect to an unknown existing local server
   - ESC menu `Multiplayer` tab supports runtime server join via host/port input plus Connect/Disconnect controls
   - joining a server auto-loads the server map on the client before multiplayer session starts
+  - client now applies welcome spawn/yaw immediately on successful connect to avoid large first-frame correction teleports
+  - when opening local host mode mid-run (`Open To Network`), embedded server now seeds local-player spawn from current live player position/yaw to avoid forced teleport back to map start
+  - additional joining players spawn with small offsets around the authoritative spawn base (prevents all players overlapping one point when map spawn fallback is used)
+  - hosting while running a direct TrenchBroom `.map` now uses converted `.map` spawn/collision data on the authoritative server (prevents empty-world respawn loops/void teleports in host mode)
+  - direct `.map` host startup now fails explicitly if conversion cannot produce a valid collision mesh (no silent broken-world fallback)
   - host-opened server starts with host client tuning (no config reset on open-to-network)
   - dedicated server defaults to `surf_bhop_c2` tuning (same movement baseline as client default profile)
   - server tuning is authoritative: only config owner (host client) can change it; other clients receive live updates and apply them in-session
@@ -195,11 +210,16 @@
     - host/config owner profile switches are sent to server as full tuning snapshots and wait for authoritative `cfg_v` acknowledgement
     - non-owner clients are blocked from profile switching and are reset to authoritative server tuning
   - multiplayer respawn (`R`) sends authoritative respawn request and also applies an immediate local predictive respawn; server `rs` snapshots still finalize authoritative state
+  - kill-plane auto-respawn is skipped on connected clients so server authority does not fight local respawn logic
   - player snapshots include per-player respawn sequence so clients force immediate authoritative reposition on respawn
   - local player netcode uses sequence-history reconciliation (rollback + replay) for smoother online movement
   - reconciliation replay now avoids per-step render-snapshot churn and records per-second net perf stats (snapshot cadence, correction magnitude, replay cost) shown in the `F2` input debug overlay
   - local first-person camera uses a short render-shell smoothing path in online mode to avoid sluggish/jerky correction pops
   - remote interpolation delay auto-adjusts to observed snapshot jitter
+  - server snapshot replication now uses per-client AOI relevance on GoldSrc maps when `visibility.goldsrc.json` is present:
+    - PVS/leaf-aware filtering via existing GoldSrc VIS data
+    - local player is always included in its own snapshot stream (so ack/reconciliation never starves)
+    - short-range distance fallback keeps nearby players visible across leaf/PVS edge cases
   - clients can connect, send input, and receive replicated player snapshots
   - client-side prediction + server reconciliation for local player movement
   - reconciliation smoothing reduces visible micro-stutter from frequent authoritative corrections

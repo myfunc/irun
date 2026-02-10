@@ -5,6 +5,32 @@ from panda3d.core import ButtonHandle, KeyboardButton
 from ivan.replays import DemoFrame
 
 
+def _window_allows_pointer_capture(host) -> bool:
+    win = getattr(host, "win", None)
+    if win is None:
+        return False
+    try:
+        props = win.getProperties()
+    except Exception:
+        return False
+    try:
+        if hasattr(props, "getOpen") and not bool(props.getOpen()):
+            return False
+    except Exception:
+        pass
+    try:
+        if hasattr(props, "getMinimized") and bool(props.getMinimized()):
+            return False
+    except Exception:
+        pass
+    try:
+        if hasattr(props, "getForeground") and not bool(props.getForeground()):
+            return False
+    except Exception:
+        pass
+    return True
+
+
 class _InputCommand:
     def __init__(
         self,
@@ -119,6 +145,13 @@ class _InputCommand:
 def poll_mouse_look_delta(host) -> None:
     if host.cfg.smoke or not host._pointer_locked:
         host._last_mouse = None
+        setattr(host, "_mouse_capture_blocked", True)
+        return
+    if not _window_allows_pointer_capture(host):
+        host._last_mouse = None
+        host._mouse_dx_accum = 0.0
+        host._mouse_dy_accum = 0.0
+        setattr(host, "_mouse_capture_blocked", True)
         return
 
     # Center-snap approach: read cursor pixel offset from window center, accumulate,
@@ -127,6 +160,10 @@ def poll_mouse_look_delta(host) -> None:
     # drifting to the window edge and escaping.
     cx = host.win.getXSize() // 2
     cy = host.win.getYSize() // 2
+    if bool(getattr(host, "_mouse_capture_blocked", False)):
+        setattr(host, "_mouse_capture_blocked", False)
+        host.win.movePointer(0, cx, cy)
+        return
     pointer = host.win.getPointer(0)
     dx = float(pointer.getX() - cx)
     dy = float(pointer.getY() - cy)

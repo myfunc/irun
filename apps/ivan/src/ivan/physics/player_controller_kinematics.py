@@ -33,6 +33,7 @@ class PlayerControllerKinematicsMixin:
 
         self._slide_dir = LVector3f(slide_dir)
         self._slide_active = True
+        self._slide_ground_grace_timer = max(float(self._slide_ground_grace_timer), 0.08)
         cur_hspeed = math.sqrt(float(self.vel.x) * float(self.vel.x) + float(self.vel.y) * float(self.vel.y))
         self._set_horizontal_velocity(
             x=float(self._slide_dir.x) * cur_hspeed,

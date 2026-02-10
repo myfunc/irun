@@ -88,6 +88,35 @@ class _FrontWallCollision:
         return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
 
 
+class _NoHitCollision:
+    def update_player_sweep_shape(self, *, player_radius: float, player_half_height: float) -> None:
+        _ = player_radius, player_half_height
+
+    def sweep_closest(self, from_pos: LVector3f, to_pos: LVector3f):
+        _ = from_pos, to_pos
+        return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
+
+
+class _DownStepProbeCollision:
+    def __init__(self, *, required_drop: float) -> None:
+        self._required_drop = max(0.0, float(required_drop))
+
+    def update_player_sweep_shape(self, *, player_radius: float, player_half_height: float) -> None:
+        _ = player_radius, player_half_height
+
+    def sweep_closest(self, from_pos: LVector3f, to_pos: LVector3f):
+        d = LVector3f(to_pos - from_pos)
+        if float(d.z) < -1e-6 and abs(float(d.z)) >= float(self._required_drop):
+            frac = max(0.0, min(1.0, float(self._required_drop) / max(1e-6, abs(float(d.z)))))
+            return _FakeHit(
+                True,
+                LVector3f(0.0, 0.0, 1.0),
+                hit_pos=LVector3f(float(from_pos.x), float(from_pos.y), float(from_pos.z) - float(self._required_drop)),
+                hit_fraction=frac,
+            )
+        return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
+
+
 def test_all_numeric_debug_controls_exist_have_tooltips_and_are_wired() -> None:
     numeric_fields = [name for name, _lo, _hi in DebugUI.NUMERIC_CONTROLS]
     assert len(numeric_fields) == len(set(numeric_fields))
@@ -670,6 +699,120 @@ def test_slide_release_restores_standing_hull() -> None:
     ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
     assert not ctrl.is_sliding()
     assert math.isclose(float(ctrl.player_half.z), stand_half, rel_tol=1e-6)
+
+
+def test_slide_ground_flicker_grace_keeps_slide_state_for_short_drop() -> None:
+    ctrl = _make_controller(PhysicsTuning(slide_enabled=True, slide_stop_t90=4.0))
+    ctrl.grounded = True
+    ctrl.vel = LVector3f(0.0, 9.0, 0.0)
+    ctrl.set_slide_held(held=True)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 1.0, 0.0), yaw_deg=0.0, crouching=False)
+    assert ctrl.is_sliding()
+    assert ctrl.crouched is True
+
+    # Simulate a one-tick airborne flicker while descending a slope.
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(float(ctrl.vel.x), float(ctrl.vel.y), -0.10)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+
+    assert ctrl.is_sliding() is True
+    assert ctrl.crouched is True
+
+
+def test_slide_ground_flicker_grace_does_not_keep_slide_while_ascending() -> None:
+    ctrl = _make_controller(PhysicsTuning(slide_enabled=True, slide_stop_t90=4.0))
+    ctrl.grounded = True
+    ctrl.vel = LVector3f(0.0, 9.0, 0.0)
+    ctrl.set_slide_held(held=True)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 1.0, 0.0), yaw_deg=0.0, crouching=False)
+    assert ctrl.is_sliding() is True
+
+    # Upward motion (jump/pop) should not keep slide active via grace.
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(float(ctrl.vel.x), float(ctrl.vel.y), 0.90)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+
+    assert ctrl.is_sliding() is False
+
+
+def test_step_slide_prefers_progress_along_intended_direction() -> None:
+    ctrl = _make_controller(PhysicsTuning(step_height=0.55))
+    ctrl.collision = _NoHitCollision()
+    ctrl.grounded = True
+    ctrl.pos = LVector3f(0.0, 0.0, 0.0)
+    ctrl.vel = LVector3f(2.0, 2.0, 0.0)
+
+    call_count = {"n": 0}
+
+    def _fake_slide(_delta: LVector3f) -> None:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # Plain move: larger raw XY distance but mostly sideways deflection.
+            ctrl.pos = LVector3f(0.2, 1.4, 0.0)
+            ctrl.vel = LVector3f(0.0, 3.0, 0.0)
+            ctrl.grounded = True
+            return
+        # Step move: slightly smaller XY length but much better progress along intended diagonal.
+        ctrl.pos = LVector3f(1.0, 0.9, 0.0)
+        ctrl.vel = LVector3f(2.5, 0.0, 0.0)
+        ctrl.grounded = True
+
+    ctrl._bullet_slide_move = _fake_slide  # type: ignore[method-assign]
+    ctrl._bullet_step_slide_move(LVector3f(1.0, 1.0, 0.0))
+
+    assert abs(float(ctrl.pos.x) - 1.0) < 1e-6
+    assert abs(float(ctrl.pos.y) - 0.9) < 1e-6
+
+
+def test_step_slide_restores_grounded_state_from_selected_plain_path() -> None:
+    ctrl = _make_controller(PhysicsTuning(step_height=0.55))
+    ctrl.collision = _NoHitCollision()
+    ctrl.grounded = True
+    ctrl.pos = LVector3f(0.0, 0.0, 0.0)
+    ctrl.vel = LVector3f(2.0, 0.0, 0.0)
+
+    call_count = {"n": 0}
+
+    def _fake_slide(_delta: LVector3f) -> None:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # Plain move should win by progress and keeps grounded.
+            ctrl.pos = LVector3f(1.5, 0.0, 0.0)
+            ctrl.vel = LVector3f(3.0, 0.0, 0.0)
+            ctrl.grounded = True
+            return
+        # Step try ends up airborne/worse; must not leak grounded flag if plain path is selected.
+        ctrl.pos = LVector3f(0.6, 0.6, 0.0)
+        ctrl.vel = LVector3f(1.0, 1.0, 0.0)
+        ctrl.grounded = False
+
+    ctrl._bullet_slide_move = _fake_slide  # type: ignore[method-assign]
+    ctrl._bullet_step_slide_move(LVector3f(1.0, 0.0, 0.0))
+
+    assert abs(float(ctrl.pos.x) - 1.5) < 1e-6
+    assert abs(float(ctrl.pos.y) - 0.0) < 1e-6
+    assert ctrl.grounded is True
+
+
+def test_ground_snap_distance_scales_with_step_height_for_descent() -> None:
+    low = _make_controller(PhysicsTuning(step_height=0.18, ground_snap_dist=0.02))
+    high = _make_controller(PhysicsTuning(step_height=0.60, ground_snap_dist=0.02))
+    collision = _DownStepProbeCollision(required_drop=0.30)
+    low.collision = collision
+    high.collision = collision
+
+    for ctrl in (low, high):
+        ctrl.grounded = True
+        ctrl.pos = LVector3f(0.0, 0.0, 1.0)
+        ctrl.vel = LVector3f(0.0, 3.0, -0.01)
+
+    low._bullet_ground_snap()
+    high._bullet_ground_snap()
+
+    assert low.grounded is True
+    assert high.grounded is True
+    # Larger step height should allow deeper stair-drop snap in one tick.
+    assert float(high.pos.z) < float(low.pos.z)
 
 
 def test_slide_ignores_keyboard_strafe_and_uses_camera_yaw() -> None:

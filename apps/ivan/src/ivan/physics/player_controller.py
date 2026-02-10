@@ -54,6 +54,7 @@ class PlayerController(
         self._slide_held = False
         self._slide_active = False
         self._slide_dir = LVector3f(0, 0, 0)
+        self._slide_ground_grace_timer = 0.0
         self._contact_count = 0
 
         self._wall_contact_timer = 999.0
@@ -109,6 +110,7 @@ class PlayerController(
         self._slide_active = False
         self._slide_held = False
         self._slide_dir = LVector3f(0, 0, 0)
+        self._slide_ground_grace_timer = 0.0
         self._contact_count = 0
         self._wallrun_active = False
         self._wallrun_reacquire_block_timer = 0.0
@@ -312,6 +314,7 @@ class PlayerController(
         self._vault_collision_pause_timer = max(0.0, float(self._vault_collision_pause_timer) - dt)
         self._vault_collision_ignore_timer = max(0.0, float(self._vault_collision_ignore_timer) - dt)
         self._wallrun_reacquire_block_timer = max(0.0, float(self._wallrun_reacquire_block_timer) - dt)
+        self._slide_ground_grace_timer = max(0.0, float(self._slide_ground_grace_timer) - dt)
         self._apply_vault_assist(dt=dt)
         if not self._is_vault_collision_paused():
             self._refresh_wall_contact_from_probe()
@@ -321,18 +324,29 @@ class PlayerController(
             self._bullet_ground_trace()
         elif self._is_vault_collision_paused():
             self.grounded = False
+        was_sliding = bool(self._slide_active)
         if self.grounded:
             self._coyote_timer = float(self._motion_solver.coyote_time(horizontal_speed=self._horizontal_speed()))
+            if was_sliding and bool(self._slide_held):
+                self._slide_ground_grace_timer = max(float(self._slide_ground_grace_timer), 0.08)
         else:
             self._coyote_timer = max(0.0, float(self._coyote_timer) - dt)
-            # Slide is a grounded state. Drop it immediately if we leave the floor.
-            self._slide_active = False
-
-        slide_wants_hold = bool(self._slide_held) and bool(self.grounded) and bool(self.tuning.slide_enabled)
+        slide_grace_active = (
+            was_sliding
+            and float(self._slide_ground_grace_timer) > 0.0
+            and float(self.vel.z) <= 0.05
+        )
+        slide_wants_hold = (
+            bool(self._slide_held)
+            and bool(self.tuning.slide_enabled)
+            and (bool(self.grounded) or bool(slide_grace_active))
+        )
         if not slide_wants_hold:
             self._slide_active = False
-        elif not self._slide_active:
+        elif self.grounded and not self._slide_active:
             self._start_slide(yaw_deg=yaw_deg)
+        elif slide_grace_active:
+            self._slide_active = True
 
         slide_active = self.is_sliding()
         self._update_slide_hull_state(slide_active)
