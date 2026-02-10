@@ -7,7 +7,66 @@ description: Convert Source/GoldSrc BSP maps into IVAN runtime map bundles. Use 
 
 This skill is intended for an agent/operator workflow: given a BSP + the game assets it depends on (WADs, sounds, models, sprites), produce an IVAN **map bundle** under `apps/ivan/assets/` and run it by a short alias.
 
-## What Exists Today
+## TrenchBroom / .map File Workflow
+
+IVAN can load `.map` files (Valve 220 format) directly from TrenchBroom — no BSP compilation step needed for development.
+
+### Direct loading (fastest iteration)
+
+```bash
+cd apps/ivan
+python -m ivan --map path/to/mymap.map
+```
+
+The engine parses the `.map`, converts brushes to triangles via CSG, resolves WAD textures from worldspawn `wad` key, and renders with flat ambient lighting. Pass `--watch` to auto-reload on file changes.
+
+### Quick test with file watcher
+
+```bash
+cd apps/ivan
+python tools/testmap.py path/to/mymap.map
+```
+
+Watches the `.map` file for changes (mtime polling) and auto-restarts the game on save. Supports `--bake` to run ericw-tools before loading, `--convert-only` to skip launching the game, and `--no-watch` to disable the watcher.
+
+### Baking (optional, production-quality lightmaps)
+
+```bash
+cd apps/ivan
+python tools/bake_map.py --map mymap.map --ericw-tools /path/to/ericw
+```
+
+Compiles the .map with ericw-tools (qbsp → vis → light), then imports the resulting BSP via the GoldSrc importer to produce an `.irunmap` bundle with baked lightmaps. Stages can be skipped (`--no-vis`, `--no-light`); light supports `--bounce N` and `--light-extra`.
+
+### Packing (no bake, for distribution)
+
+```bash
+cd apps/ivan
+python tools/pack_map.py --map mymap.map --output mymap.irunmap
+```
+
+Converts a `.map` directly to an `.irunmap` bundle without BSP compilation (no lightmaps). Parses the .map, converts brushes via CSG, resolves WAD textures, and packs the result.
+
+### Material definitions (.material.json)
+
+Place optional `.material.json` sidecar files alongside WAD textures to add PBR properties:
+
+```json
+{
+  "normal_map": "mytexture_n.png",
+  "roughness": 0.8,
+  "metallic": 0.0,
+  "emission_map": "mytexture_emit.png"
+}
+```
+
+### Phong smooth normals
+
+Add `_phong` and/or `_phong_angle` entity properties to brush entities in TrenchBroom to enable Phong-interpolated vertex normals on those brushes (smoother shading for curved surfaces).
+
+---
+
+## What Exists Today (BSP Workflows)
 
 IVAN loads a **map bundle** described by a single `map.json` file, plus assets next to it.
 

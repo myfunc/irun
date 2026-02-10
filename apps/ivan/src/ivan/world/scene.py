@@ -25,13 +25,14 @@ from panda3d.core import (
     LVector3f,
     LVector4f,
     PNMImage,
+    PointLight,
     Shader,
     Texture,
     TransparencyAttrib,
 )
 
 from ivan.common.aabb import AABB
-from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, resolve_bundle_handle_path
+from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, MapFileHandle, resolve_bundle_handle_path
 from ivan.paths import app_root as ivan_app_root
 from ivan.world.lightstyles import lightstyle_pattern_is_animated, lightstyle_pattern_scale
 from ivan.world.goldsrc_visibility import GoldSrcBspVis, load_or_build_visibility_cache
@@ -92,6 +93,8 @@ class WorldScene:
         self._vis_initial_world_face_flags: bytearray | None = None
         self._map_json_path: Path | None = None
         self._map_payload: dict | None = None
+        self._ambient_np = None
+        self._sun_np = None
         self._moving_blocks: list[_MovingBlock] = []
         self._collision_updater = None
 
@@ -361,13 +364,96 @@ class WorldScene:
     def _build_lighting(self, render) -> None:
         ambient = AmbientLight("ambient")
         ambient.setColor(LVector4f(0.30, 0.30, 0.33, 1))
-        render.setLight(render.attachNewNode(ambient))
+        self._ambient_np = render.attachNewNode(ambient)
+        render.setLight(self._ambient_np)
 
         sun = DirectionalLight("sun")
         sun.setColor(LVector4f(0.95, 0.93, 0.86, 1))
-        sun_np = render.attachNewNode(sun)
-        sun_np.setHpr(34, -58, 0)
-        render.setLight(sun_np)
+        self._sun_np = render.attachNewNode(sun)
+        self._sun_np.setHpr(34, -58, 0)
+        render.setLight(self._sun_np)
+
+    def _enhance_map_file_lighting(self, render, lights) -> None:
+        """Set up bright preview lighting for direct .map file loading.
+
+        Boosts the ambient so geometry is always visible, and creates
+        Panda3D lights from parsed Half-Life ``light`` / ``light_environment``
+        entities when available.
+
+        Parameters
+        ----------
+        render:
+            The scene root node.
+        lights:
+            List of :class:`~ivan.maps.map_converter.LightEntity` instances
+            parsed from the .map file.
+        """
+
+        # 1) Boost ambient for .map preview (override the default 0.30).
+        if self._ambient_np is not None:
+            self._ambient_np.node().setColor(LVector4f(0.55, 0.55, 0.58, 1))
+
+        # 2) Process Half-Life light entities.
+        has_env_light = False
+
+        for i, le in enumerate(lights):
+            cn = le.classname
+
+            if cn == "light_environment":
+                # Directional sun/sky light – override the default sun direction.
+                has_env_light = True
+                r, g, b = le.color
+                intensity = le.brightness / 255.0
+                if self._sun_np is not None:
+                    self._sun_np.node().setColor(
+                        LVector4f(r * intensity, g * intensity, b * intensity, 1)
+                    )
+                    # HL light_environment uses 'pitch' for the sun elevation
+                    # and angles[1] for the yaw.
+                    yaw = le.angles[1] if abs(le.angles[1]) > 0.01 else 0.0
+                    pitch = le.pitch if abs(le.pitch) > 0.01 else -60.0
+                    self._sun_np.setHpr(yaw, pitch, 0)
+
+            elif cn in ("light", "light_spot"):
+                # Point light (or spot light treated as point).
+                r, g, b = le.color
+                intensity = le.brightness / 255.0
+                pl = PointLight(f"hl-light-{i}")
+                pl.setColor(LVector4f(
+                    r * intensity * 1.2,
+                    g * intensity * 1.2,
+                    b * intensity * 1.2,
+                    1,
+                ))
+                # Attenuation tuned for the 0.03 scale (game-units are small).
+                # fade controls how quickly the light drops off.
+                fade = max(le.fade, 0.1)
+                pl.setAttenuation(LVector3f(1.0, 0.0, fade * 8.0))
+                pl_np = render.attachNewNode(pl)
+                pl_np.setPos(le.origin[0], le.origin[1], le.origin[2])
+                render.setLight(pl_np)
+
+        # 3) If no light_environment, make the sun a general fill light.
+        if not has_env_light and self._sun_np is not None:
+            self._sun_np.node().setColor(LVector4f(0.70, 0.68, 0.60, 1))
+            self._sun_np.setHpr(34, -45, 0)
+
+        # 4) If no HL lights at all, add an extra fill light above the scene.
+        if not lights:
+            fill = PointLight("map-fill")
+            fill.setColor(LVector4f(0.50, 0.48, 0.42, 1))
+            fill.setAttenuation(LVector3f(1.0, 0.0, 0.2))
+            fill_np = render.attachNewNode(fill)
+            # Place above scene centre.
+            if self.spawn_point:
+                fill_np.setPos(
+                    self.spawn_point.getX(),
+                    self.spawn_point.getY(),
+                    self.spawn_point.getZ() + 8.0,
+                )
+            else:
+                fill_np.setPos(0, 0, 10)
+            render.setLight(fill_np)
 
     @staticmethod
     def _parse_lightstyles(*, payload: dict) -> dict[int, str]:
@@ -578,6 +664,10 @@ class WorldScene:
         if not map_json:
             return False
 
+        # .map files use a separate loading path (TrenchBroom workflow, no lightmaps).
+        if map_json.suffix.lower() == ".map":
+            return self._try_load_map_file(cfg=cfg, map_file=map_json, loader=loader, render=render, camera=camera)
+
         try:
             payload = json.loads(map_json.read_text(encoding="utf-8"))
         except Exception:
@@ -674,6 +764,152 @@ class WorldScene:
         # Visibility is disabled by default (can be toggled via debug).
         return True
 
+    def _try_load_map_file(self, *, cfg, map_file: Path, loader, render, camera) -> bool:
+        """Load a .map file directly (TrenchBroom workflow, no lightmaps)."""
+        from ivan.maps.map_converter import convert_map_file
+        from ivan.maps.bundle_io import _default_wad_search_dirs, _default_materials_dirs
+        from ivan.state import state_dir
+
+        # Use a persistent texture cache so extracted WAD PNGs survive beyond
+        # the convert_map_file() call.  Without this the TemporaryDirectory
+        # is deleted before the renderer can load the textures.
+        tex_cache = state_dir() / "cache" / "map_textures" / map_file.stem
+        tex_cache.mkdir(parents=True, exist_ok=True)
+
+        try:
+            result = convert_map_file(
+                map_file,
+                scale=0.03,
+                wad_search_dirs=_default_wad_search_dirs(map_file),
+                materials_dirs=_default_materials_dirs(map_file),
+                texture_cache_dir=tex_cache,
+            )
+        except Exception as e:
+            print(f"[IVAN] Failed to load .map file: {e}")
+            return False
+
+        # Set spawn.
+        if result.spawn_position:
+            self.spawn_point = LVector3f(*result.spawn_position)
+            self.spawn_point.setZ(self.spawn_point.getZ() + 1.2)
+        self.spawn_yaw = result.spawn_yaw
+
+        # Set bounds / kill_z.
+        self.kill_z = result.bounds_min[2] - 5.0
+        self._map_id = result.map_id
+        self._map_scale = 0.03
+
+        # Set up material texture index from converter results.
+        self._material_texture_root = None
+        self._material_texture_index = {}
+        for tex_name, tex_path in result.materials.items():
+            if tex_path and tex_path.exists():
+                key = tex_name.replace("\\", "/").casefold()
+                self._material_texture_index[key] = tex_path
+
+        # Use the same rendering path as map.json v2 but without lightmap shader.
+        if result.triangles:
+            pos_tris: list[list[float]] = []
+            for t in result.triangles:
+                p = t.get("p")
+                if isinstance(p, list) and len(p) == 9:
+                    pos_tris.append([float(x) for x in p])
+
+            if result.collision_triangles:
+                self.triangles = result.collision_triangles
+            else:
+                self.triangles = pos_tris
+
+            self._attach_triangle_map_geometry_v2_unlit(loader=loader, render=render, triangles=result.triangles)
+            self.triangle_collision_mode = True
+
+            # Enhanced preview lighting: brighter ambient + HL entity lights.
+            self._enhance_map_file_lighting(render, result.lights)
+
+            if result.skyname:
+                self._setup_skybox(loader=loader, camera=camera, skyname=result.skyname)
+
+            return True
+        return False
+
+    def _attach_triangle_map_geometry_v2_unlit(self, *, loader, render, triangles: list[dict]) -> None:
+        """
+        Attach v2-format triangle geometry *without* the lightmap shader.
+
+        Used for .map files loaded directly (TrenchBroom workflow) where there are no
+        baked lightmaps. Geometry uses standard Panda3D scene lights (ambient + sun)
+        and base textures only.
+
+        Uses the simple V3N3T2 vertex format (no vertex colors, no second texcoord)
+        to ensure Panda3D's fixed-function lighting pipeline works correctly.
+        """
+        tris_by_mat: dict[str, list[dict]] = {}
+        for t in triangles:
+            m = t.get("m")
+            if not isinstance(m, str):
+                continue
+            tris_by_mat.setdefault(m, []).append(t)
+
+        for mat_name, tris in tris_by_mat.items():
+            vdata = GeomVertexData(
+                f"{self._map_id}-map-{mat_name}", GeomVertexFormat.getV3n3t2(), Geom.UHStatic
+            )
+            vw = GeomVertexWriter(vdata, "vertex")
+            nw = GeomVertexWriter(vdata, "normal")
+            tw = GeomVertexWriter(vdata, "texcoord")
+            prim = GeomTriangles(Geom.UHStatic)
+
+            for tri in tris:
+                p = tri.get("p")
+                n = tri.get("n")
+                uv = tri.get("uv")
+                if not (isinstance(p, list) and len(p) == 9):
+                    continue
+                if not (isinstance(n, list) and len(n) == 9):
+                    continue
+                if not (isinstance(uv, list) and len(uv) == 6):
+                    continue
+
+                base = vdata.getNumRows()
+                for vi in range(3):
+                    px, py, pz = float(p[vi * 3]), float(p[vi * 3 + 1]), float(p[vi * 3 + 2])
+                    nx, ny, nz = float(n[vi * 3]), float(n[vi * 3 + 1]), float(n[vi * 3 + 2])
+                    tu, tv = float(uv[vi * 2]), float(uv[vi * 2 + 1])
+                    vw.addData3f(px, py, pz)
+                    nw.addData3f(nx, ny, nz)
+                    tw.addData2f(tu, tv)
+                prim.addVertices(base, base + 1, base + 2)
+
+            geom = Geom(vdata)
+            geom.addPrimitive(prim)
+            geom_node = GeomNode(f"{self._map_id}-geom-{mat_name}")
+            geom_node.addGeom(geom)
+            np = render.attachNewNode(geom_node)
+            np.setTwoSided(False)
+            # Scene ambient + sun lights apply to .map geometry (no setLightOff).
+
+            if mat_name.startswith("{"):
+                np.setTransparency(TransparencyAttrib.M_binary)
+                try:
+                    np.setAttrib(DepthOffsetAttrib.make(1))
+                except Exception:
+                    pass
+
+            tex: Texture | None = None
+            tex_path = self._resolve_material_texture_path(material_name=mat_name)
+            if tex_path and tex_path.exists():
+                tex = loader.loadTexture(Filename.fromOsSpecific(str(tex_path)))
+                if tex is not None:
+                    tex.setWrapU(Texture.WM_repeat)
+                    tex.setWrapV(Texture.WM_repeat)
+                    if mat_name.startswith("{"):
+                        tex.setMinfilter(Texture.FT_nearest)
+                        tex.setMagfilter(Texture.FT_nearest)
+                    np.setTexture(tex, 1)
+            else:
+                tex = self._make_debug_checker_texture()
+                np.setTexture(tex, 1)
+
     def _resolve_visibility(self, *, cfg, map_json: Path, payload: dict) -> GoldSrcBspVis | None:
         """
         Best-effort visibility (occlusion) culling.
@@ -726,6 +962,7 @@ class WorldScene:
         Supported inputs:
         - absolute path to map.json
         - absolute path to a packed bundle (.irunmap) containing map.json at the archive root
+        - absolute path to a .map file (TrenchBroom, returned as-is)
         - relative path to map.json (resolved from cwd, then from apps/ivan/assets/)
         - alias directory under apps/ivan/assets/, e.g. imported/halflife/valve/bounce (implies <alias>/map.json)
         """
@@ -745,7 +982,7 @@ class WorldScene:
             expanded.append(c)
             # Allow passing a directory alias.
             suf = c.suffix.lower()
-            if suf not in (".json", PACKED_BUNDLE_EXT):
+            if suf not in (".json", PACKED_BUNDLE_EXT, ".map"):
                 expanded.append(c / "map.json")
                 # Allow suffix-less packed bundle refs, e.g. imported/.../bounce -> bounce.irunmap
                 try:
@@ -756,14 +993,21 @@ class WorldScene:
         for c in expanded:
             if not c.exists():
                 continue
+            # .map files are returned directly for the caller to handle.
+            if c.is_file() and c.suffix.lower() == ".map":
+                return c
             # Directory bundle.
             if c.is_dir():
                 h = resolve_bundle_handle_path(c)
+                if h is not None and isinstance(h, MapFileHandle):
+                    return h.map_file
                 if h is not None:
                     return h.map_json
                 continue
             if c.is_file():
                 h = resolve_bundle_handle_path(c)
+                if h is not None and isinstance(h, MapFileHandle):
+                    return h.map_file
                 if h is not None:
                     return h.map_json
         return None
@@ -827,10 +1071,15 @@ class WorldScene:
         return index
 
     def _resolve_material_texture_path(self, *, material_name: str) -> Path | None:
-        if not self._material_texture_root:
-            return None
+        # When _material_texture_index is pre-populated (e.g. from .map converter),
+        # use it directly even if _material_texture_root is None.
         if self._material_texture_index is None:
+            if not self._material_texture_root:
+                return None
             self._material_texture_index = self._build_material_texture_index(self._material_texture_root)
+        elif not self._material_texture_index and not self._material_texture_root:
+            return None
+        keys: list[str] = []
         keys: list[str] = []
         base = None
         if self._materials_meta and isinstance(self._materials_meta.get(material_name), dict):

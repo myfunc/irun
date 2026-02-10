@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "irun-launcher"
+version = "0.1.0"
+description = "IVAN Launcher Toolbox – one-click map editing, testing, and resource management."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Proprietary" }
+authors = [{ name = "IRUN Contributors" }]
+dependencies = [
+  "dearpygui>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.5.0",
+]
+
+[project.scripts]
+ivan-launcher = "launcher.__main__:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 120

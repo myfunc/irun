@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
+import sys
 
 from ivan.game import run
 from ivan.net import run_server
@@ -12,6 +14,9 @@ from ivan.replays.telemetry import export_latest_replay_telemetry
 
 
 def main(argv: list[str] | None = None) -> None:
+    # Startup diagnostic — visible in launcher log.
+    print(f"[IVAN] python: {sys.executable}")
+    print(f"[IVAN] ivan pkg: {os.path.dirname(os.path.abspath(__file__))}")
     default_port = int(os.environ.get("DEFAULT_HOST_PORT", "7777"))
     parser = argparse.ArgumentParser(prog="ivan", description="IVAN app runner (IRUN monorepo)")
     parser.add_argument(
@@ -34,9 +39,10 @@ def main(argv: list[str] | None = None) -> None:
         dest="map_json",
         default=None,
         help=(
-            "Map bundle to load. Accepts:\n"
+            "Map to load. Accepts:\n"
             "  - a path to map.json\n"
             "  - a path to a packed bundle (.irunmap)\n"
+            "  - a path to a .map file (TrenchBroom, loaded directly)\n"
             "  - an alias under apps/ivan/assets/, e.g. imported/halflife/valve/bounce\n"
             "Relative paths are resolved from the current working dir first, then from apps/ivan/assets/."
         ),
@@ -50,6 +56,11 @@ def main(argv: list[str] | None = None) -> None:
         "--hl-mod",
         default="valve",
         help='Half-Life mod folder to browse (default: "valve"). Examples: valve, cstrike.',
+    )
+    parser.add_argument(
+        "--watch",
+        action="store_true",
+        help="Watch .map file for changes and auto-reload (TrenchBroom workflow).",
     )
     parser.add_argument(
         "--server",
@@ -181,6 +192,7 @@ def main(argv: list[str] | None = None) -> None:
         net_host=args.connect,
         net_port=int(args.port),
         net_name=args.name,
+        watch=args.watch,
     )
 
 
