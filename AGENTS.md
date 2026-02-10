@@ -75,7 +75,8 @@ When the user asks to "push", "sync", "push to main", or uses equivalent Russian
 Defaults and constraints:
 - Never push directly to `main`.
 - Never force-push.
-- Use GitHub CLI for PR operations (`gh pr create`, `gh pr merge`).
+- Prefer GitHub CLI (`gh`) over raw `git` whenever possible for remote and PR workflows.
+- Use `git` directly only for local-only operations not covered by `gh` (for example branch switching, local commits, local conflict resolution).
 - If `gh auth status -h github.com` fails, stop and ask the user to run `gh auth login -h github.com`.
 
 Conflict handling (before merge):

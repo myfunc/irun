@@ -11,7 +11,7 @@ description: Synchronize and ship changes in the IRUN repository using the PR-on
 
 ## Preferred Execution (No Helper Script)
 
-Run from repo root with git + GitHub CLI:
+Run from repo root. Prefer GitHub CLI (`gh`) whenever it can perform the action; use `git` for local-only steps.
 
 1. If current branch is `main`, create and switch to `codex/<topic>`.
 2. Ensure working changes are committed on the branch.
@@ -24,6 +24,7 @@ Run from repo root with git + GitHub CLI:
 
 - Never push directly to `main`.
 - Never force-push.
+- Prefer `gh` over raw `git` for remote/PR operations.
 - If GitHub reports merge conflicts (PR merge state is `CONFLICTING`), first attempt safe conflict resolution by updating branch from latest `main` and resolving straightforward conflicts; if conflicts are non-trivial, ask the user.
 - If `gh auth status -h github.com` fails, log in (`gh auth login -h github.com`) and stop.
 
