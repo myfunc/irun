@@ -11,11 +11,17 @@ from ivan.physics.motion.solver import MotionSolver
 from ivan.physics.motion.state import MotionWriteSource
 from ivan.physics.player_controller_actions import PlayerControllerActionsMixin
 from ivan.physics.player_controller_collision import PlayerControllerCollisionMixin
+from ivan.physics.player_controller_momentum import PlayerControllerMomentumMixin
 from ivan.physics.player_controller_surf import PlayerControllerSurfMixin
 from ivan.physics.tuning import PhysicsTuning
 
 
-class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, PlayerControllerCollisionMixin):
+class PlayerController(
+    PlayerControllerMomentumMixin,
+    PlayerControllerActionsMixin,
+    PlayerControllerSurfMixin,
+    PlayerControllerCollisionMixin,
+):
     """Kinematic Quake3-style controller (step + slide) with optional Bullet sweep queries."""
 
     def __init__(
@@ -363,6 +369,9 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
     def step(self, *, dt: float, wish_dir: LVector3f, yaw_deg: float, pitch_deg: float = 0.0, crouching: bool = False) -> None:
         _ = crouching
         dt = float(dt)
+        pre_step_vel = LVector3f(self.vel)
+        started_grounded = bool(self.grounded)
+        jumped_this_tick = False
         self._motion_solver.sync_from_tuning(tuning=self.tuning)
         self._contact_count = 0
         self._wallrun_active = False
@@ -419,10 +428,11 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
             ground_jump_requested = self._consume_jump_request() and self.can_ground_jump()
             if ground_jump_requested:
                 if bool(self.tuning.vault_enabled) and self._try_vault(yaw_deg=yaw_deg):
-                    pass
+                    jumped_this_tick = True
                 else:
                     # Preserve carried horizontal speed on successful hop timing frames.
                     self._apply_jump()
+                    jumped_this_tick = True
             else:
                 # Keep Vmax authoritative while input is held; friction should primarily damp coasting.
                 if not has_move_input:
@@ -469,15 +479,17 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
 
             if self._consume_jump_request():
                 if bool(self.tuning.vault_enabled) and self._try_vault(yaw_deg=yaw_deg):
-                    pass
+                    jumped_this_tick = True
                 elif self._can_coyote_jump():
                     self._apply_jump()
+                    jumped_this_tick = True
                 elif self.tuning.walljump_enabled and self.has_wall_for_jump():
                     self._apply_wall_jump(
                         yaw_deg=yaw_deg,
                         pitch_deg=pitch_deg,
                         prefer_camera_forward=bool(wallrun_active),
                     )
+                    jumped_this_tick = True
 
         self._apply_grapple_constraint(dt=dt)
 
@@ -496,6 +508,11 @@ class PlayerController(PlayerControllerActionsMixin, PlayerControllerSurfMixin, 
             self._move_and_collide(self.vel * dt)
 
         self._enforce_grapple_length()
+        self._apply_momentum_policy(
+            pre_vel=pre_step_vel,
+            started_grounded=started_grounded,
+            jumped_this_tick=jumped_this_tick,
+        )
 
         if self.grounded:
             self._wall_jump_lock_timer = 999.0

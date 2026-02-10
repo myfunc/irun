@@ -103,6 +103,7 @@
   - `player_controller_actions.py`: jump/vault/grapple/slide-hull/friction
   - `player_controller_surf.py`: surf/air behavior + wall/surf probes
   - `player_controller_collision.py`: collision/step-slide/sweep logic
+  - `player_controller_momentum.py`: centralized momentum policy so trick states keep chainable speed while regular ground run/coast remains the deceleration lane
 - Ivan: camera and animation are now explicit read-only observers
   - `camera_observer.py`: render-shell camera smoothing that follows solved simulation state only
   - `animation_observer.py`: optional visual bob/root-motion layer that applies camera-only offsets and never writes movement state
