@@ -6,9 +6,11 @@ from panda3d.core import Filename, LVector3f, Texture
 
 from ivan.app_config import MAP_PROFILE_DEV_FAST
 from ivan.world.goldsrc_visibility import load_or_build_visibility_cache
+from ivan.world.scene_layers.contracts import SceneLayerContract
 
 
-def tick_visibility(scene) -> None:
+def tick_visibility(scene: SceneLayerContract) -> None:
+    """Update visible face set from current camera leaf."""
     if scene._vis_goldsrc is None:
         return
     if scene._world_root_np is None or scene._camera_np is None:
@@ -49,7 +51,7 @@ def tick_visibility(scene) -> None:
             ensure_deferred_lightmaps_loaded(scene, face_idx=int(face_idx))
 
 
-def best_effort_visibility_leaf(scene, *, pos: LVector3f) -> int | None:
+def best_effort_visibility_leaf(scene: SceneLayerContract, *, pos: LVector3f) -> int | None:
     """
     Find a stable BSP leaf index for PVS culling.
     """
@@ -83,7 +85,7 @@ def best_effort_visibility_leaf(scene, *, pos: LVector3f) -> int | None:
     return int(leaf0)
 
 
-def ensure_deferred_lightmaps_loaded(scene, *, face_idx: int) -> None:
+def ensure_deferred_lightmaps_loaded(scene: SceneLayerContract, *, face_idx: int) -> None:
     """
     Load and bind per-face lightmap textures for a face that was previously deferred.
     """
@@ -134,7 +136,7 @@ def ensure_deferred_lightmaps_loaded(scene, *, face_idx: int) -> None:
     scene._vis_deferred_lightmaps.pop(int(face_idx), None)
 
 
-def resolve_visibility(scene, *, cfg, map_json: Path, payload: dict):
+def resolve_visibility(scene: SceneLayerContract, *, cfg, map_json: Path, payload: dict):
     """
     Best-effort visibility (occlusion) culling configuration and cache resolve.
     """

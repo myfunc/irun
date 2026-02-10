@@ -20,8 +20,10 @@ from panda3d.core import (
     TransparencyAttrib,
 )
 
+from ivan.world.scene_layers.contracts import SceneLayerContract
 
-def attach_triangle_map_geometry(scene, *, render, triangles: list[list[float]]) -> None:
+def attach_triangle_map_geometry(scene: SceneLayerContract, *, render, triangles: list[list[float]]) -> None:
+    """Attach legacy position-only geometry (format v1)."""
     # Generated Dust2 asset currently includes positions only (no UV/material data).
     # For visibility we generate world-space UVs and apply a debug checker texture.
     vdata = GeomVertexData(f"{scene._map_id}-map", GeomVertexFormat.getV3n3t2(), Geom.UHStatic)
@@ -69,7 +71,9 @@ def attach_triangle_map_geometry(scene, *, render, triangles: list[list[float]])
     map_np.setTexture(scene._make_debug_checker_texture(), 1)
 
 
-def attach_triangle_map_geometry_v2_unlit(scene, *, loader, render, triangles: list[dict]) -> None:
+def attach_triangle_map_geometry_v2_unlit(
+    scene: SceneLayerContract, *, loader, render, triangles: list[dict]
+) -> None:
     """
     Attach v2-format triangle geometry without lightmap shader.
     """
@@ -140,7 +144,7 @@ def attach_triangle_map_geometry_v2_unlit(scene, *, loader, render, triangles: l
             np.setTexture(tex, 1)
 
 
-def attach_triangle_map_geometry_v2(scene, *, loader, render, triangles: list[dict]) -> None:
+def attach_triangle_map_geometry_v2(scene: SceneLayerContract, *, loader, render, triangles: list[dict]) -> None:
     # Build render geometry with materials + baked lighting (lightmaps, when present).
     # Group by (material, lightmap id) so each draw call can bind the correct lightmap texture.
     tris_by_key: dict[tuple[str, int | None], list[dict]] = {}
@@ -351,7 +355,8 @@ def attach_triangle_map_geometry_v2(scene, *, loader, render, triangles: list[di
                     nps.append(np)
 
 
-def setup_skybox(scene, *, loader, camera, skyname: str) -> None:
+def setup_skybox(scene: SceneLayerContract, *, loader, camera, skyname: str) -> None:
+    """Attach cubemap-like skybox cards from imported skybox textures."""
     # Source convention: materials/skybox/<skyname><face>.vtf -> converted to PNG.
     if scene._skybox_np is not None:
         scene._skybox_np.removeNode()

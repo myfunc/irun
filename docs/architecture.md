@@ -53,8 +53,17 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/maps/material_defs.py`: `.material.json` loader for PBR overrides (normal, roughness, metallic, emission) alongside WAD base textures
 - `apps/ivan/src/ivan/maps/catalog.py`: runtime catalog helpers for shipped bundles and GoldSrc-like map discovery (includes .map file discovery)
 - `apps/ivan/src/ivan/state.py`: small persistent user state (last launched map, last game dir/mod, tuning profiles + active profile snapshot, display/video settings)
-- `apps/ivan/src/ivan/world/scene.py`: Scene building, external map-bundle loading (`--map`), spawn point/yaw
+- `apps/ivan/src/ivan/world/scene.py`: High-level world facade (orchestration only): startup wiring, per-frame hooks, and delegation into scene layers
   - Includes an optional deterministic feel-harness scene (`--feel-harness`) with flat/slope/step/wall/ledge + moving-platform fixtures.
+  - Low-level rendering/import/culling logic is split into `apps/ivan/src/ivan/world/scene_layers/`:
+    - `assets.py`: bundle/material/lightmap path resolution helpers
+    - `loading.py`: map bootstrap (`.map` / `map.json` / `.irunmap`) and runtime state initialization
+    - `geometry.py`: v1/v2 geometry attach paths + skybox setup
+    - `lighting.py`: default scene lights, fog application, and map-entity preview lights
+    - `visibility.py`: GoldSrc PVS update loop, leaf selection, deferred lightmap binding
+    - `lightstyles.py`: style pattern parsing/resolve/scale behavior
+    - `render_primitives.py`: shared shader/texture/vertex-format primitives
+    - `contracts.py`: typed layer contract (`SceneLayerContract`) for explicit module boundaries
 - `apps/ivan/src/ivan/maps/steam.py`: Steam library scanning helpers (manual Half-Life auto-detect)
 - `apps/ivan/src/ivan/maps/goldsrc_compile.py`: GoldSrc compiler resolver/helpers (`hlcsg`/`hlbsp`/`hlvis`/`hlrad`) used by TrenchBroom import flow
 - `apps/ivan/src/ivan/physics/tuning.py`: Tunable movement/physics parameters (exposed via debug/admin UI)
@@ -225,6 +234,21 @@ The runtime uses `--map-profile` (`auto` | `dev-fast` | `prod-baked`) to control
 - **prod-baked**: Fog from `run.json` or conservative defaults (start 80, end 200); visibility can enable via `run.json`.
 
 Fog and visibility config live in `run.json` under `fog` and `visibility`; profile selects defaults when not explicitly set.
+
+#### Scene Layer Boundaries
+
+To keep world code readable without diving into implementation details, `WorldScene` follows a top-down layering model:
+
+| Layer | Responsibility | Typical Entry Points |
+|------|----------------|----------------------|
+| **Facade** | Frame/update orchestration, lifecycle glue | `WorldScene.build()`, `WorldScene.tick()` |
+| **Loading** | Parse map payloads, initialize runtime scene state | `scene_layers.loading.try_load_external_map()` |
+| **Geometry** | Build Panda3D geom nodes, material/lightmap bindings, skybox | `scene_layers.geometry.attach_triangle_map_geometry_v2()` |
+| **Lighting** | Ambient/sun defaults, fog policy, `.map` entity-light preview | `scene_layers.lighting.build_lighting()` |
+| **Visibility** | GoldSrc leaf/PVS decisions + deferred lightmap streaming | `scene_layers.visibility.tick_visibility()` |
+| **Assets/Primitives** | Shared path resolution + shader/texture/vertex helpers | `scene_layers.assets.*`, `scene_layers.render_primitives.*` |
+
+Rule of thumb: orchestration stays in `scene.py`; low-level map/render logic lives in `scene_layers/*`.
 
 #### Debug HUD (F12)
 
