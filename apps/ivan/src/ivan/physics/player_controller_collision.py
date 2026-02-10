@@ -30,7 +30,7 @@ class PlayerControllerCollisionMixin:
         return float(math.cos(math.radians(max_slope_deg)))
 
     @staticmethod
-    def _clip_velocity(vel: LVector3f, normal: LVector3f, overbounce: float = 1.001) -> LVector3f:
+    def _clip_velocity(vel: LVector3f, normal: LVector3f, overbounce: float = 1.0) -> LVector3f:
         # Quake-style clip against a collision plane.
         v = LVector3f(vel)
         n = LVector3f(normal)
