@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,7 +11,6 @@ from panda3d.core import (
     Texture,
 )
 
-from ivan.app_config import MAP_PROFILE_DEV_FAST
 from ivan.common.aabb import AABB
 from ivan.world.scene_layers.assets import (
     build_material_texture_index,
@@ -38,7 +35,6 @@ from ivan.world.scene_layers.geometry import (
     attach_triangle_map_geometry_v2_unlit,
     setup_skybox,
 )
-from ivan.world.lightstyles import lightstyle_pattern_is_animated
 from ivan.world.goldsrc_visibility import GoldSrcBspVis
 from ivan.world.scene_layers.visibility import (
     best_effort_visibility_leaf,
@@ -51,6 +47,10 @@ from ivan.world.scene_layers.lighting import (
     build_lighting,
     enhance_map_file_lighting,
     lights_from_payload,
+)
+from ivan.world.scene_layers.loading import (
+    try_load_external_map,
+    try_load_map_file,
 )
 
 
@@ -380,190 +380,10 @@ class WorldScene:
         return (len(self.aabbs) - 1, model)
 
     def _try_load_external_map(self, *, cfg, map_json: Path, loader, render, camera) -> bool:
-        map_json = self._resolve_map_bundle_path(map_json)
-        if not map_json:
-            return False
-
-        # .map files use a separate loading path (TrenchBroom workflow, no lightmaps).
-        if map_json.suffix.lower() == ".map":
-            return self._try_load_map_file(cfg=cfg, map_file=map_json, loader=loader, render=render, camera=camera)
-
-        try:
-            payload = json.loads(map_json.read_text(encoding="utf-8"))
-        except Exception:
-            return False
-        self._map_json_path = Path(map_json)
-        self._map_payload = dict(payload) if isinstance(payload, dict) else None
-
-        triangles = payload.get("triangles")
-        if not isinstance(triangles, list) or not triangles:
-            return False
-
-        bounds = payload.get("bounds")
-        if isinstance(bounds, dict):
-            bmin = bounds.get("min")
-            if isinstance(bmin, list) and len(bmin) == 3:
-                try:
-                    min_z = float(bmin[2])
-                    # Keep a small margin below the lowest geometry.
-                    self.kill_z = min_z - 5.0
-                except Exception:
-                    pass
-
-        # Derive a stable map id for node naming/debug.
-        map_id = payload.get("map_id")
-        if isinstance(map_id, str) and map_id.strip():
-            self._map_id = map_id.strip()
-        else:
-            self._map_id = map_json.stem
-
-        course = payload.get("course")
-        self._course = dict(course) if isinstance(course, dict) else None
-
-        spawn = payload.get("spawn", {})
-        spawn_pos = spawn.get("position")
-        if isinstance(spawn_pos, list) and len(spawn_pos) == 3:
-            self.spawn_point = LVector3f(float(spawn_pos[0]), float(spawn_pos[1]), float(spawn_pos[2]) + 1.2)
-        spawn_yaw = spawn.get("yaw")
-        if isinstance(spawn_yaw, (int, float)):
-            self.spawn_yaw = float(spawn_yaw)
-
-        self._material_texture_index = None
-        self._material_texture_root = self._resolve_material_root(map_json=map_json, payload=payload)
-        try:
-            s = float(payload.get("scale") or 1.0)
-            self._map_scale = s if s > 0.0 else 1.0
-        except Exception:
-            self._map_scale = 1.0
-        mm = payload.get("materials_meta")
-        self._materials_meta = mm if isinstance(mm, dict) else None
-        self._lightmap_faces = self._resolve_lightmaps(map_json=map_json, payload=payload)
-        payload_lights = self._lights_from_payload(payload=payload)
-        self._lightstyles, self._lightstyle_mode = self._resolve_lightstyles(
-            payload=payload, cfg=getattr(cfg, "lighting", None)
-        )
-        self._lightstyle_last_frame = None
-        self._lightstyle_animated_styles = {
-            int(style) for style, pat in self._lightstyles.items() if lightstyle_pattern_is_animated(str(pat))
-        }
-        self._lightmap_nodes = []
-        self._vis_goldsrc = self._resolve_visibility(cfg=cfg, map_json=map_json, payload=payload)
-        self._vis_face_nodes = {}
-        self._vis_current_leaf = None
-        self._vis_enabled = False
-
-        collision_override = payload.get("collision_triangles")
-
-        # Format v1: triangles is list[list[float]] (positions only)
-        # Format v2: triangles is list[dict] with positions, normals, UVs, vertex colors, and material.
-        if isinstance(triangles[0], dict):
-            pos_tris: list[list[float]] = []
-            for t in triangles:
-                p = t.get("p")
-                if isinstance(p, list) and len(p) == 9:
-                    pos_tris.append([float(x) for x in p])
-            if not pos_tris:
-                return False
-            # Collision can be filtered at import time (e.g. exclude triggers).
-            if isinstance(collision_override, list) and collision_override and isinstance(collision_override[0], list):
-                coll: list[list[float]] = []
-                for t in collision_override:
-                    if isinstance(t, list) and len(t) == 9:
-                        coll.append([float(x) for x in t])
-                self.triangles = coll or pos_tris
-            else:
-                self.triangles = pos_tris
-            # Dev-fast: use unlit when baked lightmaps absent (fast edit->run without rebake).
-            # Prod-baked: always use lightmap path when available.
-            profile = getattr(cfg, "map_profile", "") or "prod-baked"
-            use_unlit = (
-                profile == MAP_PROFILE_DEV_FAST
-                and (self._lightmap_faces is None or not self._lightmap_faces)
-            )
-            if use_unlit:
-                self._attach_triangle_map_geometry_v2_unlit(loader=loader, render=render, triangles=triangles)
-                if payload_lights:
-                    self._enhance_map_file_lighting(render, payload_lights)
-            else:
-                self._attach_triangle_map_geometry_v2(loader=loader, render=render, triangles=triangles)
-            skyname = payload.get("skyname")
-            if isinstance(skyname, str) and skyname.strip():
-                self._setup_skybox(loader=loader, camera=camera, skyname=skyname.strip())
-        else:
-            self.triangles = triangles
-            self._attach_triangle_map_geometry(render=render, triangles=triangles)
-
-        self.triangle_collision_mode = True
-        # Visibility is disabled by default (can be toggled via debug).
-        return True
+        return try_load_external_map(self, cfg=cfg, map_json=map_json, loader=loader, render=render, camera=camera)
 
     def _try_load_map_file(self, *, cfg, map_file: Path, loader, render, camera) -> bool:
-        """Load a .map file directly (TrenchBroom workflow, no lightmaps)."""
-        from ivan.maps.map_converter import convert_map_file
-        from ivan.maps.bundle_io import _default_wad_search_dirs, _default_materials_dirs
-        from ivan.state import state_dir
-
-        # Use a persistent texture cache so extracted WAD PNGs survive beyond
-        # the convert_map_file() call.  Without this the TemporaryDirectory
-        # is deleted before the renderer can load the textures.
-        tex_cache = state_dir() / "cache" / "map_textures" / map_file.stem
-        tex_cache.mkdir(parents=True, exist_ok=True)
-
-        try:
-            result = convert_map_file(
-                map_file,
-                scale=0.03,
-                wad_search_dirs=_default_wad_search_dirs(map_file),
-                materials_dirs=_default_materials_dirs(map_file),
-                texture_cache_dir=tex_cache,
-            )
-        except Exception as e:
-            print(f"[IVAN] Failed to load .map file: {e}")
-            return False
-
-        # Set spawn.
-        if result.spawn_position:
-            self.spawn_point = LVector3f(*result.spawn_position)
-            self.spawn_point.setZ(self.spawn_point.getZ() + 1.2)
-        self.spawn_yaw = result.spawn_yaw
-
-        # Set bounds / kill_z.
-        self.kill_z = result.bounds_min[2] - 5.0
-        self._map_id = result.map_id
-        self._map_scale = 0.03
-
-        # Set up material texture index from converter results.
-        self._material_texture_root = None
-        self._material_texture_index = {}
-        for tex_name, tex_path in result.materials.items():
-            if tex_path and tex_path.exists():
-                key = tex_name.replace("\\", "/").casefold()
-                self._material_texture_index[key] = tex_path
-
-        # Use the same rendering path as map.json v2 but without lightmap shader.
-        if result.triangles:
-            pos_tris: list[list[float]] = []
-            for t in result.triangles:
-                p = t.get("p")
-                if isinstance(p, list) and len(p) == 9:
-                    pos_tris.append([float(x) for x in p])
-
-            if result.collision_triangles:
-                self.triangles = result.collision_triangles
-            else:
-                self.triangles = pos_tris
-
-            self._attach_triangle_map_geometry_v2_unlit(loader=loader, render=render, triangles=result.triangles)
-            self.triangle_collision_mode = True
-
-            # Enhanced preview lighting: brighter ambient + HL entity lights.
-            self._enhance_map_file_lighting(render, result.lights)
-
-            if result.skyname:
-                self._setup_skybox(loader=loader, camera=camera, skyname=result.skyname)
-
-            return True
-        return False
+        return try_load_map_file(self, map_file=map_file, loader=loader, render=render, camera=camera)
 
     def _attach_triangle_map_geometry_v2_unlit(self, *, loader, render, triangles: list[dict]) -> None:
         attach_triangle_map_geometry_v2_unlit(self, loader=loader, render=render, triangles=triangles)

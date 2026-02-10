@@ -3,9 +3,11 @@ from __future__ import annotations
 from panda3d.core import AmbientLight, DirectionalLight, Fog, LVector3f, LVector4f, PointLight
 
 from ivan.app_config import MAP_PROFILE_DEV_FAST
+from ivan.world.scene_layers.contracts import SceneLayerContract
 
 
-def build_lighting(scene, *, render) -> None:
+def build_lighting(scene: SceneLayerContract, *, render) -> None:
+    """Create default ambient + directional scene lights."""
     ambient = AmbientLight("ambient")
     ambient.setColor(LVector4f(0.30, 0.30, 0.33, 1))
     scene._ambient_np = render.attachNewNode(ambient)
@@ -18,7 +20,8 @@ def build_lighting(scene, *, render) -> None:
     render.setLight(scene._sun_np)
 
 
-def apply_fog(scene, *, cfg, render) -> None:
+def apply_fog(scene: SceneLayerContract, *, cfg, render) -> None:
+    """Apply profile-aware distance fog from run config."""
     fog_cfg = getattr(cfg, "fog", None)
     profile = getattr(cfg, "map_profile", "") or "prod-baked"
     enabled = False
@@ -54,7 +57,7 @@ def apply_fog(scene, *, cfg, render) -> None:
     render.setFog(render.attachNewNode(fog))
 
 
-def enhance_map_file_lighting(scene, *, render, lights) -> None:
+def enhance_map_file_lighting(scene: SceneLayerContract, *, render, lights) -> None:
     """
     Set up bright preview lighting for direct `.map` file loading.
     """

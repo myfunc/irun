@@ -248,9 +248,12 @@
 - Launcher Toolbox: standalone Dear PyGui desktop app (`apps/launcher`, `python -m launcher`) for one-click map editing workflow
   - Settings panel: configure TrenchBroom exe, WAD directory, materials directory, Steam/HL root, ericw-tools path
   - Map browser: recursive `.map` file discovery sorted by modification time with auto-refresh
-  - Actions: Play Map (launches IVAN with `--watch`), Edit in TrenchBroom, Pack `.irunmap`, Bake Lightmaps
+  - Actions: `Play Map (quick)` for direct `.map` iteration, `Play Baked (.irunmap)` for baked runs, Edit in TrenchBroom, Pack `.irunmap`, Bake Lightmaps
   - Live log panel capturing subprocess stdout/stderr
   - Persistent settings in `~/.irun/launcher/config.json`
+- Ivan: world rendering code split into layered modules (`scene_layers`) with explicit contracts
+  - `scene.py` now acts as a thin facade; loading/geometry/lighting/visibility live in separate layer files
+  - layer helpers use a typed `SceneLayerContract` to keep boundaries explicit and reduce cross-module coupling
 
 ## Planned (High-Level)
 - Movement: walk/run, jump, jump buffer, air control
