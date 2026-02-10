@@ -6,8 +6,39 @@ from typing import Any
 
 from ivan.console.core import CommandContext, Console
 from ivan.physics.tuning import PhysicsTuning
-from ivan.replays.compare import compare_latest_replays
-from ivan.replays.telemetry import export_latest_replay_telemetry, export_replay_telemetry
+
+
+def export_latest_replay_telemetry(*, out_dir=None, route_tag=None, comment=None, route_name=None, run_note=None, feedback_text=None):
+    from ivan.replays.telemetry import export_latest_replay_telemetry as _impl
+
+    return _impl(
+        out_dir=out_dir,
+        route_tag=route_tag,
+        comment=comment,
+        route_name=route_name,
+        run_note=run_note,
+        feedback_text=feedback_text,
+    )
+
+
+def export_replay_telemetry(*, replay_path, out_dir=None, route_tag=None, comment=None, route_name=None, run_note=None, feedback_text=None):
+    from ivan.replays.telemetry import export_replay_telemetry as _impl
+
+    return _impl(
+        replay_path=replay_path,
+        out_dir=out_dir,
+        route_tag=route_tag,
+        comment=comment,
+        route_name=route_name,
+        run_note=run_note,
+        feedback_text=feedback_text,
+    )
+
+
+def compare_latest_replays(*, out_dir=None, route_tag=None, latest_comment=None):
+    from ivan.replays.compare import compare_latest_replays as _impl
+
+    return _impl(out_dir=out_dir, route_tag=route_tag, latest_comment=latest_comment)
 
 
 def _read_exec_lines(path: Path) -> list[str]:

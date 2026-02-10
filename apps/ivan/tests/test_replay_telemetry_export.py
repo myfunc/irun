@@ -79,6 +79,8 @@ def test_export_replay_telemetry_writes_csv_and_summary(tmp_path: Path) -> None:
         out_dir=tmp_path / "out",
         route_tag="A",
         comment="first note",
+        route_name="A rooftop",
+        feedback_text="camera too sharp",
     )
 
     assert exported.tick_count == 2
@@ -102,7 +104,11 @@ def test_export_replay_telemetry_writes_csv_and_summary(tmp_path: Path) -> None:
     assert "landing_speed_loss_avg" in summary["metrics"]
     assert "camera_lin_jerk_avg" in summary["metrics"]
     assert summary["export_metadata"]["route_tag"] == "A"
+    assert summary["export_metadata"]["route_name"] == "A rooftop"
     assert summary["export_metadata"]["comment"] == "first note"
+    assert summary["export_metadata"]["run_note"] == "first note"
+    assert summary["export_metadata"]["feedback_text"] == "camera too sharp"
+    assert summary["export_metadata"]["source_demo"].endswith("sample.ivan_demo.json")
     assert len(summary["export_history"]) == 1
 
     exported2 = export_replay_telemetry(

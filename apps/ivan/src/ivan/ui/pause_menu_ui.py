@@ -352,6 +352,15 @@ class PauseMenuUI:
             frameColor=(0, 0, 0, 0),
             pos=(0.0, 0, feel_label_y0),
         )
+        self._feel_hint_label = DirectLabel(
+            parent=self._tabs.page(3),
+            text="Tip: press G in-game for quick Save+Export popup.",
+            text_scale=theme.small_scale * 0.90,
+            text_align=TextNode.ALeft,
+            text_fg=theme.text_muted,
+            frameColor=(0, 0, 0, 0),
+            pos=(btn_w * 0.42, 0, feel_label_y0),
+        )
         route_w = (btn_w / 3.0) - theme.gap
         route_y = feel_label_y0 - input_h * 0.70
         self._feel_route_a = Checkbox.build(

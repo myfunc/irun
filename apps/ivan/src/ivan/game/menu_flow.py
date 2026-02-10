@@ -5,6 +5,7 @@ import sys
 import threading
 from pathlib import Path
 
+from direct.showbase.ShowBaseGlobal import globalClock
 from panda3d.core import KeyboardButton
 
 from ivan.maps.bundle_io import PACKED_BUNDLE_EXT
@@ -20,6 +21,7 @@ def enter_main_menu(host) -> None:
     host._debug_menu_open = False
     host._replay_browser_open = False
     host._console_open = False
+    host._feel_capture_open = False
     host._awaiting_noclip_rebind = False
     host._active_recording = None
     host._playback_active = False
@@ -43,6 +45,10 @@ def enter_main_menu(host) -> None:
     host._grapple_rope_np.hide()
     host.ui.hide()
     host.pause_ui.hide()
+    try:
+        host.feel_capture_ui.hide()
+    except Exception:
+        pass
     host.replay_browser_ui.hide()
     try:
         host.console_ui.hide()
@@ -84,11 +90,16 @@ def back_to_menu(host) -> None:
     host.pause_ui.hide()
     host.replay_browser_ui.hide()
     try:
+        host.feel_capture_ui.hide()
+    except Exception:
+        pass
+    try:
         host.console_ui.hide()
     except Exception:
         pass
     host._replay_browser_open = False
     host._console_open = False
+    host._feel_capture_open = False
     host._playback_active = False
     host._clear_remote_players()
     if host._net_client is not None:
@@ -236,7 +247,7 @@ def start_import_from_request(host, req: ImportRequest) -> None:
                 err = (proc.stderr or proc.stdout or "").strip()
                 # Prefer the last non-empty line (usually the exception), but keep a short tail for context.
                 if err:
-                    lines = [l for l in err.splitlines() if l.strip()]
+                    lines = [line for line in err.splitlines() if line.strip()]
                     tail = "\n".join(lines[-6:]) if lines else err
                     host._import_error = tail[-800:]
                 else:

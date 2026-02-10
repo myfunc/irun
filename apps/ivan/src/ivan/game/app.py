@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import json
 import errno
 import os
 import sys
@@ -46,7 +45,6 @@ from ivan.replays import (
     DemoRecording,
     append_frame,
     compare_latest_replays,
-    export_latest_replay_telemetry,
     list_replays,
     load_replay,
     new_recording,
@@ -59,12 +57,14 @@ from ivan.ui.error_console_ui import ErrorConsoleUI
 from ivan.ui.input_debug_ui import InputDebugUI
 from ivan.ui.main_menu import ImportRequest, MainMenuController
 from ivan.ui.pause_menu_ui import PauseMenuUI
+from ivan.ui.feel_capture_ui import FeelCaptureUI
 from ivan.ui.replay_browser_ui import ReplayBrowserUI, ReplayListItem
 from ivan.ui.replay_input_ui import ReplayInputUI
 from ivan.world.scene import WorldScene
 from irun_ui_kit.renderer import UIRenderer
 from irun_ui_kit.theme import Theme
 
+from . import feel_capture_flow as _feel_capture
 from . import grapple_rope as _grapple_rope
 from . import input_system as _input
 from . import menu_flow as _menu
@@ -78,8 +78,6 @@ from .camera_tilt_observer import CameraTiltObserver, motion_tilt_targets
 from .determinism import DeterminismTrace, deterministic_state_hash
 from .feel_metrics import FeelMetrics
 from .feel_diagnostics import RollingFeelDiagnostics
-from .feel_feedback import apply_adjustments as _apply_feedback_adjustments
-from .feel_feedback import suggest_adjustments as _suggest_feel_adjustments
 from .hooks import EventHooks
 from .input_system import _InputCommand
 from .netcode import _NetPerfStats, _PredictedInput, _PredictedState, _RemotePlayerVisual
@@ -125,6 +123,7 @@ class RunnerDemo(ShowBase):
         self._debug_menu_open = False
         self._replay_browser_open = False
         self._console_open = False
+        self._feel_capture_open = False
         self._mode: str = "boot"  # boot | menu | game
         self._last_mouse: tuple[float, float] | None = None
         self._input_debug_until: float = 0.0
@@ -284,6 +283,26 @@ class RunnerDemo(ShowBase):
             host=self._runtime_connect_host or "127.0.0.1",
             port=int(self._runtime_connect_port),
         )
+        self.feel_capture_ui = FeelCaptureUI(
+            aspect2d=self.aspect2d,
+            theme=self.ui_theme,
+            on_export=lambda route_tag, route_name, run_note, feedback: self._feel_capture_submit(
+                route_tag=route_tag,
+                route_name=route_name,
+                run_note=run_note,
+                feedback_text=feedback,
+                apply_feedback=False,
+            ),
+            on_export_apply=lambda route_tag, route_name, run_note, feedback: self._feel_capture_submit(
+                route_tag=route_tag,
+                route_name=route_name,
+                run_note=run_note,
+                feedback_text=feedback,
+                apply_feedback=True,
+            ),
+            on_close=self._close_feel_capture,
+        )
+        self.feel_capture_ui.hide()
         self.replay_browser_ui = ReplayBrowserUI(
             aspect2d=self.aspect2d,
             theme=self.ui_theme,
@@ -380,6 +399,7 @@ class RunnerDemo(ShowBase):
         self.accept("ascii`", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
         self.accept("grave", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
         self.accept("f4", lambda: self._safe_call("input.console", self._toggle_console))
+        self.accept("g", lambda: self._safe_call("input.feel_capture", self._toggle_feel_capture))
         self.accept("r", lambda: self._safe_call("input.respawn", self._on_respawn_pressed))
         self.accept("f2", self.input_debug.toggle)
         self.accept("f3", self.error_console.toggle)
@@ -512,8 +532,13 @@ class RunnerDemo(ShowBase):
         self._debug_menu_open = False
         self._replay_browser_open = False
         self._console_open = False
+        self._feel_capture_open = False
         self._awaiting_noclip_rebind = False
         self.pause_ui.hide()
+        try:
+            self.feel_capture_ui.hide()
+        except Exception:
+            pass
         self.replay_browser_ui.hide()
         self.ui.hide()
         try:
@@ -532,7 +557,12 @@ class RunnerDemo(ShowBase):
         self._debug_menu_open = False
         self._replay_browser_open = False
         self._console_open = False
+        self._feel_capture_open = False
         self._awaiting_noclip_rebind = False
+        try:
+            self.feel_capture_ui.hide()
+        except Exception:
+            pass
         try:
             self.console_ui.hide()
         except Exception:
@@ -572,8 +602,13 @@ class RunnerDemo(ShowBase):
             self._pause_menu_open = False
             self._replay_browser_open = False
             self._console_open = False
+            self._feel_capture_open = False
             self.pause_ui.hide()
             self.replay_browser_ui.hide()
+            try:
+                self.feel_capture_ui.hide()
+            except Exception:
+                pass
             try:
                 self.console_ui.hide()
             except Exception:
@@ -582,7 +617,7 @@ class RunnerDemo(ShowBase):
             self._set_pointer_lock(False)
             return
         self.ui.hide()
-        if self._pause_menu_open or self._replay_browser_open:
+        if self._pause_menu_open or self._replay_browser_open or self._feel_capture_open:
             self.pause_ui.show()
             self._set_pointer_lock(False)
         else:
@@ -606,6 +641,9 @@ class RunnerDemo(ShowBase):
         if self._console_open:
             self._close_console()
             return
+        if self._feel_capture_open:
+            self._close_feel_capture()
+            return
         if self._debug_menu_open or self._pause_menu_open:
             self._close_all_game_menus()
             return
@@ -626,7 +664,7 @@ class RunnerDemo(ShowBase):
         if self._mode != "game":
             return
         # Keep console mutually exclusive with other in-game menus.
-        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open:
+        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._feel_capture_open:
             self._close_all_game_menus()
         self._console_open = True
         self.console_ui.show()
@@ -638,7 +676,7 @@ class RunnerDemo(ShowBase):
             self.console_ui.hide()
         except Exception:
             pass
-        if not (self._pause_menu_open or self._debug_menu_open or self._replay_browser_open):
+        if not (self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._feel_capture_open):
             self._set_pointer_lock(True)
 
     def _console_submit_line(self, line: str) -> list[str]:
@@ -655,22 +693,40 @@ class RunnerDemo(ShowBase):
         if self._mode != "game":
             return
         self.pause_ui.show_feel_session()
-        self.pause_ui.set_feel_status("Select route, add feedback note, then Export/Apply.")
+        self.pause_ui.set_feel_status("Use G for run capture popup, or export/apply from this tab.")
+
+    def _toggle_feel_capture(self) -> None:
+        if self._mode != "game":
+            return
+        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open:
+            return
+        if self._feel_capture_open:
+            return
+        _feel_capture.open_feel_capture(self)
+
+    def _close_feel_capture(self) -> None:
+        _feel_capture.close_feel_capture(self)
+
+    def _feel_capture_submit(
+        self,
+        *,
+        route_tag: str,
+        route_name: str,
+        run_note: str,
+        feedback_text: str,
+        apply_feedback: bool,
+    ) -> None:
+        _feel_capture.submit_feel_capture_export(
+            self,
+            route_tag=route_tag,
+            route_name=route_name,
+            run_note=run_note,
+            feedback_text=feedback_text,
+            apply_feedback=apply_feedback,
+        )
 
     def _feel_export_latest(self, route_tag: str, feedback_text: str) -> None:
-        tag = str(route_tag or "").strip()
-        text = str(feedback_text or "").strip()
-        try:
-            exported = export_latest_replay_telemetry(route_tag=tag or None, comment=text or None)
-        except Exception as e:
-            msg = f"Feel export failed: {e}"
-            self.pause_ui.set_feel_status(msg)
-            self.ui.set_status(msg)
-            return
-        self.pause_ui.clear_feel_feedback()
-        msg = f"Saved export + note ({tag or 'route: none'}): {exported.summary_path.name}"
-        self.pause_ui.set_feel_status(msg)
-        self.ui.set_status(msg)
+        _feel_capture.feel_export_latest(self, route_tag, feedback_text)
 
     def _feel_compare_latest(self, route_tag: str) -> None:
         tag = str(route_tag or "").strip()
@@ -711,49 +767,7 @@ class RunnerDemo(ShowBase):
         self.ui.set_status(f"Determinism trace dumped: {out.name}")
 
     def _feel_apply_feedback(self, route_tag: str, feedback_text: str) -> None:
-        text = str(feedback_text or "").strip()
-        tag = str(route_tag or "").strip()
-        if not text:
-            msg = "Feel feedback is empty."
-            self.pause_ui.set_feel_status(msg)
-            self.ui.set_status(msg)
-            return
-        latest_summary: dict[str, Any] | None = None
-        compare_note = "compare skipped"
-        try:
-            comp = compare_latest_replays(route_tag=tag or None, latest_comment=text or None)
-            latest_summary = json.loads(comp.latest_export.summary_path.read_text(encoding="utf-8"))
-            compare_note = f"compare +{comp.improved_count}/-{comp.regressed_count}/={comp.equal_count}"
-        except Exception as compare_err:
-            try:
-                exported = export_latest_replay_telemetry(route_tag=tag or None, comment=text or None)
-                latest_summary = json.loads(exported.summary_path.read_text(encoding="utf-8"))
-                compare_note = f"compare skipped ({compare_err})"
-            except Exception as export_err:
-                msg = f"Feel export failed: {export_err}"
-                self.pause_ui.set_feel_status(msg)
-                self.ui.set_status(msg)
-                return
-        adjustments = _suggest_feel_adjustments(
-            feedback_text=text,
-            tuning=self.tuning,
-            latest_summary=latest_summary,
-        )
-        if not adjustments:
-            msg = "No tuning adjustments suggested for this feedback."
-            self.pause_ui.set_feel_status(msg)
-            self.ui.set_status(msg)
-            return
-        _apply_feedback_adjustments(tuning=self.tuning, adjustments=adjustments)
-        for adj in adjustments:
-            self._on_tuning_change(str(adj.field))
-        preview = ", ".join(f"{a.field} {float(a.before):.3f}->{float(a.after):.3f}" for a in adjustments[:4])
-        if len(adjustments) > 4:
-            preview += f", +{len(adjustments) - 4} more"
-        self.pause_ui.clear_feel_feedback()
-        msg = f"Applied {len(adjustments)} tweak(s), note saved, feedback cleared [{tag or 'route: none'}] ({compare_note}): {preview}"
-        self.pause_ui.set_feel_status(msg)
-        self.ui.set_status(msg)
+        _feel_capture.feel_apply_feedback(self, route_tag, feedback_text)
 
     def _open_replay_browser(self) -> None:
         if self._mode != "game":
@@ -762,6 +776,11 @@ class RunnerDemo(ShowBase):
             self.ui.set_status("Replay lock: press R to exit replay.")
             return
         self._console_open = False
+        self._feel_capture_open = False
+        try:
+            self.feel_capture_ui.hide()
+        except Exception:
+            pass
         try:
             self.console_ui.hide()
         except Exception:
@@ -807,6 +826,11 @@ class RunnerDemo(ShowBase):
         self._replay_browser_open = False
         self.pause_ui.hide()
         self._pause_menu_open = False
+        self._feel_capture_open = False
+        try:
+            self.feel_capture_ui.hide()
+        except Exception:
+            pass
         self._set_pointer_lock(True)
         self.replay_input_ui.show()
 
@@ -852,15 +876,16 @@ class RunnerDemo(ShowBase):
         )
         self.ui.set_status(f"Recording demo: {self._active_recording.metadata.demo_name}")
 
-    def _save_current_demo(self) -> None:
+    def _save_current_demo(self) -> Path | None:
         if self._active_recording is None:
             self.ui.set_status("No active demo recording.")
-            return
+            return None
         if not self._active_recording.frames:
             self.ui.set_status("Demo not saved (empty recording).")
-            return
+            return None
         out = save_recording(self._active_recording)
         self.ui.set_status(f"Demo saved: {out.name} ({len(self._active_recording.frames)} ticks)")
+        return out
 
     def _start_rebind_noclip(self) -> None:
         if self._mode != "game":
@@ -924,6 +949,9 @@ class RunnerDemo(ShowBase):
             self._mode = "game"
             self._pause_menu_open = False
             self._debug_menu_open = False
+            self._replay_browser_open = False
+            self._console_open = False
+            self._feel_capture_open = False
             self._awaiting_noclip_rebind = False
             self._pointer_locked = True
             self._last_mouse = None
@@ -933,6 +961,10 @@ class RunnerDemo(ShowBase):
             self.ui.set_crosshair_visible(True)
             self.ui.hide()
             self.pause_ui.hide()
+            try:
+                self.feel_capture_ui.hide()
+            except Exception:
+                pass
             if not self.cfg.smoke:
                 self._center_mouse()
                 # Show input debug briefly after loading a map (useful when mouse/keyboard seem dead).
@@ -1977,7 +2009,13 @@ class RunnerDemo(ShowBase):
             if self._replay_browser_open:
                 self.replay_browser_ui.tick(now)
 
-            menu_open = self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open
+            menu_open = (
+                self._pause_menu_open
+                or self._debug_menu_open
+                or self._replay_browser_open
+                or self._console_open
+                or self._feel_capture_open
+            )
             self.ui.set_crosshair_visible(not menu_open)
 
             # Precompute wish from keyboard so debug overlay can show it even if movement seems dead.

@@ -288,6 +288,9 @@ def export_replay_telemetry(
     out_dir: Path | None = None,
     route_tag: str | None = None,
     comment: str | None = None,
+    route_name: str | None = None,
+    run_note: str | None = None,
+    feedback_text: str | None = None,
 ) -> ReplayTelemetryExport:
     src = Path(replay_path).expanduser().resolve()
     rec = load_replay(src)
@@ -338,8 +341,16 @@ def export_replay_telemetry(
 
     summary = _summary(rec)
     now = float(time.time())
-    tag = str(route_tag).strip() if isinstance(route_tag, str) and str(route_tag).strip() else None
-    note = str(comment).strip() if isinstance(comment, str) and str(comment).strip() else None
+    tag = str(route_tag).strip().upper() if isinstance(route_tag, str) and str(route_tag).strip() else None
+    route_label = str(route_name).strip() if isinstance(route_name, str) and str(route_name).strip() else None
+    note_text = (
+        str(run_note).strip()
+        if isinstance(run_note, str) and str(run_note).strip()
+        else (str(comment).strip() if isinstance(comment, str) and str(comment).strip() else None)
+    )
+    feedback_note = (
+        str(feedback_text).strip() if isinstance(feedback_text, str) and str(feedback_text).strip() else None
+    )
     history: list[dict[str, Any]] = []
     if summary_path.exists():
         try:
@@ -353,8 +364,14 @@ def export_replay_telemetry(
     entry: dict[str, Any] = {"exported_at_unix": now}
     if tag:
         entry["route_tag"] = tag
-    if note:
-        entry["comment"] = note[:800]
+    if route_label:
+        entry["route_name"] = route_label[:160]
+    if note_text:
+        entry["comment"] = note_text[:800]
+        entry["run_note"] = note_text[:800]
+    if feedback_note:
+        entry["feedback_text"] = feedback_note[:800]
+    entry["source_demo"] = str(src)
     history.append(entry)
     summary["export_metadata"] = dict(entry)
     summary["export_history"] = history[-200:]
@@ -374,6 +391,9 @@ def export_latest_replay_telemetry(
     out_dir: Path | None = None,
     route_tag: str | None = None,
     comment: str | None = None,
+    route_name: str | None = None,
+    run_note: str | None = None,
+    feedback_text: str | None = None,
 ) -> ReplayTelemetryExport:
     replays = list_replays()
     if not replays:
@@ -383,4 +403,7 @@ def export_latest_replay_telemetry(
         out_dir=out_dir,
         route_tag=route_tag,
         comment=comment,
+        route_name=route_name,
+        run_note=run_note,
+        feedback_text=feedback_text,
     )

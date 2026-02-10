@@ -13,6 +13,7 @@ from ivan.replays.compare import (
     ReplayTelemetryComparison,
     compare_exported_summaries,
     compare_latest_replays,
+    compare_latest_route_exports,
 )
 from ivan.replays.telemetry import (
     ReplayTelemetryExport,
@@ -39,6 +40,7 @@ __all__ = [
     "ReplayTelemetryComparison",
     "compare_exported_summaries",
     "compare_latest_replays",
+    "compare_latest_route_exports",
     "ReplayTelemetryExport",
     "export_latest_replay_telemetry",
     "export_replay_telemetry",
