@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from ivan.console.core import CommandContext
@@ -76,3 +77,39 @@ def test_console_feel_feedback_command() -> None:
     out = con.execute_line(ctx=CommandContext(role="client", origin="test"), line='feel_feedback "too fast" A')
     assert runner.feedback_call == ("A", "too fast")
     assert any("feel_feedback applied" in line for line in out)
+
+
+def test_console_tuning_backup_restore_and_list(monkeypatch) -> None:
+    runner = _FakeRunner()
+    con = build_client_console(runner)
+
+    backup_path = Path("/tmp/20260210_120000_surf_bhop_c2_route-a.json")
+
+    monkeypatch.setattr(
+        "ivan.game.tuning_backups.create_tuning_backup",
+        lambda _runner, label=None, reason=None: backup_path,
+    )
+    monkeypatch.setattr(
+        "ivan.game.tuning_backups.restore_tuning_backup",
+        lambda _runner, backup_ref=None: backup_path,
+    )
+    monkeypatch.setattr(
+        "ivan.game.tuning_backups.list_tuning_backups",
+        lambda limit=20: [backup_path],
+    )
+    monkeypatch.setattr(
+        "ivan.game.tuning_backups.backup_metadata",
+        lambda _path: {
+            "active_profile_name": "surf_bhop_c2",
+            "label": "route-a",
+            "field_count": 42,
+        },
+    )
+
+    out_backup = con.execute_line(ctx=CommandContext(role="client", origin="test"), line='tuning_backup "route A"')
+    out_restore = con.execute_line(ctx=CommandContext(role="client", origin="test"), line="tuning_restore latest")
+    out_list = con.execute_line(ctx=CommandContext(role="client", origin="test"), line="tuning_backups")
+
+    assert any("backup:" in line for line in out_backup)
+    assert any("restored:" in line for line in out_restore)
+    assert any("profile=surf_bhop_c2" in line for line in out_list)
