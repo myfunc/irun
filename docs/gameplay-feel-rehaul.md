@@ -200,9 +200,13 @@ Completed now:
 - Replay analytics workflow pass:
   - Added replay comparator utility (auto-export latest+previous and emit delta JSON).
   - Added in-game Feel Session tab (ESC menu) to:
-    - export latest replay telemetry
-    - compare latest vs previous run
+    - save+export current run telemetry
+    - compare route-scoped latest vs prior run
     - apply free-text feedback driven tuning adjustments
+  - Added in-game quick capture popup (`G`) for route-tagged run capture:
+    - route selector (`A/B/C`) + route name + run notes + feedback prompt
+    - `Save + Export` and `Export + Apply` actions
+    - route history context output (latest-vs-reference, optional baseline compare, route history metrics)
 - Replay UX pass:
   - Added replay-only input HUD (UI kit based) showing:
     - movement cluster (left/right + forward/back)
@@ -362,8 +366,8 @@ Still pending:
   - replay input lock + deterministic playback safety improvements
   - replay input HUD for visual command verification during playback
   - replay telemetry export summaries with landing/camera metrics
-  - replay comparator utility (latest vs previous deltas)
-  - in-game Feel Session export/compare/feedback loop
+  - replay comparator utility (route-scoped latest vs reference deltas + baseline/history context)
+  - in-game Feel Session + `G` quick-capture export/compare/feedback loop
   - camera invariant surface compacted (`camera_base_fov`, `camera_speed_fov_max_add`, `camera_tilt_gain`, `camera_event_gain`)
   - camera event feedback unified under one shared envelope/gain path
   - debug numeric controls switched to real-unit values (no normalized 0..100)

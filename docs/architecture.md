@@ -63,12 +63,16 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game ESC menu (Resume/Map Selector/Key Bindings/Back/Quit) and keybinding controls
   - Menu page uses a two-column action layout to keep all actions visible at gameplay resolutions.
   - Includes a Feel Session tab with route radio options (`A/B/C`), replay export, and feedback-driven tuning tweaks.
+- `apps/ivan/src/ivan/ui/feel_capture_ui.py`: in-game quick capture popup (`G`) for route-tagged save/export/apply flow
 - `apps/ivan/src/ivan/ui/replay_browser_ui.py`: in-game replay browser overlay (UI kit list menu)
 - `apps/ivan/src/ivan/ui/replay_input_ui.py`: in-game replay input HUD (UI kit panel) for recorded command visualization
 - `apps/ivan/src/ivan/replays/demo.py`: input-demo storage (record/save/load/list) using repository-local storage under `apps/ivan/replays/`
 - `apps/ivan/src/ivan/replays/telemetry.py`: replay telemetry export pipeline (CSV tick dump + JSON summary metrics)
-  - Export summary keeps append-only export metadata history (route tags + feel comments) per replay summary file.
-- `apps/ivan/src/ivan/replays/compare.py`: replay comparison pipeline (auto-export latest+previous and produce metric/tuning deltas)
+  - Export summary keeps append-only export metadata history per replay summary file (`route_tag`, optional `route_name`, `run_note`, `feedback_text`, `source_demo`).
+- `apps/ivan/src/ivan/replays/compare.py`: replay comparison pipeline
+  - route-aware compare path selects runs from exported telemetry summaries for the same route (instead of global latest raw replays)
+  - emits latest-vs-reference compare JSON, optional baseline compare JSON, and per-route history context JSON
+- `apps/ivan/src/ivan/game/feel_capture_flow.py`: gameplay-side orchestration for save/export/compare/apply actions (used by pause tab + `G` popup)
 - `apps/ivan/src/ivan/game/feel_feedback.py`: rule-based free-text feedback interpreter for tuning suggestions
 - `apps/ivan/src/ivan/net/server.py`: authoritative multiplayer server loop (TCP bootstrap + UDP input/snapshots)
 - `apps/ivan/src/ivan/net/client.py`: multiplayer client transport for handshake/input send/snapshot poll
@@ -137,7 +141,7 @@ See: `docs/ui-kit.md`.
   - Replay telemetry export commands are available in the client console:
     - `replay_export_latest [out_dir]`
     - `replay_export <replay_path> [out_dir]`
-    - `replay_compare_latest [out_dir] [route_tag]`
+    - `replay_compare_latest [out_dir] [route_tag]` (route-scoped exported-run compare when route is provided)
     - `feel_feedback "<text>" [route_tag]`
   - `ivan-mcp` runs an MCP stdio server (Python 3.9, no deps) that exposes a single tool: `console_exec`.
 - CLI telemetry export:
@@ -152,10 +156,12 @@ See: `docs/ui-kit.md`.
 - In-game UI/input split:
   - `Esc` opens gameplay menu and unlocks cursor.
   - `` ` `` opens debug/admin tuning menu and unlocks cursor.
+  - `G` opens quick feel-capture popup during active gameplay (route/name/notes/feedback + save/export buttons).
   - While either menu is open, gameplay input is blocked but simulation continues.
   - `Esc` menu can open a replay browser (`Replays`) to load saved input demos.
-  - `Esc` menu Feel Session tab can export latest replay telemetry and apply feedback-based tuning changes.
-  - Apply-feedback flow auto-runs latest-vs-previous replay comparison in the background and reports deltas.
+  - `Esc` menu Feel Session tab can export current run telemetry and apply feedback-based tuning changes.
+  - Apply-feedback flow auto-runs route-scoped compare (latest route run vs prior route run) and reports deltas.
+  - Route compare can also emit baseline + route-history context files for longer tuning sessions.
   - Replay playback shows a dedicated replay input HUD and keeps gameplay/menu inputs locked until exit (`R`).
   - Replay input HUD prefers explicitly recorded held states (`WASD`, arrows, mouse buttons) over derived movement axes.
   - `F2` input debug overlay includes rolling gameplay-feel telemetry (for movement/camera tuning passes).
