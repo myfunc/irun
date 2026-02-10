@@ -293,8 +293,32 @@ def test_wallrun_jump_biases_to_camera_forward_direction() -> None:
     ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, pitch_deg=0.0, crouching=False)
 
     assert ctrl.vel.z > 0.0
-    assert ctrl.vel.y > abs(ctrl.vel.x)
-    assert ctrl.vel.x > float(tuning.wall_jump_boost) * 0.30
+    hspeed = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y))
+    # Wallrun jump should peel strongly away from the wall and carry a ground-jump-like horizontal launch.
+    assert ctrl.vel.x > abs(ctrl.vel.y)
+    assert hspeed >= float(tuning.max_ground_speed) * 0.95
+    assert hspeed <= float(tuning.max_ground_speed) * 1.05
+
+
+def test_wallrun_jump_clears_wallrun_state_and_contact_immediately() -> None:
+    tuning = PhysicsTuning(
+        wallrun_enabled=True,
+        walljump_enabled=True,
+        wall_jump_cooldown=0.0,
+        coyote_buffer_enabled=False,
+    )
+    ctrl = _make_controller(tuning)
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(5.0, 0.0, -1.0)
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
+    ctrl.queue_jump()
+
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, pitch_deg=0.0, crouching=False)
+
+    assert not ctrl.is_wallrunning()
+    assert ctrl._wall_contact_timer > 0.20
+    assert ctrl.wallrun_camera_roll_deg(yaw_deg=0.0) == 0.0
 
 
 def test_wallrun_sink_t90_controls_descent_response() -> None:

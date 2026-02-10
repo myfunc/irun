@@ -59,22 +59,36 @@ class PlayerControllerActionsMixin:
                 view_h.normalize()
             else:
                 view_h = LVector3f(forward)
-            # Keep view-biased wallrun jumps, but guarantee a stronger peel-away distance from the wall.
-            jump_dir = view_h * 0.62 + away * 0.38
-            if jump_dir.lengthSquared() > 1e-12:
-                jump_dir.normalize()
+            along = LVector3f(view_h - away * float(view_h.dot(away)))
+            if along.lengthSquared() > 1e-12:
+                along.normalize()
             else:
+                along = LVector3f(-away.y, away.x, 0.0)
+                if along.lengthSquared() > 1e-12:
+                    along.normalize()
+            jump_dir = away * 0.82 + along * 0.28
+            if jump_dir.lengthSquared() <= 1e-12:
                 jump_dir = LVector3f(away)
-            boost = jump_dir * wjb
-            min_away_speed = wjb * 0.34
+            jump_dir.normalize()
+
+            # Wallrun jump should carry a ground-jump-like horizontal distance profile:
+            # preserve current speed if already faster, otherwise launch at Vmax.
+            cur_hspeed = math.sqrt(float(self.vel.x) * float(self.vel.x) + float(self.vel.y) * float(self.vel.y))
+            base_speed = max(cur_hspeed, float(self._motion_solver.ground_target_speed(speed_scale=1.0)))
+            boost = jump_dir * base_speed
+
+            # Enforce strong peel-away while preserving overall speed magnitude.
+            min_away_speed = base_speed * 0.72
             away_speed = float(boost.dot(away))
             if away_speed < min_away_speed:
-                boost += away * (min_away_speed - away_speed)
-            # Cap overshoot after enforcing minimum peel-away so walljump feel remains stable.
-            boost_len = math.sqrt(float(boost.x) * float(boost.x) + float(boost.y) * float(boost.y))
-            max_boost_len = wjb * 1.15
-            if boost_len > max_boost_len and boost_len > 1e-9:
-                boost *= max_boost_len / boost_len
+                along_vec = LVector3f(boost - away * away_speed)
+                along_len = math.sqrt(float(along_vec.x) * float(along_vec.x) + float(along_vec.y) * float(along_vec.y))
+                desired_along = math.sqrt(max(0.0, float(base_speed) * float(base_speed) - float(min_away_speed) * float(min_away_speed)))
+                if along_len > 1e-9:
+                    along_vec *= desired_along / along_len
+                else:
+                    along_vec = along * desired_along
+                boost = away * min_away_speed + along_vec
         else:
             boost = away * wjb + forward * (wjb * 0.45)
         self._set_horizontal_velocity(
@@ -83,11 +97,13 @@ class PlayerControllerActionsMixin:
             source=MotionWriteSource.IMPULSE,
             reason="walljump.horizontal",
         )
+        up_speed = float(self._jump_up_speed()) if prefer_camera_forward else float(self._jump_up_speed() * 0.95)
         self._set_vertical_velocity(
-            self._jump_up_speed() * 0.95,
+            up_speed,
             source=MotionWriteSource.IMPULSE,
             reason="walljump.vertical",
         )
+        self._wallrun_active = False
         self._wall_jump_lock_timer = 0.0
         self._wall_contact_timer = 999.0
         self._wall_normal = LVector3f(0, 0, 0)
