@@ -54,14 +54,17 @@ def apply_fog(scene: SceneLayerContract, *, cfg, render) -> None:
     """Apply baseline fog precedence: map override > run profile > engine default."""
     fog_defaults = {
         "enabled": True,
-        # Use exp2 by default to avoid visible angle-sensitive bands on large/low-tess surfaces.
+        # Exp2 avoids view-angle banding on large/low-tess surfaces.
         "mode": "exp2",
-        # Keep defaults stable and orientation-neutral across maps.
-        "start": 40.0,
-        "end": 220.0,
+        "start": 120.0,
+        "end": 360.0,
         # Optional for exp/exp2 (derived from end distance when omitted).
         "density": None,
         "color": (0.63, 0.67, 0.73),
+        # Trim camera far plane to fog visibility so fully fogged geometry is not rendered.
+        "cull_beyond_fog": True,
+        # Keep a small buffer to avoid hard edge shimmer at the far cut.
+        "cull_margin": 24.0,
     }
     run_fog = getattr(cfg, "fog", None)
     source = "engine-default"
@@ -91,14 +94,16 @@ def apply_fog(scene: SceneLayerContract, *, cfg, render) -> None:
     mode = str(fog_cfg.get("mode", fog_defaults["mode"])).strip().lower()
     if mode not in ("linear", "exp", "exp2"):
         mode = "linear"
-    # Legacy linear fog on large triangles can show view-angle artifacts (banding/steps).
-    # Keep explicit console control intact, but normalize non-console linear fog to exp2.
+    # Linear fog in Panda can show angle-dependent steps/banding on large faces.
+    # Keep explicit live-console control intact, but normalize map/profile/default to exp2.
     if mode == "linear" and source != "runtime-console":
         mode = "exp2"
     start = float(fog_defaults["start"])
     end = float(fog_defaults["end"])
     density = 0.0
     color = fog_defaults["color"]
+    cull_beyond_fog = bool(fog_cfg.get("cull_beyond_fog", fog_defaults["cull_beyond_fog"]))
+    cull_margin = float(fog_defaults["cull_margin"])
 
     try:
         start = float(fog_cfg.get("start", start))
@@ -106,6 +111,10 @@ def apply_fog(scene: SceneLayerContract, *, cfg, render) -> None:
         pass
     try:
         end = float(fog_cfg.get("end", end))
+    except (TypeError, ValueError):
+        pass
+    try:
+        cull_margin = float(fog_cfg.get("cull_margin", cull_margin))
     except (TypeError, ValueError):
         pass
     density_raw = fog_cfg.get("density", None)
@@ -139,6 +148,27 @@ def apply_fog(scene: SceneLayerContract, *, cfg, render) -> None:
     scene._fog_density = float(density)
     scene._fog_range = (float(start), float(end))
     scene._fog_color = (float(color[0]), float(color[1]), float(color[2]))
+    scene._fog_cull_enabled = bool(enabled and cull_beyond_fog)
+    scene._fog_cull_far = 0.0
+
+    # Keep sky visibility/culling policy deterministic by clamping lens far plane.
+    cam = getattr(scene, "_camera_np", None)
+    if cam is not None:
+        try:
+            cam_node = cam.node() if hasattr(cam, "node") else None
+            lens = cam_node.getLens() if cam_node is not None and hasattr(cam_node, "getLens") else None
+            if lens is not None and hasattr(lens, "setNearFar"):
+                near = float(lens.getNear()) if hasattr(lens, "getNear") else 0.03
+                default_far = float(getattr(scene, "_fog_lens_default_far", 20000.0))
+                if enabled and cull_beyond_fog:
+                    fog_far = max(float(near) + 8.0, float(end) + max(0.0, float(cull_margin)))
+                    lens.setNearFar(float(near), float(fog_far))
+                    scene._fog_cull_far = float(fog_far)
+                else:
+                    lens.setNearFar(float(near), float(default_far))
+                    scene._fog_cull_far = float(default_far)
+        except Exception:
+            pass
 
     if not enabled:
         render.clearFog()

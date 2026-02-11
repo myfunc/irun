@@ -53,6 +53,9 @@ class LauncherConfig:
     # Window geometry (persisted between sessions).
     window_width: int = 720
     window_height: int = 700
+    # Window position (x_pos, y_pos). -99999 means "not set" (use default).
+    window_x: int = -99999
+    window_y: int = -99999
 
     # ── helpers ──────────────────────────────────────────────
 
@@ -73,6 +76,13 @@ class LauncherConfig:
             return self.python_exe
         import sys
         return sys.executable
+
+    def has_valid_window_position(self) -> bool:
+        """True if window_x/window_y are set and in valid range (not sentinel)."""
+        return (
+            self.window_x != _WINDOW_POS_SENTINEL
+            and self.window_y != _WINDOW_POS_SENTINEL
+        )
 
 
 # ── persistence ──────────────────────────────────────────────
@@ -116,6 +126,28 @@ def _sanitize_stale_paths(cfg: LauncherConfig) -> LauncherConfig:
     return cfg
 
 
+_WINDOW_POS_SENTINEL = -99999
+_WINDOW_POS_MIN = -10000
+_WINDOW_POS_MAX = 10000
+_WINDOW_WIDTH_MIN = 500
+_WINDOW_WIDTH_MAX = 10000
+_WINDOW_HEIGHT_MIN = 400
+_WINDOW_HEIGHT_MAX = 10000
+
+
+def _sanitize_window_geometry(cfg: LauncherConfig) -> LauncherConfig:
+    """Clamp window size/position to valid ranges.  Invalid values reset to defaults."""
+    if not (_WINDOW_WIDTH_MIN <= cfg.window_width <= _WINDOW_WIDTH_MAX):
+        cfg.window_width = 720
+    if not (_WINDOW_HEIGHT_MIN <= cfg.window_height <= _WINDOW_HEIGHT_MAX):
+        cfg.window_height = 700
+    if not (_WINDOW_POS_MIN <= cfg.window_x <= _WINDOW_POS_MAX):
+        cfg.window_x = _WINDOW_POS_SENTINEL
+    if not (_WINDOW_POS_MIN <= cfg.window_y <= _WINDOW_POS_MAX):
+        cfg.window_y = _WINDOW_POS_SENTINEL
+    return cfg
+
+
 def load_config() -> LauncherConfig:
     p = _config_path()
     if not p.exists():
@@ -147,7 +179,8 @@ def load_config() -> LauncherConfig:
             elif isinstance(val, (int, float)):
                 kwargs[fld] = int(val)
     cfg = LauncherConfig(**kwargs)
-    return _sanitize_stale_paths(cfg)
+    cfg = _sanitize_stale_paths(cfg)
+    return _sanitize_window_geometry(cfg)
 
 
 def save_config(cfg: LauncherConfig) -> None:

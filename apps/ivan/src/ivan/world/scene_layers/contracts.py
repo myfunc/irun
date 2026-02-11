@@ -47,7 +47,11 @@ class SceneLayerContract(Protocol):
     _fog_density: float
     _fog_range: tuple[float, float]
     _fog_color: tuple[float, float, float]
+    _fog_cull_enabled: bool
+    _fog_cull_far: float
+    _fog_lens_default_far: float
     _runtime_fog_override: dict | None
+    _pending_map_fog: dict | None
     _ambient_np: Any
     _sun_np: Any
     _skybox_np: Any

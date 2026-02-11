@@ -149,7 +149,7 @@
   - Fast navigation: hold Up/Down for accelerated scrolling, Left/Right page jump, and `Cmd+F`/`Ctrl+F` search
   - Delete imported/generated map bundles from the UI (safe delete: `assets/imported/**` and `assets/generated/*`)
 - Ivan: video/display settings (main menu > Video Settings)
-  - Default: windowed 1280x720 (cross-platform: Windows and macOS)
+  - Default target: windowed 1920x1080 (cross-platform); startup now adaptively fits the window into the active display when the target size is larger than the monitor work area
   - Preset resolutions: 1280x720, 1600x900, 1920x1080, 2560x1440, and fullscreen
   - Window is resizable by dragging edges in windowed mode
   - Settings persist across sessions in user state (`~/.irun/ivan/state.json`)
@@ -283,7 +283,7 @@
   - command metadata + schema validation + structured execution responses (`ok`, `error_code`, `data`, timings)
   - scene introspection commands with filtering/pagination (`scene_list`, `scene_select`, `scene_inspect`, `player_look_target`)
   - scene manipulation commands (`scene_create`, `scene_delete`, `scene_transform`, `scene_group`, `scene_ungroup`, `scene_group_transform`)
-  - runtime world controls (`world_fog_set` with mode/density/color validation, `world_skybox_set` with preset validation)
+  - runtime world controls (`world_fog_set` with mode/density/color validation, `world_skybox_set` with preset validation, `world_map_save` for explicit map.json persistence)
   - in-game console UX upgrades: Up/Down history, Tab autocomplete, live command hints, metadata discoverability (`help`, `cmd_meta`)
   - MCP stdio server (`ivan-mcp`) exposes `console_exec` and `console_commands`
   - command execution from external control is routed to the game thread with bounded per-frame queue drain safeguards
@@ -294,6 +294,8 @@
   - runtime `--map-profile` (auto | dev-fast | prod-baked): auto infers from path (.map/dir → dev-fast, .irunmap → prod-baked)
   - `--runtime-lighting`: force runtime lighting (setShaderAuto) and ignore baked lightmaps
   - fog baseline precedence: map payload override > run profile > engine default horizon fog (`start=120`, `end=360`)
+  - fog path now includes optional render culling beyond fog visibility distance (camera far plane follows fog end with a small margin)
+  - runtime fog edits are staged until explicit save (`world_map_save`), then persisted into map payload (`map.json` -> `fog`)
   - skybox baseline precedence: map `skyname` first, otherwise default preset (`default_horizon`) across `.map` / `.irunmap` / `map.json`
   - runtime world diagnostics exposed in `F2` and console (`world_runtime`): entry kind, active lighting path, sky source, fog source
   - structured world load report emitted every run (`[IVAN] load report`, schema `ivan.world.load_report.v1`) with stable stage names:
@@ -322,9 +324,10 @@
   - Launcher UI actions route through typed command handlers (single dispatch path)
   - Live log panel capturing subprocess stdout/stderr
   - Persistent settings in `~/.irun/launcher/config.json`
+  - Launcher window position and size persist between launches
 - Ivan: Scope 05 demo-map rollout validation framework
   - acceptance baseline locked to `assets/maps/demo/demo.map`
-  - cross-path smoke automation for source-map, baked `.irunmap`, and imported-map paths via `apps/ivan/tools/scope05_rollout_validation.py`
+  - cross-path smoke automation for source-map, packed `.irunmap`, and imported-map paths via `apps/ivan/tools/scope05_rollout_validation.py`
   - rollout gates defined for runtime visuals, launcher/runflow UX, command-bus/MCP control surface, and loading performance targets
   - reproducible validation artifacts written under `.tmp/scope05/` and documented in `docs/qa/demo-map-rollout-scope05.md`
 - Ivan: world rendering code split into layered modules (`scene_layers`) with explicit contracts

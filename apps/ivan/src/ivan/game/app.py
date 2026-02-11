@@ -395,19 +395,11 @@ class RunnerDemo(ShowBase):
         fullscreen = bool(state.fullscreen)
         win_w = int(state.window_width) if state.window_width else int(DEFAULT_WINDOW_WIDTH)
         win_h = int(state.window_height) if state.window_height else int(DEFAULT_WINDOW_HEIGHT)
-        if (
-            sys.platform.startswith("win")
-            and not fullscreen
-            and int(DEFAULT_WINDOW_WIDTH) == 1920
-            and int(DEFAULT_WINDOW_HEIGHT) == 1080
-            and win_w == 1280
-            and win_h == 720
-        ):
-            # One-time migration from legacy default to new Windows default.
-            win_w = int(DEFAULT_WINDOW_WIDTH)
-            win_h = int(DEFAULT_WINDOW_HEIGHT)
-            self._last_persisted_window_size = (win_w, win_h)
-            update_state(fullscreen=False, window_width=win_w, window_height=win_h)
+        if not fullscreen:
+            win_w, win_h = self._adapt_window_size(win_w, win_h)
+            if (win_w, win_h) != (int(state.window_width), int(state.window_height)):
+                self._last_persisted_window_size = (win_w, win_h)
+                update_state(fullscreen=False, window_width=win_w, window_height=win_h)
 
         props = WindowProperties()
         props.setCursorHidden(self._pointer_locked)
@@ -422,28 +414,50 @@ class RunnerDemo(ShowBase):
             props.setFullscreen(False)
             props.setSize(win_w, win_h)
         self.win.requestProperties(props)
+        self._refresh_render_resolution_from_window()
         self.camLens.setFov(float(self.tuning.camera_base_fov))
         # Reduce near-plane clipping when hugging walls in first-person.
-        self.camLens.setNearFar(0.03, 5000.0)
+        self.camLens.setNearFar(0.03, 20000.0)
         if self._window_resize_persist_enabled:
             self.accept("window-event", self._on_window_event)
         if self._pointer_locked:
             self._center_mouse()
+
+    def _adapt_window_size(self, width: int, height: int) -> tuple[int, int]:
+        """Fit windowed size into current display while keeping requested default."""
+        w = max(320, int(width))
+        h = max(240, int(height))
+        try:
+            disp_w = int(self.pipe.getDisplayWidth())
+            disp_h = int(self.pipe.getDisplayHeight())
+        except Exception:
+            return w, h
+        if disp_w < 320 or disp_h < 240:
+            return w, h
+        max_w = max(320, int(float(disp_w) * 0.96))
+        max_h = max(240, int(float(disp_h) * 0.92))
+        if w <= max_w and h <= max_h:
+            return w, h
+        scale = min(float(max_w) / float(max(1, w)), float(max_h) / float(max(1, h)))
+        out_w = max(320, int(round(float(w) * scale)))
+        out_h = max(240, int(round(float(h) * scale)))
+        return out_w, out_h
 
     def _on_window_event(self, window) -> None:
         if self.cfg.smoke or not self._window_resize_persist_enabled or self.win is None:
             return
         if window is not None and window is not self.win:
             return
+        self._refresh_render_resolution_from_window()
         try:
             props = self.win.getProperties()
-            if props.getFullscreen():
-                return
             width = int(self.win.getXSize())
             height = int(self.win.getYSize())
         except Exception:
             return
         if width < 320 or height < 240:
+            return
+        if props.getFullscreen():
             return
         size = (width, height)
         if size == self._last_persisted_window_size:
@@ -459,12 +473,41 @@ class RunnerDemo(ShowBase):
         if fullscreen:
             props.setFullscreen(True)
             props.setSize(self.pipe.getDisplayWidth(), self.pipe.getDisplayHeight())
+            width = int(self.pipe.getDisplayWidth())
+            height = int(self.pipe.getDisplayHeight())
         else:
+            width, height = self._adapt_window_size(int(width), int(height))
             props.setFullscreen(False)
             props.setSize(int(width), int(height))
             self._last_persisted_window_size = (int(width), int(height))
         self.win.requestProperties(props)
+        self._refresh_render_resolution_from_window()
         update_state(fullscreen=fullscreen, window_width=int(width), window_height=int(height))
+
+    def _refresh_render_resolution_from_window(self) -> None:
+        """
+        Re-apply camera render aspect from current framebuffer size.
+
+        Window resize events can change the actual framebuffer resolution
+        without restarting the app; this keeps in-game render resolution in sync.
+        """
+        if self.win is None:
+            return
+        try:
+            fb_w = int(self.win.getFbXSize())
+            fb_h = int(self.win.getFbYSize())
+        except Exception:
+            try:
+                fb_w = int(self.win.getXSize())
+                fb_h = int(self.win.getYSize())
+            except Exception:
+                return
+        if fb_w <= 0 or fb_h <= 0:
+            return
+        try:
+            self.camLens.setAspectRatio(float(fb_w) / float(fb_h))
+        except Exception:
+            pass
 
     def _on_scroll_wheel(self, direction: int) -> None:
         """Route mouse wheel: menu scroll in menu mode, debug scroll in game mode."""
