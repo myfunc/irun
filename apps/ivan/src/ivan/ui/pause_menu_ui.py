@@ -11,10 +11,11 @@ from irun_ui_kit.widgets.checkbox import Checkbox
 from irun_ui_kit.widgets.panel import Panel
 from irun_ui_kit.widgets.tabs import Tabs
 from irun_ui_kit.widgets.text_input import TextInput
+from .pause_menu_settings_section import PauseMenuSettingsSection
 
 
 class PauseMenuUI:
-    """In-game ESC menu with navigation actions and key binding controls."""
+    """In-game ESC menu with navigation, settings, multiplayer, and feel controls."""
 
     def __init__(
         self,
@@ -27,13 +28,17 @@ class PauseMenuUI:
         on_quit,
         on_open_replays,
         on_open_feel_session,
-        on_open_keybindings,
+        on_open_settings,
         on_rebind_noclip,
+        on_master_volume_change,
+        on_sfx_volume_change,
         on_toggle_open_network,
         on_connect_server,
         on_disconnect_server,
         on_feel_export_latest,
         on_feel_apply_feedback,
+        master_volume: float = 0.85,
+        sfx_volume: float = 0.90,
     ) -> None:
         aspect_ratio = 16.0 / 9.0
         if getattr(ShowBaseGlobal, "base", None) is not None:
@@ -100,28 +105,8 @@ class PauseMenuUI:
             w=content_w,
             tab_h=tab_h,
             page_h=page_h,
-            labels=["Menu", "Keys", "Net", "Feel"],
+            labels=["Menu", "Settings", "Net", "Feel"],
             active=0,
-        )
-
-        self._keybind_status = DirectLabel(
-            parent=self._tabs.page(1),
-            text="",
-            text_scale=theme.small_scale,
-            text_align=TextNode.ALeft,
-            text_fg=theme.text,
-            frameColor=(0, 0, 0, 0),
-            pos=(0.0, 0, theme.pad),
-            text_wordwrap=22,
-        )
-        self._noclip_bind_label = DirectLabel(
-            parent=self._tabs.page(1),
-            text="Current noclip key: V",
-            text_scale=theme.label_scale,
-            text_align=TextNode.ALeft,
-            text_fg=theme.text,
-            frameColor=(0, 0, 0, 0),
-            pos=(0.0, 0, page_h - theme.pad - theme.label_scale * 0.9),
         )
         self._multiplayer_status = DirectLabel(
             parent=self._tabs.page(2),
@@ -165,9 +150,9 @@ class PauseMenuUI:
             on_click=on_map_selector,
         )
 
-        def _open_keys() -> None:
-            on_open_keybindings()
-            self.show_keybindings()
+        def _open_settings() -> None:
+            on_open_settings()
+            self.show_settings()
 
         self._btn_keybindings = Button.build(
             parent=self._tabs.page(0),
@@ -176,8 +161,8 @@ class PauseMenuUI:
             y=y0 - row_step,
             w=col_w,
             h=btn_h,
-            label="Key Bindings",
-            on_click=_open_keys,
+            label="Settings",
+            on_click=_open_settings,
         )
         self._btn_replays = Button.build(
             parent=self._tabs.page(0),
@@ -243,26 +228,19 @@ class PauseMenuUI:
             on_change=lambda checked: on_toggle_open_network(bool(checked)),
         )
 
-        # Key bindings page.
-        self._noclip_bind_button = Button.build(
+        # Settings page (audio + keybinds).
+        self._settings = PauseMenuSettingsSection(
             parent=self._tabs.page(1),
             theme=theme,
-            x=btn_w / 2.0,
-            y=page_h - theme.pad - btn_h / 2.0 - theme.label_scale * 1.3,
-            w=btn_w,
-            h=btn_h,
-            label="Rebind Noclip Toggle",
-            on_click=on_rebind_noclip,
-        )
-        self._keys_back_button = Button.build(
-            parent=self._tabs.page(1),
-            theme=theme,
-            x=btn_w / 2.0,
-            y=theme.pad + btn_h / 2.0,
-            w=btn_w,
-            h=btn_h,
-            label="Back",
-            on_click=self.show_main,
+            page_h=page_h,
+            width=btn_w,
+            button_h=btn_h,
+            on_rebind_noclip=on_rebind_noclip,
+            on_master_volume_change=on_master_volume_change,
+            on_sfx_volume_change=on_sfx_volume_change,
+            on_back=self.show_main,
+            master_volume=float(master_volume),
+            sfx_volume=float(sfx_volume),
         )
 
         # Multiplayer page.
@@ -508,7 +486,7 @@ class PauseMenuUI:
         )
         self.set_keybind_status("")
 
-    def show_keybindings(self) -> None:
+    def show_settings(self) -> None:
         self._tabs.select(
             1,
             active_color=self._theme.panel2,
@@ -516,6 +494,10 @@ class PauseMenuUI:
             active_text_fg=self._theme.text,
             inactive_text_fg=self._theme.text_muted,
         )
+
+    def show_keybindings(self) -> None:
+        # Backward compatibility for callers/tests that still use the old name.
+        self.show_settings()
 
     def show_multiplayer(self) -> None:
         self._tabs.select(
@@ -537,10 +519,14 @@ class PauseMenuUI:
         self._set_feel_route_tag(self._feel_route_tag)
 
     def set_noclip_binding(self, key_name: str) -> None:
-        self._noclip_bind_label["text"] = f"Current noclip key: {str(key_name).upper()}"
+        self._settings.set_noclip_binding(key_name)
 
     def set_keybind_status(self, text: str) -> None:
-        self._keybind_status["text"] = str(text)
+        self._settings.set_status(text)
+
+    def set_audio_levels(self, *, master_volume: float, sfx_volume: float) -> None:
+        self._settings.set_master_volume(master_volume)
+        self._settings.set_sfx_volume(sfx_volume)
 
     def set_open_to_network(self, value: bool) -> None:
         self._open_network_checkbox.set_checked(bool(value))

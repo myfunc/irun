@@ -32,6 +32,13 @@ class PlayerControllerStateMixin:
             reason=str(reason),
         )
 
+    def add_external_impulse(self, *, impulse: LVector3f, reason: str = "external_impulse") -> None:
+        self._add_velocity(
+            LVector3f(impulse),
+            source=MotionWriteSource.IMPULSE,
+            reason=str(reason),
+        )
+
     def set_hitstop_active(self, active: bool) -> None:
         self._hitstop_active = bool(active)
 

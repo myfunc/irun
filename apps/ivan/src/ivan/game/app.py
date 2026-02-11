@@ -65,6 +65,9 @@ from irun_ui_kit.renderer import UIRenderer
 from irun_ui_kit.theme import Theme
 
 from . import feel_capture_flow as _feel_capture
+from . import combat_system as _combat
+from . import combat_fx as _combat_fx
+from . import audio_system as _audio
 from . import grapple_rope as _grapple_rope
 from . import input_system as _input
 from . import menu_flow as _menu
@@ -85,7 +88,9 @@ from .netcode import _NetPerfStats, _PredictedInput, _PredictedState, _RemotePla
 
 class RunnerDemo(ShowBase):
     def __init__(self, cfg: RunConfig) -> None:
-        loadPrcFileData("", "audio-library-name null")
+        if cfg.smoke:
+            # Smoke runs are intentionally silent/offscreen.
+            loadPrcFileData("", "audio-library-name null")
         # GoldSrc and some Source assets include many non-power-of-two (NPOT) textures.
         # Panda3D can rescale these to the nearest power-of-two by default, which breaks
         # BSP UV mapping (textures look skewed/flipped). Disable that behavior.
@@ -106,6 +111,8 @@ class RunnerDemo(ShowBase):
         self.ui_theme = self.ui_renderer.theme
         self.tuning = PhysicsTuning()
         self._loaded_state = load_state()
+        self._master_volume: float = max(0.0, min(1.0, float(self._loaded_state.master_volume)))
+        self._sfx_volume: float = max(0.0, min(1.0, float(self._loaded_state.sfx_volume)))
         self._window_resize_persist_enabled: bool = sys.platform.startswith("win")
         self._last_persisted_window_size: tuple[int, int] = (
             int(self._loaded_state.window_width),
@@ -148,6 +155,7 @@ class RunnerDemo(ShowBase):
         self._prev_grapple_down: bool = False
         self._prev_noclip_toggle_down: bool = False
         self._prev_demo_save_down: bool = False
+        self._prev_weapon_slot_down: list[bool] = [False, False, False, False]
         self._active_recording: DemoRecording | None = None
         self._loaded_replay_path: Path | None = None
         self._playback_frames: list[DemoFrame] | None = None
@@ -234,6 +242,8 @@ class RunnerDemo(ShowBase):
         self._grapple_rope_np.setDepthWrite(True)
         self._grapple_rope_np.setTexture(self._build_grapple_rope_texture())
         self._grapple_rope_np.hide()
+        _combat.init_runtime(self)
+        _combat_fx.init_runtime(self)
 
         self.scene: WorldScene | None = None
         self.collision: CollisionWorld | None = None
@@ -276,15 +286,21 @@ class RunnerDemo(ShowBase):
             on_quit=self.userExit,
             on_open_replays=self._open_replay_browser,
             on_open_feel_session=self._open_feel_session_menu,
-            on_open_keybindings=self._open_keybindings_menu,
+            on_open_settings=self._open_settings_menu,
             on_rebind_noclip=self._start_rebind_noclip,
+            on_master_volume_change=self._on_master_volume_changed,
+            on_sfx_volume_change=self._on_sfx_volume_changed,
             on_toggle_open_network=self._on_toggle_open_network,
             on_connect_server=self._on_connect_server_from_menu,
             on_disconnect_server=self._on_disconnect_server_from_menu,
             on_feel_export_latest=self._feel_export_latest,
             on_feel_apply_feedback=self._feel_apply_feedback,
+            master_volume=float(self._master_volume),
+            sfx_volume=float(self._sfx_volume),
         )
         self.pause_ui.set_noclip_binding(self._noclip_toggle_key)
+        if hasattr(self.pause_ui, "set_audio_levels"):
+            self.pause_ui.set_audio_levels(master_volume=float(self._master_volume), sfx_volume=float(self._sfx_volume))
         self.pause_ui.set_open_to_network(self._open_to_network)
         self.pause_ui.set_connect_target(
             host=self._runtime_connect_host or "127.0.0.1",
@@ -321,6 +337,7 @@ class RunnerDemo(ShowBase):
         self.replay_input_ui.hide()
         self.console_ui = ConsoleUI(aspect2d=self.aspect2d, theme=self.ui_theme, on_submit=self._console_submit_line)
         self.input_debug = InputDebugUI(aspect2d=self.aspect2d, theme=self.ui_theme)
+        _audio.init_runtime(self, master_volume=float(self._master_volume), sfx_volume=float(self._sfx_volume))
         self._setup_input()
 
         # Minimal console runtime (no in-game UI yet). Primarily driven via MCP/control socket.
@@ -604,6 +621,8 @@ class RunnerDemo(ShowBase):
             pass
         self.pause_ui.show_main()
         self.pause_ui.set_keybind_status("")
+        if hasattr(self.pause_ui, "set_audio_levels"):
+            self.pause_ui.set_audio_levels(master_volume=float(self._master_volume), sfx_volume=float(self._sfx_volume))
         self.pause_ui.set_open_to_network(self._open_to_network)
         self.pause_ui.set_connect_target(
             host=self._runtime_connect_host or "127.0.0.1",
@@ -717,12 +736,28 @@ class RunnerDemo(ShowBase):
     def _console_submit_line(self, line: str) -> list[str]:
         return list(self.console.execute_line(ctx=CommandContext(role="client", origin="ui"), line=str(line)))
 
-    def _open_keybindings_menu(self) -> None:
+    def _open_settings_menu(self) -> None:
         if self._mode != "game":
             return
-        self.pause_ui.show_keybindings()
+        self.pause_ui.show_settings()
         self.pause_ui.set_noclip_binding(self._noclip_toggle_key)
+        if hasattr(self.pause_ui, "set_audio_levels"):
+            self.pause_ui.set_audio_levels(master_volume=float(self._master_volume), sfx_volume=float(self._sfx_volume))
         self.pause_ui.set_keybind_status("")
+
+    def _open_keybindings_menu(self) -> None:
+        # Backward-compat route.
+        self._open_settings_menu()
+
+    def _on_master_volume_changed(self, value: float) -> None:
+        self._master_volume = max(0.0, min(1.0, float(value)))
+        _audio.set_master_volume(self, float(self._master_volume))
+        update_state(master_volume=float(self._master_volume))
+
+    def _on_sfx_volume_changed(self, value: float) -> None:
+        self._sfx_volume = max(0.0, min(1.0, float(value)))
+        _audio.set_sfx_volume(self, float(self._sfx_volume))
+        update_state(sfx_volume=float(self._sfx_volume))
 
     def _open_feel_session_menu(self) -> None:
         if self._mode != "game":
@@ -1075,6 +1110,9 @@ class RunnerDemo(ShowBase):
             self._prev_grapple_down = False
             self._prev_noclip_toggle_down = False
             self._prev_demo_save_down = False
+            self._prev_weapon_slot_down = [False, False, False, False]
+            _combat.reset_runtime(self, keep_active_slot=True)
+            _combat_fx.reset_runtime(self, keep_weapon_slot=True)
             if not self._playback_active:
                 self._start_new_demo_recording()
             if self._runtime_connect_host or self._open_to_network:
@@ -1646,6 +1684,9 @@ class RunnerDemo(ShowBase):
             or bool(cmd.jump_held)
             or bool(cmd.slide_pressed)
             or bool(cmd.grapple_pressed)
+            or bool(cmd.mouse_left_held)
+            or bool(cmd.mouse_right_held)
+            or int(cmd.weapon_slot_select) != 0
             or int(cmd.look_dx) != 0
             or int(cmd.look_dy) != 0
         ):
@@ -1678,6 +1719,16 @@ class RunnerDemo(ShowBase):
             )
 
         self._handle_kill_plane()
+        fire_event = _combat.tick(self, cmd=cmd, dt=float(self._sim_fixed_dt))
+        if fire_event is not None:
+            _combat_fx.on_fire(self, event=fire_event)
+            _audio.on_weapon_fire(self, slot=int(fire_event.slot))
+            _audio.on_weapon_impact(
+                self,
+                slot=int(fire_event.slot),
+                world_hit=bool(fire_event.world_hit),
+                impact_power=float(fire_event.impact_power),
+            )
 
         if not bool(self.tuning.noclip_enabled):
             self._camera_feedback_observer.record_sim_tick(
@@ -1769,6 +1820,7 @@ class RunnerDemo(ShowBase):
                     "jh": bool(cmd.jump_held),
                     "sp": bool(cmd.slide_pressed),
                     "gp": bool(cmd.grapple_pressed),
+                    "ws": int(cmd.weapon_slot_select),
                 },
             )
 
@@ -1785,8 +1837,10 @@ class RunnerDemo(ShowBase):
             return
         if self.player.is_grapple_attached():
             self.player.detach_grapple()
+            _audio.on_grapple_toggle(self, attached=False)
             return
-        self._fire_grapple()
+        if self._fire_grapple():
+            _audio.on_grapple_toggle(self, attached=True)
 
     def _view_direction(self) -> LVector3f:
         h = math.radians(float(self._yaw))
@@ -1829,6 +1883,7 @@ class RunnerDemo(ShowBase):
                 "inp_sp": bool(cmd.slide_pressed),
                 "inp_gp": bool(cmd.grapple_pressed),
                 "inp_nt": bool(cmd.noclip_toggle_pressed),
+                "inp_ws": int(cmd.weapon_slot_select),
                 "inp_mf": int(cmd.move_forward),
                 "inp_mr": int(cmd.move_right),
                 "inp_kw": bool(cmd.key_w_held),
@@ -1889,6 +1944,7 @@ class RunnerDemo(ShowBase):
             "inp_sp": bool(cmd.slide_pressed),
             "inp_gp": bool(cmd.grapple_pressed),
             "inp_nt": bool(cmd.noclip_toggle_pressed),
+            "inp_ws": int(cmd.weapon_slot_select),
             "inp_mf": int(cmd.move_forward),
             "inp_mr": int(cmd.move_right),
             "inp_kw": bool(cmd.key_w_held),
@@ -1903,24 +1959,25 @@ class RunnerDemo(ShowBase):
             "inp_m2": bool(cmd.mouse_right_held),
         }
 
-    def _fire_grapple(self) -> None:
+    def _fire_grapple(self) -> bool:
         if self.player is None or self.collision is None:
-            return
+            return False
         origin = LVector3f(self.camera.getPos(self.render))
         direction = self._view_direction()
         if direction.lengthSquared() <= 1e-12:
-            return
+            return False
         reach = max(8.0, float(self.tuning.grapple_fire_range))
         end = origin + direction * reach
         hit = self.collision.ray_closest(origin, end)
         if not hit.hasHit():
-            return
+            return False
         if hasattr(hit, "getHitPos"):
             anchor = LVector3f(hit.getHitPos())
         else:
             frac = max(0.0, min(1.0, float(hit.getHitFraction())))
             anchor = origin + (end - origin) * frac
         self.player.attach_grapple(anchor=anchor)
+        return True
 
     def _handle_kill_plane(self) -> None:
         if self.player is None or self.scene is None:
@@ -1982,6 +2039,8 @@ class RunnerDemo(ShowBase):
         self._det_trace_hash = "0" * 16
         self._last_sim_vel = LVector3f(0, 0, 0)
         self._sim_state_ready = False
+        _combat.reset_runtime(self, keep_active_slot=True)
+        _combat_fx.reset_runtime(self, keep_weapon_slot=True)
         self._push_sim_snapshot()
         self._render_interpolated_state(alpha=1.0)
         # Recording starts from each spawn/respawn window.
@@ -2178,6 +2237,7 @@ class RunnerDemo(ShowBase):
                 self._net_reconcile_pitch_offset *= float(decay)
             alpha = self._sim_accumulator / self._sim_fixed_dt if self._sim_fixed_dt > 0.0 else 1.0
             self._render_interpolated_state(alpha=alpha, frame_dt=frame_dt)
+            _combat_fx.update(self, dt=float(frame_dt))
             self._render_remote_players(alpha=alpha)
             if self._net_connected:
                 now_perf = float(time.monotonic())
@@ -2214,13 +2274,14 @@ class RunnerDemo(ShowBase):
 
             hspeed = math.sqrt(self.player.vel.x * self.player.vel.x + self.player.vel.y * self.player.vel.y)
             vault_dbg = self.player.vault_debug_status()
+            combat_status = _combat.status_fragment(self)
             self.ui.set_speed(hspeed)
             self.ui.set_health(self._local_hp)
             self.ui.set_status(
                 f"speed: {hspeed:.2f} | z-vel: {self.player.vel.z:.2f} | grounded: {self.player.grounded} | "
                 f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()} | slide: {self.player.is_sliding()} | "
                 f"grapple: {self.player.is_grapple_attached()} | hp: {self._local_hp} | net: {self._net_connected} | "
-                f"rec: {self._active_recording is not None} | replay: {self._playback_active} | vault: {vault_dbg}"
+                f"rec: {self._active_recording is not None} | replay: {self._playback_active} | vault: {vault_dbg} | {combat_status}"
             )
 
             if self._game_mode is not None:
@@ -2230,6 +2291,7 @@ class RunnerDemo(ShowBase):
                     self._handle_unhandled_error(context="mode.tick", exc=e)
 
             self._update_grapple_rope_visual()
+            _audio.update_footsteps(self, dt=float(frame_dt))
 
             return Task.cont
         except Exception as e:
