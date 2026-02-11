@@ -18,8 +18,10 @@
 - UI kit: standardize procedural windows/panels/controls and theme tokens before wiring into runtime UI
   - Near-term: lock down typography + DPI scaling + low-res readability rules, then add focus/keyboard navigation and a scroll container
 - Handcrafted, player-generated map workflow and validation tools
+  - Scope 05 rollout harness is now available (`apps/ivan/tools/scope05_rollout_validation.py`) with gate evidence docs in `docs/qa/demo-map-rollout-scope05.md` (current recommendation: no-go until loading targets pass)
 - Packed map bundles for distribution and git-friendly imports (`.irunmap`) — **default format for all maps**
 - External level editor: TrenchBroom — **implemented**: direct `.map` loading (Valve 220), brush CSG, WAD textures, Phong normals, material defs, hybrid lighting, quick-test script with file watcher, bake + pack pipelines (game config + FGD shipped in `apps/ivan/trenchbroom/`)
+- Map pipeline profiles — **implemented**: dev-fast (skip vis/light, no compression) vs prod-baked (full quality); runtime `--map-profile` auto/dev-fast/prod-baked; profile-aware fog and visibility defaults
 - Time trial: local timing + local personal best storage (replays/portal later)
 
 ## Paused

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import errno
 import os
@@ -7,7 +8,9 @@ import sys
 import threading
 import time
 import traceback
+from collections import deque
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from direct.showbase.ShowBase import ShowBase
@@ -31,7 +34,7 @@ from ivan.console.control_server import ConsoleControlServer
 from ivan.console.core import CommandContext
 from ivan.console.ivan_bindings import build_client_console
 from ivan.console.line_bus import ThreadSafeLineBus
-from ivan.maps.bundle_io import resolve_bundle_handle
+from ivan.maps.bundle_io import infer_map_profile_from_path, resolve_bundle_handle
 from ivan.maps.run_metadata import RunMetadata, load_run_metadata
 from ivan.modes.base import ModeContext
 from ivan.modes.loader import load_mode
@@ -50,8 +53,15 @@ from ivan.replays import (
     new_recording,
     save_recording,
 )
-from ivan.state import IvanState, load_state, update_state
+from ivan.state import (
+    DEFAULT_WINDOW_HEIGHT,
+    DEFAULT_WINDOW_WIDTH,
+    IvanState,
+    load_state,
+    update_state,
+)
 from ivan.ui.debug_ui import DebugUI
+from ivan.ui.debug_hud_overlay import DebugHudOverlay
 from ivan.ui.console_ui import ConsoleUI
 from ivan.ui.error_console_ui import ErrorConsoleUI
 from ivan.ui.input_debug_ui import InputDebugUI
@@ -220,10 +230,10 @@ class RunnerDemo(ShowBase):
         self._last_input_time: float = 0.0
         self._embedded_server: EmbeddedHostServer | None = None
         self._open_to_network: bool = False
-        # If no explicit CLI connect target is provided, keep last used host/port for fast iteration.
-        st_host = str(self._loaded_state.last_net_host).strip() if self._loaded_state.last_net_host else None
+        # Single-player should remain the default on re-entry.
+        # Only explicit CLI `--connect` enables auto-connect at startup.
         st_port = int(self._loaded_state.last_net_port) if isinstance(self._loaded_state.last_net_port, int) else None
-        self._runtime_connect_host: str | None = (str(self.cfg.net_host).strip() if self.cfg.net_host else st_host)
+        self._runtime_connect_host: str | None = str(self.cfg.net_host).strip() if self.cfg.net_host else None
         self._runtime_connect_port: int = int(self.cfg.net_port) if self.cfg.net_host else int(st_port or self.cfg.net_port)
         self._local_hp: int = 100
         self._sim_prev_player_pos = LVector3f(0, 0, 0)
@@ -235,6 +245,7 @@ class RunnerDemo(ShowBase):
         self._sim_prev_pitch: float = 0.0
         self._sim_curr_pitch: float = 0.0
         self._sim_state_ready: bool = False
+        self._load_report_emitted_for_scene_id: int | None = None
         self._grapple_rope_node = GeomNode("grapple-rope")
         self._grapple_rope_np = self.render.attachNewNode(self._grapple_rope_node)
         self._grapple_rope_np.setTwoSided(True)
@@ -256,6 +267,7 @@ class RunnerDemo(ShowBase):
         self._game_mode_ctx: ModeContext | None = None
         self._game_mode_events: list[str] = []
         self._current_map_json: str | None = None
+        self._active_run_cfg: RunConfig | None = None
 
         self._menu: MainMenuController | None = None
         self._import_thread: threading.Thread | None = None
@@ -339,6 +351,7 @@ class RunnerDemo(ShowBase):
         self.replay_input_ui.hide()
         self.console_ui = ConsoleUI(aspect2d=self.aspect2d, theme=self.ui_theme, on_submit=self._console_submit_line)
         self.input_debug = InputDebugUI(aspect2d=self.aspect2d, theme=self.ui_theme)
+        self.debug_hud = DebugHudOverlay(aspect2d=self.aspect2d, theme=self.ui_theme)
         _audio.init_runtime(self, master_volume=float(self._master_volume), sfx_volume=float(self._sfx_volume))
         self._setup_input()
 
@@ -346,9 +359,15 @@ class RunnerDemo(ShowBase):
         self.console = build_client_console(self)
         self._console_bus = ThreadSafeLineBus(max_lines=500)
         self.console.register_listener(self._console_bus.listener)
+        self._console_req_lock = threading.Lock()
+        self._console_req_queue: deque[dict[str, Any]] = deque()
         # Default chosen to be near the multiplayer default (7777) but not collide.
         self._console_control_port = int(os.environ.get("IRUN_IVAN_CONSOLE_PORT", "7779"))
-        self.console_control = ConsoleControlServer(console=self.console, port=int(self._console_control_port))
+        self.console_control = ConsoleControlServer(
+            console=self.console,
+            port=int(self._console_control_port),
+            execute_request=self._queue_console_request,
+        )
         try:
             self.console_control.start()
         except Exception:
@@ -376,8 +395,21 @@ class RunnerDemo(ShowBase):
             return
         state = self._loaded_state
         fullscreen = bool(state.fullscreen)
-        win_w = int(state.window_width) if state.window_width else 1280
-        win_h = int(state.window_height) if state.window_height else 720
+        win_w = int(state.window_width) if state.window_width else int(DEFAULT_WINDOW_WIDTH)
+        win_h = int(state.window_height) if state.window_height else int(DEFAULT_WINDOW_HEIGHT)
+        if (
+            sys.platform.startswith("win")
+            and not fullscreen
+            and int(DEFAULT_WINDOW_WIDTH) == 1920
+            and int(DEFAULT_WINDOW_HEIGHT) == 1080
+            and win_w == 1280
+            and win_h == 720
+        ):
+            # One-time migration from legacy default to new Windows default.
+            win_w = int(DEFAULT_WINDOW_WIDTH)
+            win_h = int(DEFAULT_WINDOW_HEIGHT)
+            self._last_persisted_window_size = (win_w, win_h)
+            update_state(fullscreen=False, window_width=win_w, window_height=win_h)
 
         props = WindowProperties()
         props.setCursorHidden(self._pointer_locked)
@@ -454,16 +486,18 @@ class RunnerDemo(ShowBase):
         self.accept("r", lambda: self._safe_call("input.respawn", self._on_respawn_pressed))
         self.accept("f2", self.input_debug.toggle)
         self.accept("f3", self.error_console.toggle)
+        self.accept("f12", lambda: self._safe_call("input.debug_hud", self._cycle_debug_hud))
         self.accept("f10", lambda: self._safe_call("feel.dump", self._dump_feel_rolling_log))
         self.accept("f11", lambda: self._safe_call("determinism.dump", self._dump_determinism_trace))
         self.accept("shift-f3", lambda: self._safe_call("errors.clear", self._clear_errors))
-        self.accept("arrow_up", lambda: self._menu_nav_press(-1))
-        self.accept("arrow_down", lambda: self._menu_nav_press(1))
+        self.accept("arrow_up", lambda: self._safe_call("input.arrow_up", self._on_arrow_up))
+        self.accept("arrow_down", lambda: self._safe_call("input.arrow_down", self._on_arrow_down))
         self.accept("arrow_up-up", lambda: self._menu_nav_release(-1))
         self.accept("arrow_down-up", lambda: self._menu_nav_release(1))
         self.accept("arrow_left", lambda: self._menu_page(-1))
         self.accept("arrow_right", lambda: self._menu_page(1))
         self.accept("enter", self._menu_select)
+        self.accept("tab", lambda: self._safe_call("input.tab", self._on_console_autocomplete))
         self.accept("delete", self._menu_delete)
         self.accept("backspace", self._menu_delete)
         self.accept("w", lambda: self._menu_nav_press(-1))
@@ -483,6 +517,44 @@ class RunnerDemo(ShowBase):
 
     def _on_tuning_change(self, field: str) -> None:
         _profiles.on_tuning_change(self, field)
+
+    def _on_arrow_up(self) -> None:
+        if self._console_open:
+            self.console_ui.history_prev()
+            return
+        self._menu_nav_press(-1)
+
+    def _on_arrow_down(self) -> None:
+        if self._console_open:
+            self.console_ui.history_next()
+            return
+        self._menu_nav_press(1)
+
+    def _on_console_autocomplete(self) -> None:
+        if not self._console_open:
+            return
+        text = self.console_ui.get_input_text().strip()
+        if not text:
+            return
+        head = text.split(" ", 1)[0]
+        rows = self.console.suggest_commands(head, limit=1)
+        if not rows:
+            return
+        cmd = str(rows[0][0])
+        tail = text[len(head) :]
+        self.console_ui.set_input_text(cmd + tail)
+
+    def _refresh_console_hint(self) -> None:
+        if not self._console_open:
+            return
+        text = self.console_ui.get_input_text().strip()
+        prefix = text.split(" ", 1)[0] if text else ""
+        rows = self.console.suggest_commands(prefix, limit=4)
+        if rows:
+            hint = " | ".join(f"{name}: {help_s}" for name, help_s in rows)
+            self.console_ui.set_hint(hint)
+        else:
+            self.console_ui.set_hint("Type `help` or `cmd_meta` to discover commands.")
 
     def _persist_tuning_field(self, field: str) -> None:
         if field not in PhysicsTuning.__annotations__:
@@ -644,6 +716,12 @@ class RunnerDemo(ShowBase):
         self.ui.hide()
         self._set_pointer_lock(False)
 
+    def _cycle_debug_hud(self) -> None:
+        """F12: cycle debug overlay modes (minimal | render | streaming | graph)."""
+        if self._mode != "game":
+            return
+        self.debug_hud.cycle_mode()
+
     def _toggle_debug_menu(self) -> None:
         if self._mode != "game":
             return
@@ -736,7 +814,67 @@ class RunnerDemo(ShowBase):
             self._set_pointer_lock(True)
 
     def _console_submit_line(self, line: str) -> list[str]:
-        return list(self.console.execute_line(ctx=CommandContext(role="client", origin="ui"), line=str(line)))
+        res = self._execute_console_line_now(ctx=CommandContext(role="client", origin="ui"), line=str(line))
+        return list(res.out)
+
+    def _execute_console_line_now(self, *, ctx: CommandContext, line: str):
+        return self.console.execute_line_detailed(ctx=ctx, line=str(line))
+
+    def _queue_console_request(self, *, ctx: CommandContext, line: str):
+        # Control server runs on a worker thread; enqueue and let the game loop execute the command.
+        ticket = {
+            "ctx": ctx,
+            "line": str(line),
+            "event": threading.Event(),
+            "result": None,
+        }
+        with self._console_req_lock:
+            # Keep queue bounded to avoid unbounded memory growth if client spams requests.
+            if len(self._console_req_queue) >= 256:
+                dropped = self._console_req_queue.popleft()
+                try:
+                    dropped["result"] = SimpleNamespace(
+                        ok=False,
+                        out=["error: console queue overflow"],
+                        executions=[],
+                        elapsed_ms=0.0,
+                    )
+                    dropped["event"].set()
+                except Exception:
+                    pass
+            self._console_req_queue.append(ticket)
+        if not ticket["event"].wait(timeout=1.5):
+            # Timeout keeps MCP/control clients from blocking forever.
+            return SimpleNamespace(
+                ok=False,
+                out=["error: command timed out waiting for game thread"],
+                executions=[],
+                elapsed_ms=0.0,
+            )
+        return ticket["result"]
+
+    def _drain_console_request_queue(self, *, budget_ms: float = 1.8, max_requests: int = 8) -> None:
+        t0 = time.perf_counter()
+        processed = 0
+        while processed < int(max_requests):
+            with self._console_req_lock:
+                if not self._console_req_queue:
+                    break
+                ticket = self._console_req_queue.popleft()
+            try:
+                ticket["result"] = self._execute_console_line_now(ctx=ticket["ctx"], line=ticket["line"])
+            except Exception as e:
+                ticket["result"] = SimpleNamespace(
+                    ok=False,
+                    out=[f"error: {e}"],
+                    executions=[],
+                    elapsed_ms=0.0,
+                )
+            finally:
+                ticket["event"].set()
+            processed += 1
+            if (time.perf_counter() - t0) * 1000.0 >= float(budget_ms):
+                break
 
     def _open_settings_menu(self) -> None:
         if self._mode != "game":
@@ -1011,7 +1149,12 @@ class RunnerDemo(ShowBase):
     def _start_import_from_request(self, req: ImportRequest) -> None:
         _menu.start_import_from_request(self, req)
 
-    def _start_game(self, map_json: str | None, lighting: dict | None = None) -> None:
+    def _start_game(
+        self,
+        map_json: str | None,
+        lighting: dict | None = None,
+        visibility: dict | None = None,
+    ) -> None:
         try:
             self._teardown_game_mode()
             if map_json:
@@ -1053,24 +1196,45 @@ class RunnerDemo(ShowBase):
             self.world_root = self.render.attachNewNode("world-root")
 
             handle = resolve_bundle_handle(map_json) if map_json else None
-            bundle_ref = handle.bundle_ref if handle is not None else None
-            run_meta: RunMetadata = (
-                load_run_metadata(bundle_ref=bundle_ref) if bundle_ref is not None else RunMetadata()
-            )
+            # Use bundle_ref for run.json; for .map files handle is None, use the map path.
+            bundle_ref = handle.bundle_ref if handle is not None else (Path(map_json) if map_json else None)
+            run_meta: RunMetadata = load_run_metadata(bundle_ref=bundle_ref)
 
             cfg_map_json = str(handle.map_json) if handle is not None else map_json
+            profile = infer_map_profile_from_path(
+                cfg_map_json,
+                explicit_profile=getattr(self.cfg, "map_profile", None),
+            )
             lighting_cfg = lighting if isinstance(lighting, dict) else run_meta.lighting
+            visibility_cfg = visibility if isinstance(visibility, dict) else run_meta.visibility
+            fog_cfg = run_meta.fog if isinstance(run_meta.fog, dict) else None
             cfg = RunConfig(
                 smoke=self.cfg.smoke,
                 feel_harness=bool(self.cfg.feel_harness),
                 map_json=cfg_map_json,
+                map_profile=profile,
+                runtime_lighting=getattr(self.cfg, "runtime_lighting", None),
                 hl_root=self.cfg.hl_root,
                 hl_mod=self.cfg.hl_mod,
                 lighting=lighting_cfg if isinstance(lighting_cfg, dict) else None,
-                visibility=run_meta.visibility if isinstance(run_meta.visibility, dict) else None,
+                visibility=visibility_cfg if isinstance(visibility_cfg, dict) else None,
+                fog=fog_cfg,
             )
+            self._active_run_cfg = cfg
             self.scene = WorldScene()
             self.scene.build(cfg=cfg, loader=self.loader, render=self.world_root, camera=self.camera)
+            self._load_report_emitted_for_scene_id = None
+            try:
+                diag = self.scene.runtime_world_diagnostics()
+                print(
+                    "[IVAN] world runtime: "
+                    f"entry={diag.get('entry_kind')} "
+                    f"path={diag.get('runtime_path')}({diag.get('runtime_path_source')}) "
+                    f"sky={diag.get('skyname')}[{diag.get('sky_source')}] "
+                    f"fog={diag.get('fog_source')} enabled={int(bool(diag.get('fog_enabled')))}"
+                )
+            except Exception:
+                pass
             # Visibility culling defaults OFF (can be enabled via the debug menu).
             self.scene.set_visibility_enabled(bool(self.tuning.vis_culling_enabled))
             self._current_map_json = cfg_map_json
@@ -2126,12 +2290,17 @@ class RunnerDemo(ShowBase):
 
     def _update(self, task: Task) -> int:
         try:
+            self._drain_console_request_queue()
             # Drain console output produced by background threads (MCP/control bridge) into the UI.
             try:
                 if getattr(self, "_console_bus", None) is not None:
                     lines = self._console_bus.drain()
                     if lines:
                         self.console_ui.append(*lines)
+            except Exception:
+                pass
+            try:
+                self._refresh_console_hint()
             except Exception:
                 pass
 
@@ -2156,6 +2325,15 @@ class RunnerDemo(ShowBase):
                 if self.replay_input_ui.is_visible():
                     self.replay_input_ui.hide()
                 return Task.cont
+            if self.scene is not None:
+                sid = id(self.scene)
+                if self._load_report_emitted_for_scene_id != int(sid):
+                    finalize = getattr(self.scene, "finalize_load_report_if_ready", None)
+                    if callable(finalize):
+                        payload = finalize()
+                        if isinstance(payload, dict):
+                            print(f"[IVAN] load report: {json.dumps(payload, ensure_ascii=True, sort_keys=True)}")
+                            self._load_report_emitted_for_scene_id = int(sid)
 
             frame_dt = min(globalClock.getDt(), 0.25)
             now = float(globalClock.getFrameTime())
@@ -2219,19 +2397,43 @@ class RunnerDemo(ShowBase):
                 vault_dbg = self.player.vault_debug_status() if self.player is not None else "idle"
                 state_name = self.player.motion_state_name() if self.player is not None else "none"
                 last_input_age = max(0.0, float(now) - float(self._last_input_time))
+                world_diag_line = "world=none"
+                if self.scene is not None:
+                    try:
+                        wd = self.scene.runtime_world_diagnostics()
+                        runtime_path = str(wd.get("runtime_path", "n/a"))
+                        if len(runtime_path) > 28:
+                            runtime_path = f"...{runtime_path[-25:]}"
+                        world_diag_line = (
+                            f"world | {wd.get('entry_kind')} | path={runtime_path} ({wd.get('runtime_path_source')}) "
+                            f"| sky={wd.get('skyname')}[{wd.get('sky_source')}] "
+                            f"| fog={wd.get('fog_source')}:{int(bool(wd.get('fog_enabled')))} {wd.get('fog_mode', 'linear')} "
+                            f"{float(wd.get('fog_start', 0.0)):.0f}-{float(wd.get('fog_end', 0.0)):.0f}"
+                        )
+                    except Exception:
+                        pass
+                cam_pos = LVector3f(0, 0, 0)
+                cam_hpr = LVector3f(0, 0, 0)
+                try:
+                    cam_pos = self.camera.getPos(self.render)
+                    cam_hpr = self.camera.getHpr(self.render)
+                except Exception:
+                    pass
+                net_diag = self._net_perf_text if self._net_perf_text else "net | waiting for samples..."
+                if len(net_diag) > 120:
+                    net_diag = f"{net_diag[:117]}..."
                 self.input_debug.set_text(
                     "input debug (F2)\n"
-                    f"mode={self._mode} lock={self._pointer_locked} dt={frame_dt:.3f} hasMouse={has_mouse} mouse=({mx:+.2f},{my:+.2f})\n"
-                    f"fps={1.0/max(1e-6,float(frame_dt)):.1f} frame_p95={self._feel_diag.frame_p95_ms():.2f}ms sim={self._sim_tick_rate_hz}hz steps={self._physics_steps_this_frame}\n"
-                    f"det_hash={self._det_trace_hash[:12]} det_samples={self._det_trace.sample_count()} replay_det={self._playback_det_checked}/{self._playback_det_mismatch}\n"
-                    f"raw WASD={int(raw_w)}{int(raw_a)}{int(raw_s)}{int(raw_d)} ascii WASD={int(asc_w)}{int(asc_a)}{int(asc_s)}{int(asc_d)}\n"
-                    f"state={state_name} wish=({wish_dbg.x:+.2f},{wish_dbg.y:+.2f}) pos=({pos.x:+.2f},{pos.y:+.2f},{pos.z:+.2f})\n"
-                    f"vel=({vel.x:+.2f},{vel.y:+.2f},{vel.z:+.2f}) accel=({accel.x:+.2f},{accel.y:+.2f},{accel.z:+.2f}) grounded={int(grounded)} contacts={contacts}\n"
-                    f"floor_n=({floor_n.x:+.2f},{floor_n.y:+.2f},{floor_n.z:+.2f}) wall_n=({wall_n.x:+.2f},{wall_n.y:+.2f},{wall_n.z:+.2f})\n"
-                    f"cam_fov={self._cam_dbg_fov:.2f} cam_tgt={self._cam_dbg_target_fov:.2f} cam_speed_r={self._cam_dbg_speed_ratio:.2f} cam_speed_t={self._cam_dbg_speed_t:.2f}\n"
-                    f"cam_event={self._cam_dbg_event_name} quality={self._cam_dbg_event_quality:.2f} applied_amp={self._cam_dbg_event_amp:.2f} blocked_reason={self._cam_dbg_event_blocked}\n"
-                    f"last_input_age={last_input_age:.3f}s jump_buf={jump_buf:.3f}s coyote={coyote:.3f}s vault={vault_dbg}\n"
-                    f"{self._net_perf_text if self._net_perf_text else 'net perf | waiting for samples...'}\n"
+                    f"sim   | mode={self._mode} lock={self._pointer_locked} dt={frame_dt:.3f} has_mouse={has_mouse} mouse=({mx:+.2f},{my:+.2f})\n"
+                    f"perf  | fps={1.0/max(1e-6,float(frame_dt)):.1f} p95={self._feel_diag.frame_p95_ms():.2f}ms sim={self._sim_tick_rate_hz}hz steps={self._physics_steps_this_frame}\n"
+                    f"det   | hash={self._det_trace_hash[:12]} samples={self._det_trace.sample_count()} replay_det={self._playback_det_checked}/{self._playback_det_mismatch}\n"
+                    f"input | raw_wasd={int(raw_w)}{int(raw_a)}{int(raw_s)}{int(raw_d)} ascii_wasd={int(asc_w)}{int(asc_a)}{int(asc_s)}{int(asc_d)} age={last_input_age:.3f}s jump_buf={jump_buf:.3f}s coyote={coyote:.3f}s\n"
+                    f"move  | state={state_name} wish=({wish_dbg.x:+.2f},{wish_dbg.y:+.2f}) pos=({pos.x:+.2f},{pos.y:+.2f},{pos.z:+.2f}) vel=({vel.x:+.2f},{vel.y:+.2f},{vel.z:+.2f})\n"
+                    f"phys  | accel=({accel.x:+.2f},{accel.y:+.2f},{accel.z:+.2f}) grounded={int(grounded)} contacts={contacts} floor_n=({floor_n.x:+.2f},{floor_n.y:+.2f},{floor_n.z:+.2f}) wall_n=({wall_n.x:+.2f},{wall_n.y:+.2f},{wall_n.z:+.2f})\n"
+                    f"cam   | pos=({cam_pos.x:+.2f},{cam_pos.y:+.2f},{cam_pos.z:+.2f}) hpr=({cam_hpr.x:+.2f},{cam_hpr.y:+.2f},{cam_hpr.z:+.2f}) fov={self._cam_dbg_fov:.2f}/{self._cam_dbg_target_fov:.2f} speed={self._cam_dbg_speed_ratio:.2f}/{self._cam_dbg_speed_t:.2f}\n"
+                    f"camfx | event={self._cam_dbg_event_name} q={self._cam_dbg_event_quality:.2f} amp={self._cam_dbg_event_amp:.2f} blocked={self._cam_dbg_event_blocked} vault={vault_dbg}\n"
+                    f"{world_diag_line}\n"
+                    f"{net_diag}\n"
                     f"{self._feel_perf_text}"
                 )
             if self._input_debug_until and globalClock.getFrameTime() >= self._input_debug_until:
@@ -2299,12 +2501,26 @@ class RunnerDemo(ShowBase):
             transport_status = _transport.status_fragment(self)
             self.ui.set_speed(hspeed)
             self.ui.set_health(self._local_hp)
+            if self.debug_hud.is_visible():
+                frame_dt_ms = float(frame_dt) * 1000.0
+                fps = 1.0 / max(1e-6, float(frame_dt))
+                self.debug_hud.update(
+                    fps=fps,
+                    frame_dt_ms=frame_dt_ms,
+                    frame_p95_ms=self._feel_diag.frame_p95_ms(),
+                    sim_steps=self._physics_steps_this_frame,
+                    sim_hz=self._sim_tick_rate_hz,
+                    net_connected=self._net_connected,
+                    net_perf_text=self._net_perf_text,
+                    frame_ms_history=self._feel_diag.frame_ms_history(),
+                    frame_spike_threshold_ms=self._feel_diag.frame_spike_threshold_ms(),
+                )
             self.ui.set_status(
-                f"speed: {hspeed:.2f} | z-vel: {self.player.vel.z:.2f} | grounded: {self.player.grounded} | "
-                f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()} | slide: {self.player.is_sliding()} | "
-                f"grapple: {self.player.is_grapple_attached()} | hp: {self._local_hp} | net: {self._net_connected} | "
-                f"rec: {self._active_recording is not None} | replay: {self._playback_active} | vault: {vault_dbg} | "
-                f"{transport_status} | {combat_status}"
+                f"spd {hspeed:.1f} | z {self.player.vel.z:.1f} | g {int(bool(self.player.grounded))} | "
+                f"wall {int(bool(self.player.has_wall_for_jump()))} | surf {int(bool(self.player.has_surf_surface()))} | "
+                f"slide {int(bool(self.player.is_sliding()))} | grap {int(bool(self.player.is_grapple_attached()))} | "
+                f"hp {int(self._local_hp)} | net {int(bool(self._net_connected))} | rec {int(self._active_recording is not None)} | "
+                f"replay {int(bool(self._playback_active))} | vault {vault_dbg} | {transport_status} | {combat_status}"
             )
 
             if self._game_mode is not None:
@@ -2379,6 +2595,8 @@ def run(
     smoke_screenshot: str | None = None,
     feel_harness: bool = False,
     map_json: str | None = None,
+    map_profile: str = "auto",
+    runtime_lighting: bool = False,
     hl_root: str | None = None,
     hl_mod: str = "valve",
     net_host: str | None = None,
@@ -2392,6 +2610,8 @@ def run(
             smoke_screenshot=smoke_screenshot,
             feel_harness=feel_harness,
             map_json=map_json,
+            map_profile=map_profile,
+            runtime_lighting=True if runtime_lighting else None,
             hl_root=hl_root,
             hl_mod=hl_mod,
             net_host=net_host,

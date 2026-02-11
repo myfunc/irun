@@ -33,16 +33,13 @@ def _label_for_map_json(*, app_root: Path, map_json_path: Path) -> str:
     p = map_json_path
     if _is_under(p, assets):
         rel = p.resolve().relative_to(assets.resolve())
-        # Prefer directory label for `<dir>/map.json`; otherwise use file stem.
+        # Show full file names in UI so users can see source type/extension.
         if rel.name == "map.json" and rel.parent != Path("."):
-            return rel.parent.as_posix()
-        # .map files: use stem (e.g. "maps/mymap.map" -> "maps/mymap")
-        if rel.suffix.lower() == ".map":
-            return rel.with_suffix("").as_posix()
-        return rel.with_suffix("").as_posix()
+            return (rel.parent / "map.json").as_posix()
+        return rel.as_posix()
     if p.name == "map.json":
-        return p.parent.name
-    return p.stem
+        return f"{p.parent.name}/map.json"
+    return p.name
 
 
 def find_runnable_bundles(*, app_root: Path) -> list[MapBundle]:
@@ -109,7 +106,7 @@ def list_goldsrc_like_maps(*, game_root: Path, mod: str) -> list[MapEntry]:
         return []
     out: list[MapEntry] = []
     for p in sorted(maps_dir.glob("*.bsp")):
-        out.append(MapEntry(label=p.stem, bsp_path=str(p)))
+        out.append(MapEntry(label=p.name, bsp_path=str(p)))
     return out
 
 

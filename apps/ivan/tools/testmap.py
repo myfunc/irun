@@ -171,6 +171,7 @@ def _convert_and_exit(
             "--ericw-tools", ericw_tools,
             "--game-root", str(map_path.parent),
             "--scale", str(scale),
+            "--profile", "prod-baked",  # Full vis+light for baked lighting
         ]
     else:
         pack_script = _SCRIPT_DIR / "pack_map.py"
@@ -223,6 +224,7 @@ def _run_with_watch(
             "--ericw-tools", ericw_tools,
             "--game-root", str(map_path.parent),
             "--scale", str(scale),
+            "--profile", "prod-baked",  # Full vis+light for baked lighting
         ]
         result = subprocess.run(bake_cmd)
         if result.returncode != 0:

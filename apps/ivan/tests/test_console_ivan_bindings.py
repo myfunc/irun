@@ -175,3 +175,11 @@ def test_console_autotune_commands(monkeypatch) -> None:
     assert any("backup:" in line for line in out_apply)
     assert any("guardrails: pass" in line for line in out_eval)
     assert any("restored:" in line for line in out_rollback)
+
+
+def test_console_cmd_meta_exposes_typed_registry() -> None:
+    runner = _FakeRunner()
+    con = build_client_console(runner)
+    out = con.execute_line(ctx=CommandContext(role="client", origin="test"), line="cmd_meta --prefix scene_")
+    assert out
+    assert any("scene_list" in line for line in out)

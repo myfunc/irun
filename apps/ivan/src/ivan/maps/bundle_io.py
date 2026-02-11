@@ -43,6 +43,34 @@ def is_packed_bundle_path(p: Path) -> bool:
     return p.is_file() and p.suffix.lower() == PACKED_BUNDLE_EXT
 
 
+def infer_map_profile_from_path(path: str | Path | None, *, explicit_profile: str | None = None) -> str:
+    """
+    Infer map pipeline profile from path when explicit_profile is "auto" or None.
+
+    - .map file -> dev-fast (TrenchBroom, no lightmaps)
+    - Directory bundle -> dev-fast
+    - Packed .irunmap -> prod-baked (assumed to have baked lightmaps)
+    - None/empty path -> dev-fast (graybox, smoke mode without map)
+    """
+    from ivan.app_config import MAP_PROFILE_AUTO, MAP_PROFILE_DEV_FAST, MAP_PROFILE_PROD_BAKED
+
+    if explicit_profile and explicit_profile.strip() and explicit_profile.strip() != MAP_PROFILE_AUTO:
+        p = explicit_profile.strip().lower()
+        if p in (MAP_PROFILE_DEV_FAST, MAP_PROFILE_PROD_BAKED):
+            return p
+    if path is None or (isinstance(path, str) and not path.strip()):
+        return MAP_PROFILE_DEV_FAST
+    p = Path(path) if isinstance(path, str) else Path(path)
+    if p.suffix.lower() == ".map":
+        return MAP_PROFILE_DEV_FAST
+    if p.suffix.lower() == PACKED_BUNDLE_EXT:
+        return MAP_PROFILE_PROD_BAKED
+    if p.is_dir():
+        return MAP_PROFILE_DEV_FAST
+    # Default for map.json / unknown: prod-baked (safer for distributed bundles).
+    return MAP_PROFILE_PROD_BAKED
+
+
 def is_map_file_path(p: Path) -> bool:
     """Return True if *p* looks like a TrenchBroom .map file."""
     return p.is_file() and p.suffix.lower() == ".map"

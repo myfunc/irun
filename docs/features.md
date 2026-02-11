@@ -13,6 +13,9 @@
 - Ivan: in-game menu/debug UI block gameplay input but keep simulation running (no pause)
 - Ivan: classic center crosshair (Half-Life/CS style) visible during active gameplay
 - Ivan: layout-agnostic movement/input lane detection (runtime keyboard-map/raw fallback for physical lanes including `WASD` and `Q/E`, with non-US symbol aliases and arrow fallback)
+- Ivan: debug HUD overlay (`F12`) — compact FPS/frametime panel with mode cycle
+  - modes: minimal (fps + frame ms) → render (fps, p95, sim steps) → streaming (fps, p95, net perf) → graph (fps, spike count, frametime bars) → off
+  - top-right placement to avoid overlap with speed/health HUD
 - Ivan: input debug overlay (`F2`) for keyboard/mouse troubleshooting
 - Ivan: gameplay feel telemetry in `F2` overlay (rolling jump success, landing speed loss, ground flicker, camera jerk proxies)
 - Ivan: staged invariant-motion refactor foundation
@@ -284,8 +287,31 @@
   - Controls: Button (hover/pressed), Checkbox (visual), Slider (compact), TextInput (basic editing hotkeys on macOS)
   - Higher-level widgets used by Ivan: ListMenu, Scrolled, Dropdown, NumericControl, Tooltip
   - Playground demo to exercise components in one place (`python -m irun_ui_kit.demo`)
-- Ivan: minimal command console engine + localhost control bridge (JSON-lines TCP) for external command execution
-  - MCP stdio server (`ivan-mcp`) exposes a `console_exec` tool that forwards to the running game process
+- Ivan: typed command-bus-first console engine + localhost control bridge (JSON-lines TCP) for external command execution
+  - command metadata + schema validation + structured execution responses (`ok`, `error_code`, `data`, timings)
+  - scene introspection commands with filtering/pagination (`scene_list`, `scene_select`, `scene_inspect`, `player_look_target`)
+  - scene manipulation commands (`scene_create`, `scene_delete`, `scene_transform`, `scene_group`, `scene_ungroup`, `scene_group_transform`)
+  - runtime world controls (`world_fog_set` with mode/density/color validation, `world_skybox_set` with preset validation)
+  - in-game console UX upgrades: Up/Down history, Tab autocomplete, live command hints, metadata discoverability (`help`, `cmd_meta`)
+  - MCP stdio server (`ivan-mcp`) exposes `console_exec` and `console_commands`
+  - command execution from external control is routed to the game thread with bounded per-frame queue drain safeguards
+- Ivan: map pipeline profiles and authoring flow
+  - primary authoring: edit `.map` in TrenchBroom → fast edit-run (direct load, optional pack/bake with skipped steps)
+  - dev-fast: skip vis/light in bake, no compression in pack; prod-baked: full quality for distribution
+  - bake_map.py and pack_map.py accept `--profile`; default dev-fast for fast iteration
+  - runtime `--map-profile` (auto | dev-fast | prod-baked): auto infers from path (.map/dir → dev-fast, .irunmap → prod-baked)
+  - `--runtime-lighting`: force runtime lighting (setShaderAuto) and ignore baked lightmaps
+  - fog baseline precedence: map payload override > run profile > engine default horizon fog (`start=120`, `end=360`)
+  - skybox baseline precedence: map `skyname` first, otherwise default preset (`default_horizon`) across `.map` / `.irunmap` / `map.json`
+  - runtime world diagnostics exposed in `F2` and console (`world_runtime`): entry kind, active lighting path, sky source, fog source
+  - structured world load report emitted every run (`[IVAN] load report`, schema `ivan.world.load_report.v1`) with stable stage names:
+    - `map_parse_import`, `material_sky_fog_resolve`, `geometry_build_attach`, `visibility_cache_load_build`, `first_frame_readiness`
+  - load report carries stage budgets + pass/fail, runtime diagnostics snapshot, and visibility cache result metadata
+  - repeated-run optimization: visibility cache warm-memory hits (`memory-hit`) avoid disk/json re-read in the same process
+  - geometry attach optimization: base textures are loaded once per material and reused across lightmap batches
+  - profile-aware visibility culling: dev-fast off (permissive); prod-baked can enable via run.json
+  - map payload lights and fog (ADR 0007): pack_map and BSP importer include `lights`; optional `fog` from worldspawn/env_fog; TrenchBroom FGD: light_spot, env_fog
+- Ivan: runtime `light_spot` entities now use Panda3D spotlights in runtime-lighting paths (cone from `outer_cone`, orientation from map angles/pitch) instead of point-light fallback
 - Ivan: TrenchBroom integration — direct `.map` file loading (Valve 220 format), brush CSG-to-mesh conversion, WAD textures
 - Ivan: Valve 220 UV parity fix for direct `.map` loading — texture shift/align now matches TrenchBroom when per-face texture scale is not 1:1
 - Ivan: Material definition system (`.material.json`) for PBR properties (normal, roughness, metallic, emission) alongside WAD textures
@@ -294,11 +320,24 @@
 - Ivan: Quick-test script (`tools/testmap.py`) with file watcher auto-reload (mtime polling, hot-reload via console bridge)
 - Ivan: TrenchBroom game config shipped (`apps/ivan/trenchbroom/`: `GameConfig.cfg` + `ivan.fgd`)
 - Launcher Toolbox: standalone Dear PyGui desktop app (`apps/launcher`, `python -m launcher`) for one-click map editing workflow
-  - Settings panel: configure TrenchBroom exe, WAD directory, materials directory, Steam/HL root, ericw-tools path
+  - Settings panel: configure WAD directory, Steam/HL root, maps directory, python executable
   - Map browser: recursive `.map` file discovery sorted by modification time with auto-refresh
-  - Actions: Play Map (launches IVAN with `--watch`), Edit in TrenchBroom, Pack `.irunmap`, Bake Lightmaps
+  - Guided runtime-first runflow: select map -> launch (selected source `.map`)
+  - Primary actions: `Launch`, `Pack`, `Stop Game` (options are collapsed by default)
+  - Launch path is fixed to `dev-fast` runtime mode with optional `watch` and `runtime-lighting` toggles
+  - Pack path is fixed to `dev-fast` profile (no profile selector in launcher)
+  - Help tooltips on major launcher controls
+  - Launcher UI actions route through typed command handlers (single dispatch path)
   - Live log panel capturing subprocess stdout/stderr
   - Persistent settings in `~/.irun/launcher/config.json`
+- Ivan: Scope 05 demo-map rollout validation framework
+  - acceptance baseline locked to `assets/maps/demo/demo.map`
+  - cross-path smoke automation for source-map, baked `.irunmap`, and imported-map paths via `apps/ivan/tools/scope05_rollout_validation.py`
+  - rollout gates defined for runtime visuals, launcher/runflow UX, command-bus/MCP control surface, and loading performance targets
+  - reproducible validation artifacts written under `.tmp/scope05/` and documented in `docs/qa/demo-map-rollout-scope05.md`
+- Ivan: world rendering code split into layered modules (`scene_layers`) with explicit contracts
+  - `scene.py` now acts as a thin facade; loading/geometry/lighting/visibility live in separate layer files
+  - layer helpers use a typed `SceneLayerContract` to keep boundaries explicit and reduce cross-module coupling
 
 ## Planned (High-Level)
 - Movement: walk/run, jump, jump buffer, air control
