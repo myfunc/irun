@@ -4,7 +4,6 @@ import argparse
 import os
 import sys
 from pathlib import Path
-import sys
 
 from ivan.game import run
 from ivan.net import run_server
@@ -61,6 +60,17 @@ def main(argv: list[str] | None = None) -> None:
         "--watch",
         action="store_true",
         help="Watch .map file for changes and auto-reload (TrenchBroom workflow).",
+    )
+    parser.add_argument(
+        "--map-profile",
+        default="auto",
+        choices=("auto", "dev-fast", "prod-baked"),
+        help="Map pipeline profile: dev-fast (no bake, permissive), prod-baked (lightmaps), auto (infer).",
+    )
+    parser.add_argument(
+        "--runtime-lighting",
+        action="store_true",
+        help="Force runtime lighting (setShaderAuto) and ignore baked lightmaps.",
     )
     parser.add_argument(
         "--server",
@@ -187,6 +197,8 @@ def main(argv: list[str] | None = None) -> None:
         smoke_screenshot=args.smoke_screenshot,
         feel_harness=args.feel_harness,
         map_json=map_json,
+        map_profile=args.map_profile,
+        runtime_lighting=args.runtime_lighting,
         hl_root=args.hl_root,
         hl_mod=args.hl_mod,
         net_host=args.connect,

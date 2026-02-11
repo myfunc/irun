@@ -31,7 +31,7 @@ def test_find_runnable_bundles_includes_packed_bundles(tmp_path: Path) -> None:
 
     bundles = find_runnable_bundles(app_root=app_root)
     labels = {b.label for b in bundles}
-    assert "imported/x/y/packed" in labels
+    assert f"imported/x/y/packed{PACKED_BUNDLE_EXT}" in labels
 
 
 def test_detect_goldsrc_like_mods_and_map_listing(tmp_path: Path) -> None:
@@ -49,7 +49,7 @@ def test_detect_goldsrc_like_mods_and_map_listing(tmp_path: Path) -> None:
     assert mods == ["cstrike", "valve"]
 
     maps = list_goldsrc_like_maps(game_root=root, mod="valve")
-    assert [m.label for m in maps] == ["crossfire", "datacore"]
+    assert [m.label for m in maps] == ["crossfire.bsp", "datacore.bsp"]
 
 
 def test_detect_goldsrc_like_mods_supports_macos_app_bundle_layout(tmp_path: Path) -> None:
@@ -64,7 +64,7 @@ def test_detect_goldsrc_like_mods_supports_macos_app_bundle_layout(tmp_path: Pat
     assert mods == ["valve"]
 
     maps = list_goldsrc_like_maps(game_root=root, mod="valve")
-    assert [m.label for m in maps] == ["crossfire"]
+    assert [m.label for m in maps] == ["crossfire.bsp"]
 
 
 def test_detect_goldsrc_like_mods_supports_passing_app_bundle_as_root(tmp_path: Path) -> None:

@@ -40,6 +40,9 @@
     "wad"(string) : "WAD file paths"
     "skyname"(string) : "Skybox name"
     "message"(string) : "Map title"
+    "fogstart"(integer) : "Fog start distance" : 64
+    "fogend"(integer) : "Fog end distance" : 1024
+    "fogcolor"(color255) : "Fog color" : "128 128 128"
 ]
 
 // ---------------------------------------------------------------------------
@@ -101,6 +104,7 @@
 
 @PointClass base(BaseEntity) size(-8 -8 -8, 8 8 8) color(255 255 128) = light : "Point light"
 [
+    "_light"(string) : "R G B I (color + intensity)" : "255 255 255 200"
     "light"(integer) : "Brightness" : 200
     "_color"(color255) : "Light color" : "255 255 255"
     "style"(choices) : "Light style" : 0 =
@@ -122,8 +126,47 @@
 
 @PointClass base(BaseEntity) size(-8 -8 -8, 8 8 8) color(255 255 200) = light_environment : "Directional sun light"
 [
+    "_light"(string) : "R G B I (color + intensity)" : "255 255 255 200"
     "light"(integer) : "Brightness" : 200
     "_color"(color255) : "Light color" : "255 255 255"
     "pitch"(integer) : "Sun pitch angle" : 0
     "angle"(integer) : "Sun yaw angle" : 0
+]
+
+@PointClass base(BaseEntity) size(-8 -8 -8, 8 8 8) color(255 220 128) = light_spot : "Spotlight"
+[
+    "_light"(string) : "R G B I (color + intensity)" : "255 255 255 200"
+    "light"(integer) : "Brightness" : 200
+    "_color"(color255) : "Light color" : "255 255 255"
+    "_cone"(integer) : "Inner cone angle" : 0
+    "_cone2"(integer) : "Outer cone angle" : 45
+    "_fade"(float) : "Falloff fade" : 1.0
+    "_falloff"(choices) : "Falloff type" : 0 =
+    [
+        0 : "Default"
+        1 : "Linear"
+        2 : "Inverse square"
+    ]
+    "style"(choices) : "Light style" : 0 =
+    [
+        0 : "Normal"
+        1 : "Flicker A"
+        2 : "Slow strong pulse"
+        3 : "Candle A"
+        4 : "Fast strobe"
+        5 : "Gentle pulse"
+        6 : "Flicker B"
+        7 : "Candle B"
+        8 : "Candle C"
+        9 : "Slow strobe"
+        10 : "Fluorescent flicker"
+        11 : "Slow pulse (no black)"
+    ]
+]
+
+@PointClass base(BaseEntity) size(-8 -8 -8, 8 8 8) color(180 200 220) = env_fog : "Distance fog"
+[
+    "fogstart"(integer) : "Fog start distance" : 64
+    "fogend"(integer) : "Fog end distance" : 1024
+    "fogcolor"(color255) : "Fog color" : "128 128 128"
 ]

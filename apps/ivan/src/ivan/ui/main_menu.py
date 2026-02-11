@@ -13,8 +13,7 @@ from ivan.maps.catalog import (
     resolve_goldsrc_install_root,
 )
 from ivan.maps.steam import detect_steam_halflife_game_root
-from ivan.maps.run_metadata import set_run_metadata_lighting
-from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, resolve_bundle_handle
+from ivan.maps.bundle_io import PACKED_BUNDLE_EXT
 from ivan.paths import app_root as ivan_app_root
 from ivan.state import IvanState, load_state, resolve_map_json, update_state
 from ivan.ui.native_dialogs import pick_directory
@@ -134,10 +133,6 @@ class MainMenuController:
             self._screen = "bundles"
             self._refresh_bundles()
             return
-        if self._screen == "bundle_options":
-            self._screen = "bundles"
-            self._refresh_bundles()
-            return
         if self._screen == "video":
             self._screen = "main"
             self._refresh_main()
@@ -158,9 +153,6 @@ class MainMenuController:
             return
         if self._screen == "bundles":
             self._enter_bundle(idx)
-            return
-        if self._screen == "bundle_options":
-            self._enter_bundle_option(idx)
             return
         if self._screen == "delete_confirm":
             self._enter_delete_confirm(idx)
@@ -274,7 +266,7 @@ class MainMenuController:
             self._bundles = find_runnable_bundles(app_root=self._app_root)
             items = [ListMenuItem(b.label) for b in self._bundles]
             self._ui.set_title("IVAN :: Map Bundles")
-            self._ui.set_hint("Up/Down: select | Enter: options | Del/Backspace: delete | Esc: back")
+            self._ui.set_hint("Up/Down: select | Enter: run | Del/Backspace: delete | Esc: back")
             self._ui.set_items(items, selected=0)
             self._ui.set_status(f"{len(items)} bundles found.")
             return
@@ -346,53 +338,7 @@ class MainMenuController:
         if idx < 0 or idx >= len(self._bundles):
             return
         self._selected_bundle = self._bundles[idx]
-        self._screen = "bundle_options"
-        self._ui.set_title(f"IVAN :: Run Options ({self._selected_bundle.label})")
-        self._ui.set_hint("Up/Down: select | Enter: choose | Del/Backspace: delete | Esc: back")
-        self._ui.set_items(
-            [
-                ListMenuItem("Run (saved config)"),
-                ListMenuItem("Run: Lighting = Original (bundle)"),
-                ListMenuItem("Run: Lighting = Server defaults"),
-                ListMenuItem("Run: Lighting = Static (no animation)"),
-                ListMenuItem("Save default: Lighting = Original (bundle)"),
-                ListMenuItem("Save default: Lighting = Server defaults"),
-                ListMenuItem("Save default: Lighting = Static (no animation)"),
-            ],
-            selected=0,
-        )
-        self._ui.set_status("")
-
-    def _enter_bundle_option(self, idx: int) -> None:
-        if self._selected_bundle is None:
-            return
-        map_json = self._selected_bundle.map_json
-        handle = resolve_bundle_handle(map_json)
-        bundle_ref = handle.bundle_ref if handle is not None else None
-
-        if idx == 0:
-            self._on_start_map_json(map_json, None)
-            return
-        if idx == 1:
-            self._on_start_map_json(map_json, {"preset": "original"})
-            return
-        if idx == 2:
-            self._on_start_map_json(map_json, {"preset": "server_defaults"})
-            return
-        if idx == 3:
-            self._on_start_map_json(map_json, {"preset": "static"})
-            return
-        if idx in (4, 5, 6):
-            if bundle_ref is None:
-                self._ui.set_status("Cannot save: bundle root not resolved for this map.")
-                return
-            preset = "original" if idx == 4 else ("server_defaults" if idx == 5 else "static")
-            try:
-                set_run_metadata_lighting(bundle_ref=bundle_ref, lighting={"preset": preset})
-                self._ui.set_status(f"Saved run.json lighting preset: {preset}")
-            except Exception as e:
-                self._ui.set_status(f"Save failed: {e}")
-            return
+        self._on_start_map_json(self._selected_bundle.map_json, None)
 
     def _enter_mod(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._mods) or not self._game_root:
@@ -506,15 +452,10 @@ class MainMenuController:
             self._delete_target = self._bundles[idx]
             self._open_delete_confirm()
             return
-        if self._screen == "bundle_options" and self._selected_bundle is not None:
-            self._delete_target = self._selected_bundle
-            self._open_delete_confirm()
-            return
-
     def _refresh_bundles(self) -> None:
         items = [ListMenuItem(b.label) for b in self._bundles]
         self._ui.set_title("IVAN :: Map Bundles")
-        self._ui.set_hint("Up/Down: select | Enter: options | Del/Backspace: delete | Esc: back")
+        self._ui.set_hint("Up/Down: select | Enter: run | Del/Backspace: delete | Esc: back")
         self._ui.set_items(items, selected=0)
         self._ui.set_status(f"{len(items)} bundles found.")
 

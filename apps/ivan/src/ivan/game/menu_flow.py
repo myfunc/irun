@@ -35,6 +35,8 @@ def enter_main_menu(host) -> None:
     host._net_client = None
     host._net_connected = False
     host._net_player_id = 0
+    host._runtime_connect_host = None
+    host._open_to_network = False
     host._clear_remote_players()
     host._stop_embedded_server()
     host._set_pointer_lock(False)
@@ -85,6 +87,7 @@ def back_to_menu(host) -> None:
     host.world_root = host.render.attachNewNode("world-root")
 
     host.input_debug.hide()
+    host.debug_hud.hide()
     host._grapple_rope_np.hide()
     host.ui.hide()
     host.pause_ui.hide()
@@ -110,6 +113,8 @@ def back_to_menu(host) -> None:
     host._net_client = None
     host._net_connected = False
     host._net_player_id = 0
+    host._runtime_connect_host = None
+    host._open_to_network = False
     host._stop_embedded_server()
 
     enter_main_menu(host)

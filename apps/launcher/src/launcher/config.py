@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
@@ -40,14 +40,16 @@ class LauncherConfig:
     wad_dir: str = ""
     # Directory containing .material.json PBR definitions.
     materials_dir: str = ""
-    # Half-Life / Steam install root (optional, for resource import).
+    # Half-Life / Steam install root (optional, for resource lookup at runtime).
     hl_root: str = ""
-    # Directory containing ericw-tools binaries (optional, for bake workflow).
-    ericw_tools_dir: str = ""
     # Directory to scan for .map files.
     maps_dir: str = ""
     # Python executable used to run ivan / tools (defaults to sys.executable).
     python_exe: str = ""
+    # Enable --watch for Play Map.
+    play_watch: bool = True
+    # Force runtime lighting at launch.
+    play_runtime_lighting: bool = False
     # Window geometry (persisted between sessions).
     window_width: int = 720
     window_height: int = 700
@@ -92,7 +94,7 @@ def _sanitize_stale_paths(cfg: LauncherConfig) -> LauncherConfig:
 
     This prevents stale absolute paths (e.g. from a moved/renamed repo clone)
     from silently breaking the launcher.  Only project-internal fields are
-    checked — external tool paths (trenchbroom_exe, hl_root, ericw_tools_dir)
+    checked — external tool paths (trenchbroom_exe, hl_root)
     are left as-is because they may be temporarily unavailable (USB drive, etc.).
     """
     _DIR_FIELDS = ("maps_dir", "wad_dir", "materials_dir")
@@ -131,7 +133,14 @@ def load_config() -> LauncherConfig:
             val = raw[fld]
             # Coerce types to match field annotations.
             ann = LauncherConfig.__dataclass_fields__[fld].type
-            if ann == "int" and isinstance(val, (int, float)):
+            if ann == "bool":
+                if isinstance(val, bool):
+                    kwargs[fld] = val
+                elif isinstance(val, (int, float)):
+                    kwargs[fld] = bool(val)
+                elif isinstance(val, str):
+                    kwargs[fld] = val.strip().lower() in ("1", "true", "yes", "on")
+            elif ann == "int" and isinstance(val, (int, float)):
                 kwargs[fld] = int(val)
             elif isinstance(val, str):
                 kwargs[fld] = val

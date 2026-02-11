@@ -8,6 +8,9 @@ from pathlib import Path
 
 from ivan.paths import app_root as ivan_app_root
 
+DEFAULT_WINDOW_WIDTH = 1920 if os.name == "nt" else 1280
+DEFAULT_WINDOW_HEIGHT = 1080 if os.name == "nt" else 720
+
 
 @dataclass(frozen=True)
 class IvanState:
@@ -23,8 +26,8 @@ class IvanState:
     active_tuning_profile: str | None = None
     # Display / video settings (persisted across sessions).
     fullscreen: bool = False
-    window_width: int = 1280
-    window_height: int = 720
+    window_width: int = DEFAULT_WINDOW_WIDTH
+    window_height: int = DEFAULT_WINDOW_HEIGHT
     # Audio settings.
     master_volume: float = 0.85
     sfx_volume: float = 0.90
@@ -114,8 +117,8 @@ def load_state() -> IvanState:
         tuning_profiles=tuning_profiles,
         active_tuning_profile=active_name,
         fullscreen=bool(fs) if isinstance(fs, bool) else False,
-        window_width=int(ww) if isinstance(ww, int) and 320 <= int(ww) <= 7680 else 1280,
-        window_height=int(wh) if isinstance(wh, int) and 240 <= int(wh) <= 4320 else 720,
+        window_width=int(ww) if isinstance(ww, int) and 320 <= int(ww) <= 7680 else DEFAULT_WINDOW_WIDTH,
+        window_height=int(wh) if isinstance(wh, int) and 240 <= int(wh) <= 4320 else DEFAULT_WINDOW_HEIGHT,
         master_volume=max(0.0, min(1.0, float(mv))) if isinstance(mv, (int, float)) else 0.85,
         sfx_volume=max(0.0, min(1.0, float(sv))) if isinstance(sv, (int, float)) else 0.90,
     )

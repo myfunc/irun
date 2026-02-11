@@ -13,6 +13,7 @@ Usage::
         --output path/to/output.irunmap \\
         --scale 0.03 \\
         --wad-dirs path/to/wad/directory \\
+        [--profile dev-fast|prod-baked] \\
         [--dir-bundle]
 """
 
@@ -20,7 +21,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 import tempfile
 import time
@@ -38,7 +38,7 @@ if str(_APPS_SRC) not in sys.path:
     sys.path.insert(0, str(_APPS_SRC))
 
 from ivan.maps.map_parser import parse_map, MapEntity  # noqa: E402
-from ivan.maps.bundle_io import PACKED_BUNDLE_EXT, pack_bundle_dir_to_irunmap  # noqa: E402
+from ivan.maps.bundle_io import pack_bundle_dir_to_irunmap  # noqa: E402
 
 # These modules do not exist yet.  Importing them will fail until they are
 # implemented.  We guard with a try/except so the rest of the script can be
@@ -62,6 +62,13 @@ except ImportError:
 # The WAD texture extractor from the GoldSrc importer pipeline.
 _TOOLS_DIR = Path(__file__).resolve().parent
 _GOLDSRC_DIR = _TOOLS_DIR / "importers" / "goldsrc"
+
+from pipeline_profiles import (  # noqa: E402
+    PROFILE_DEV_FAST,
+    add_profile_argument,
+    get_profile,
+)
+
 if str(_GOLDSRC_DIR) not in sys.path:
     sys.path.insert(0, str(_GOLDSRC_DIR))
 
@@ -176,6 +183,129 @@ def _pick_spawn(entities: list[MapEntity], scale: float) -> tuple[list[float], f
                 yaw = float(a[1])
         return [x * scale, y * scale, z * scale], yaw
     return [0.0, 0.0, 2.0], 0.0
+
+
+# ---------------------------------------------------------------------------
+# Light and fog extraction (map.json payload parity with BSP importer)
+# ---------------------------------------------------------------------------
+
+def _parse_float(value: str | None, default: float) -> float:
+    try:
+        return float(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _extract_light_entities(entities: list[MapEntity], scale: float) -> list[dict]:
+    """Extract light, light_spot, light_environment entities for map.json lights payload."""
+    out: list[dict] = []
+    for ent in entities:
+        cn = ent.properties.get("classname", "").strip().lower()
+        if cn not in {"light", "light_spot", "light_environment"}:
+            continue
+        origin_raw = ent.properties.get("origin")
+        if not origin_raw:
+            continue
+        parts = origin_raw.split()
+        if len(parts) != 3:
+            continue
+        try:
+            ox, oy, oz = float(parts[0]), float(parts[1]), float(parts[2])
+        except ValueError:
+            continue
+
+        # GoldSrc _light "R G B I" or _color + light
+        light_raw = ent.properties.get("_light", "").strip()
+        lp = light_raw.split() if light_raw else []
+        r, g, b, intensity = 255.0, 255.0, 255.0, 200.0
+        if len(lp) >= 3:
+            try:
+                r, g, b = float(lp[0]), float(lp[1]), float(lp[2])
+                if len(lp) >= 4:
+                    intensity = float(lp[3])
+            except ValueError:
+                pass
+        else:
+            color_raw = ent.properties.get("_color", "255 255 255")
+            try:
+                cp = color_raw.split()
+                if len(cp) >= 3:
+                    r, g, b = float(cp[0]), float(cp[1]), float(cp[2])
+            except ValueError:
+                pass
+            intensity = _parse_float(ent.properties.get("light"), 200.0)
+
+        pitch = _parse_float(ent.properties.get("pitch"), 0.0)
+        angles_raw = ent.properties.get("angles", "0 0 0").split()
+        angles = (0.0, 0.0, 0.0)
+        if len(angles_raw) >= 3:
+            try:
+                angles = (float(angles_raw[0]), float(angles_raw[1]), float(angles_raw[2]))
+            except ValueError:
+                pass
+        if cn == "light_environment" and angles == (0.0, 0.0, 0.0):
+            angles = (0.0, _parse_float(ent.properties.get("angle"), 0.0), 0.0)
+
+        out.append({
+            "classname": cn,
+            "origin": [ox * scale, oy * scale, oz * scale],
+            "color": [
+                max(0.0, min(1.0, r / 255.0)),
+                max(0.0, min(1.0, g / 255.0)),
+                max(0.0, min(1.0, b / 255.0)),
+            ],
+            "brightness": float(intensity),
+            "pitch": float(pitch),
+            "angles": [float(angles[0]), float(angles[1]), float(angles[2])],
+            "inner_cone": _parse_float(ent.properties.get("_cone"), 0.0),
+            "outer_cone": _parse_float(ent.properties.get("_cone2"), 0.0),
+            "fade": _parse_float(ent.properties.get("_fade"), 1.0),
+            "falloff": int(_parse_float(ent.properties.get("_falloff"), 0)),
+            "style": int(_parse_float(ent.properties.get("style"), 0)),
+        })
+    return out
+
+
+def _extract_fog_from_entities(entities: list[MapEntity]) -> dict | None:
+    """Extract fog from env_fog or worldspawn (GoldSrc convention). Optional; None if absent."""
+    for ent in entities:
+        cn = ent.properties.get("classname", "").strip().lower()
+        if cn == "env_fog":
+            start_s = ent.properties.get("fogstart") or ent.properties.get("fog_start")
+            end_s = ent.properties.get("fogend") or ent.properties.get("fog_end")
+            color_s = ent.properties.get("fogcolor") or ent.properties.get("fog_color") or "128 128 128"
+            try:
+                start = float(start_s) if start_s else 80.0
+                end = float(end_s) if end_s else 200.0
+            except (TypeError, ValueError):
+                continue
+            parts = str(color_s).split()
+            if len(parts) >= 3:
+                try:
+                    r, g, b = float(parts[0]) / 255.0, float(parts[1]) / 255.0, float(parts[2]) / 255.0
+                    return {"enabled": True, "start": start, "end": end, "color": [r, g, b]}
+                except (TypeError, ValueError):
+                    pass
+    for ent in entities:
+        if ent.properties.get("classname") != "worldspawn":
+            continue
+        start_s = ent.properties.get("fogstart") or ent.properties.get("fog_start")
+        end_s = ent.properties.get("fogend") or ent.properties.get("fog_end")
+        color_s = ent.properties.get("fogcolor") or ent.properties.get("fog_color")
+        if not (start_s and end_s and color_s):
+            continue
+        try:
+            start, end = float(start_s), float(end_s)
+        except (TypeError, ValueError):
+            continue
+        parts = str(color_s).split()
+        if len(parts) >= 3:
+            try:
+                r, g, b = float(parts[0]) / 255.0, float(parts[1]) / 255.0, float(parts[2]) / 255.0
+                return {"enabled": True, "start": start, "end": end, "color": [r, g, b]}
+            except (TypeError, ValueError):
+                pass
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +430,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "No ericw-tools required; produces geometry from raw brush data."
         ),
     )
+    add_profile_argument(parser)
     parser.add_argument(
         "--map",
         required=True,
@@ -347,8 +478,12 @@ def main() -> None:
     output = Path(args.output).resolve()
     wad_dirs = [Path(d).resolve() for d in args.wad_dirs]
 
+    profile = get_profile(args)
+    compresslevel = 0 if profile == PROFILE_DEV_FAST else 6
+
     print(f"[pack] Map     : {map_file}")
     print(f"[pack] Output  : {output}")
+    print(f"[pack] Profile : {profile}")
     print(f"[pack] Scale   : {args.scale}")
     print(f"[pack] WAD dirs: {wad_dirs if wad_dirs else '(none)'}")
     print(f"[pack] Format  : {'directory' if args.dir_bundle else '.irunmap'}")
@@ -427,6 +562,12 @@ def main() -> None:
         spawn_pos, spawn_yaw = _pick_spawn(entities, args.scale)
 
         # ----------------------------------------------------------
+        # 8b. Extract lights and fog
+        # ----------------------------------------------------------
+        payload_lights = _extract_light_entities(entities, args.scale)
+        payload_fog = _extract_fog_from_entities(entities)
+
+        # ----------------------------------------------------------
         # 9. Write map.json
         # ----------------------------------------------------------
         skyname = None
@@ -453,6 +594,7 @@ def main() -> None:
             },
             "lightmaps": None,
             "lightstyles": {},
+            "lights": payload_lights,
             "resources": {
                 "root": "resources",
                 "copied": [],
@@ -464,6 +606,8 @@ def main() -> None:
             "triangles": render_tris,
             "brush_models": [],
         }
+        if payload_fog is not None:
+            payload["fog"] = payload_fog
 
         map_json = out_dir / "map.json"
         map_json.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
@@ -474,7 +618,9 @@ def main() -> None:
         if packed_out is not None:
             t0 = time.perf_counter()
             print(f"\n[pack] Packing {packed_out}...")
-            pack_bundle_dir_to_irunmap(bundle_dir=out_dir, out_path=packed_out, compresslevel=1)
+            pack_bundle_dir_to_irunmap(
+                bundle_dir=out_dir, out_path=packed_out, compresslevel=compresslevel
+            )
             elapsed = time.perf_counter() - t0
             print(f"[pack] Packed ({elapsed:.2f}s)")
 

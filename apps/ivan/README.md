@@ -90,6 +90,7 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 - `F9`: export spawn to run.json (time trial mode dev helper)
 - `F2`: toggle input debug overlay (useful when keyboard/mouse don't seem to register)
 - `F3`: toggle error console overlay (shows recent errors without crashing)
+- `F12`: cycle debug HUD overlay (off → minimal → render → streaming → graph; compact fps/frametime view)
 - `LMB`: grapple hook primary
   - click (not attached): fire grapple to aimed surface
   - click (attached): detach
@@ -147,7 +148,7 @@ Notes:
 - Detailed movement status (`speed/z-vel/grounded/wall`) is shown in the bottom-left corner during gameplay and hidden while the debug/admin panel is open.
 - Vault diagnostics are shown in the status line and `F2` overlay (`vault ok` / explicit reject reason) to debug ledge-vault failures quickly.
 - A health bar/chip is shown in the top-left corner (`HP`).
-- Input debug (F2) and the error console (F3) are shown as boxed overlays that avoid overlapping the HUD bars.
+- Input debug (F2), error console (F3), and debug HUD (F12) are shown as compact overlays that avoid overlapping the HUD bars.
 
 ## Demos (Input Replay)
 - Ivan records input demos automatically from each spawn/respawn window.
@@ -298,6 +299,10 @@ Pack a directory bundle into a single file:
 python3 tools/pack_irunmap.py --input <bundle-dir> --output <bundle>.irunmap
 python -m ivan --map <bundle>.irunmap
 ```
+
+Map pipeline profiles (`pack_map.py`, `bake_map.py`):
+- `--profile dev-fast` (default): Fast iteration; skips expensive steps (vis/light in bake, compression in pack).
+- `--profile prod-baked`: Full quality; run vis+light and produce compressed archives.
 
 ### Source VMF -> BSP -> Bundle
 Use this when you have Source `.vmf` sources and want one-step import into IVAN.
