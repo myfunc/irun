@@ -9,18 +9,13 @@ from pathlib import Path
 
 import dearpygui.dearpygui as dpg
 
-from launcher.actions import ProcessHandle, spawn_game, spawn_pack
-from launcher.commands import CommandBus, PackMapCommand, PlayCommand, StopGameCommand
+from launcher.actions import ProcessHandle, spawn_game, spawn_pack, spawn_trenchbroom
+from launcher.commands import CommandBus, EditMapCommand, PackMapCommand, PlayCommand, StopGameCommand
 from launcher.config import LauncherConfig, load_config, save_config
 from launcher.map_browser import MapEntry, scan_maps
 from launcher.runflow import (
-    LAUNCH_PRESETS,
-    LAUNCH_PRESET_IDS,
-    PACK_PROFILES,
     AdvancedOverrides,
     resolve_launch_plan,
-    resolve_preset,
-    sanitize_pipeline_profile,
 )
 
 _cfg: LauncherConfig = LauncherConfig()
@@ -36,20 +31,18 @@ _TAG_SELECTED_LABEL = "selected_map_label"
 _TAG_BTN_PLAY = "btn_play"
 _TAG_BTN_PACK = "btn_pack"
 _TAG_BTN_STOP = "btn_stop"
+_TAG_BTN_EDIT = "btn_edit"
 
+_TAG_TB_EXE = "inp_tb_exe"
 _TAG_WAD_DIR = "inp_wad_dir"
 _TAG_HL_ROOT = "inp_hl_root"
 _TAG_MAPS_DIR = "inp_maps_dir"
 _TAG_PYTHON = "inp_python"
-_TAG_LAUNCH_PRESET = "inp_launch_preset"
 _TAG_PLAY_WATCH = "inp_play_watch"
 _TAG_PLAY_RUNTIME_LIGHTING = "inp_play_runtime_lighting"
-_TAG_PACK_PROFILE = "inp_pack_profile"
 
 _LABEL_COL_WIDTH = 130
 _command_bus = CommandBus()
-_PRESET_ID_TO_LABEL = {preset.preset_id: preset.label for preset in LAUNCH_PRESETS}
-_PRESET_LABEL_TO_ID = {label: preset_id for preset_id, label in _PRESET_ID_TO_LABEL.items()}
 
 
 def _log(msg: str) -> None:
@@ -97,32 +90,24 @@ def _select_map(idx: int) -> None:
 
 def _update_buttons() -> None:
     has_map = _selected_map is not None
+    has_tb = bool(_cfg.trenchbroom_exe) and Path(_cfg.trenchbroom_exe).is_file()
     game_running = any(p.alive and p.label == "IVAN Game" for p in _processes)
     dpg.configure_item(_TAG_BTN_PLAY, enabled=has_map and not game_running)
     dpg.configure_item(_TAG_BTN_PACK, enabled=has_map)
+    dpg.configure_item(_TAG_BTN_EDIT, enabled=has_map and has_tb)
     dpg.configure_item(_TAG_BTN_STOP, enabled=game_running)
 
 
-def _profile_from_tag(tag: str, *, default: str) -> str:
-    if not dpg.does_item_exist(tag):
-        return default
-    return sanitize_pipeline_profile(dpg.get_value(tag), default=default)
-
-
 def _save_settings_from_ui() -> None:
+    _cfg.trenchbroom_exe = dpg.get_value(_TAG_TB_EXE) or ""
     _cfg.wad_dir = dpg.get_value(_TAG_WAD_DIR) or ""
     _cfg.hl_root = dpg.get_value(_TAG_HL_ROOT) or ""
     _cfg.maps_dir = dpg.get_value(_TAG_MAPS_DIR) or ""
     _cfg.python_exe = dpg.get_value(_TAG_PYTHON) or ""
-    if dpg.does_item_exist(_TAG_LAUNCH_PRESET):
-        raw_preset = dpg.get_value(_TAG_LAUNCH_PRESET) or ""
-        preset_id = _PRESET_LABEL_TO_ID.get(raw_preset, raw_preset)
-        _cfg.launch_preset = preset_id if preset_id in LAUNCH_PRESET_IDS else LAUNCH_PRESET_IDS[0]
     _cfg.play_watch = bool(dpg.get_value(_TAG_PLAY_WATCH)) if dpg.does_item_exist(_TAG_PLAY_WATCH) else True
     _cfg.play_runtime_lighting = (
         bool(dpg.get_value(_TAG_PLAY_RUNTIME_LIGHTING)) if dpg.does_item_exist(_TAG_PLAY_RUNTIME_LIGHTING) else False
     )
-    _cfg.pack_profile = _profile_from_tag(_TAG_PACK_PROFILE, default="dev-fast")
     save_config(_cfg)
     _log("Settings saved.")
     _update_buttons()
@@ -131,25 +116,6 @@ def _save_settings_from_ui() -> None:
 def _add_help_tooltip(text: str) -> None:
     with dpg.tooltip(dpg.last_item()):
         dpg.add_text(text, wrap=420)
-
-
-def _apply_preset_defaults_to_controls(preset_id: str) -> None:
-    preset = resolve_preset(preset_id)
-    if dpg.does_item_exist(_TAG_PLAY_WATCH):
-        dpg.set_value(_TAG_PLAY_WATCH, bool(preset.watch))
-    if dpg.does_item_exist(_TAG_PLAY_RUNTIME_LIGHTING):
-        dpg.set_value(_TAG_PLAY_RUNTIME_LIGHTING, bool(preset.runtime_lighting))
-    if dpg.does_item_exist(_TAG_PACK_PROFILE):
-        dpg.set_value(_TAG_PACK_PROFILE, preset.pack_profile)
-
-
-def _cb_launch_preset_changed(sender, app_data) -> None:
-    raw_preset = app_data if isinstance(app_data, str) else dpg.get_value(_TAG_LAUNCH_PRESET)
-    preset_id = _PRESET_LABEL_TO_ID.get(raw_preset, raw_preset)
-    preset = resolve_preset(preset_id)
-    _apply_preset_defaults_to_controls(preset.preset_id)
-    _log(f"Preset selected: {preset.label} - {preset.description}")
-    _save_settings_from_ui()
 
 
 def _make_file_dialog(target_tag: str, *, directory: bool = False) -> None:
@@ -188,11 +154,9 @@ def _advanced_overrides_from_ui() -> AdvancedOverrides:
 
 def _handle_play(cmd: PlayCommand) -> None:
     _save_settings_from_ui()
-    preset = resolve_preset(_cfg.launch_preset)
     try:
         plan = resolve_launch_plan(
             selected_map=_selected_map.path if _selected_map is not None else None,
-            preset=preset,
             use_advanced=cmd.use_advanced,
             advanced=_advanced_overrides_from_ui(),
         )
@@ -203,7 +167,7 @@ def _handle_play(cmd: PlayCommand) -> None:
 
     _log(
         "Launching IVAN: "
-        f"preset={preset.label}, map={Path(plan.map_path).name}, profile={plan.map_profile}, "
+        f"map={Path(plan.map_path).name}, profile={plan.map_profile}, "
         f"watch={'on' if plan.watch else 'off'}, runtime-lighting={'on' if plan.runtime_lighting else 'off'}"
     )
     handle = spawn_game(
@@ -232,9 +196,8 @@ def _handle_pack_map(cmd: PackMapCommand) -> None:
     if _selected_map is None:
         return
     _save_settings_from_ui()
-    preset = resolve_preset(_cfg.launch_preset)
-    pack_profile = sanitize_pipeline_profile(_cfg.pack_profile, default=preset.pack_profile)
-    _log(f"Packing {_selected_map.name} -> .irunmap (profile={pack_profile}) ...")
+    pack_profile = "dev-fast"
+    _log(f"Packing {_selected_map.name} -> .irunmap ...")
     wad_dirs = [_cfg.effective_wad_dir()] if _cfg.effective_wad_dir() else []
     handle = spawn_pack(
         python=_cfg.effective_python(),
@@ -245,6 +208,24 @@ def _handle_pack_map(cmd: PackMapCommand) -> None:
         on_line=_on_process_line,
     )
     _processes.append(handle)
+
+
+def _handle_edit_map(cmd: EditMapCommand) -> None:
+    if _selected_map is None:
+        return
+    _save_settings_from_ui()
+    if not _cfg.trenchbroom_exe or not Path(_cfg.trenchbroom_exe).is_file():
+        _log("Set a valid TrenchBroom executable path in Settings.")
+        _update_buttons()
+        return
+    _log(f"Opening {_selected_map.name} in TrenchBroom ...")
+    handle = spawn_trenchbroom(
+        trenchbroom_exe=_cfg.trenchbroom_exe,
+        map_path=str(_selected_map.path),
+        on_line=_on_process_line,
+    )
+    _processes.append(handle)
+    _update_buttons()
 
 
 def _dispatch(command: object) -> None:
@@ -264,6 +245,10 @@ def _cb_stop(sender, app_data) -> None:
 
 def _cb_pack(sender, app_data) -> None:
     _dispatch(PackMapCommand())
+
+
+def _cb_edit(sender, app_data) -> None:
+    _dispatch(EditMapCommand())
 
 
 def _cb_refresh(sender, app_data) -> None:
@@ -330,6 +315,7 @@ def _build_ui() -> None:
                 dpg.add_table_column(width_fixed=True, init_width_or_weight=_LABEL_COL_WIDTH)
                 dpg.add_table_column(width_stretch=True)
                 dpg.add_table_column(width_fixed=True, init_width_or_weight=36)
+                _settings_row("TrenchBroom exe", _TAG_TB_EXE, _cfg.trenchbroom_exe, directory=False)
                 _settings_row("WAD directory", _TAG_WAD_DIR, _cfg.wad_dir, directory=True)
                 _settings_row("Steam/HL root", _TAG_HL_ROOT, _cfg.hl_root, directory=True)
                 _settings_row("Maps directory", _TAG_MAPS_DIR, _cfg.maps_dir, directory=True)
@@ -347,28 +333,17 @@ def _build_ui() -> None:
 
         dpg.add_spacer(height=6)
         with dpg.collapsing_header(label="Runflow", default_open=True):
-            dpg.add_text("1) Choose map, 2) choose preset, 3) launch.")
-            with dpg.group(horizontal=True):
-                dpg.add_text("Preset:")
-                dpg.add_combo(
-                    [_PRESET_ID_TO_LABEL[preset_id] for preset_id in LAUNCH_PRESET_IDS],
-                    tag=_TAG_LAUNCH_PRESET,
-                    default_value=_PRESET_ID_TO_LABEL.get(_cfg.launch_preset, _PRESET_ID_TO_LABEL[LAUNCH_PRESET_IDS[0]]),
-                    width=200,
-                    callback=_cb_launch_preset_changed,
-                )
-                _add_help_tooltip(
-                    "Fast Iterate: source map with watch enabled. "
-                    "Runtime Visual QA: source map with runtime lighting for visual checks."
-                )
-            for preset in LAUNCH_PRESETS:
-                dpg.add_text(f"- {preset.label}: {preset.description}")
+            dpg.add_text("1) Choose map, 2) launch.")
+            dpg.add_text("- One runtime path only: source .map + runtime lighting support.")
+            dpg.add_text("- Map lights and skybox are resolved at runtime (no launcher bake flow).")
 
         dpg.add_spacer(height=4)
         with dpg.collapsing_header(label="Primary Actions", default_open=True):
             with dpg.group(horizontal=True):
                 dpg.add_button(label="  Launch  ", tag=_TAG_BTN_PLAY, callback=_cb_play)
                 _add_help_tooltip("Launch selected .map with runtime-first options.")
+                dpg.add_button(label="  Edit in TrenchBroom  ", tag=_TAG_BTN_EDIT, callback=_cb_edit)
+                _add_help_tooltip("Open selected .map in TrenchBroom.")
                 dpg.add_button(label="  Pack  ", tag=_TAG_BTN_PACK, callback=_cb_pack)
                 _add_help_tooltip("Build selected .map into sibling .irunmap.")
                 dpg.add_button(label="  Stop Game  ", tag=_TAG_BTN_STOP, callback=_cb_stop)
@@ -383,14 +358,7 @@ def _build_ui() -> None:
                     label="runtime lighting",
                     default_value=bool(_cfg.play_runtime_lighting),
                 )
-            with dpg.group(horizontal=True):
-                dpg.add_text("Pack profile:")
-                dpg.add_combo(
-                    PACK_PROFILES,
-                    tag=_TAG_PACK_PROFILE,
-                    default_value=sanitize_pipeline_profile(_cfg.pack_profile, default="dev-fast"),
-                    width=140,
-                )
+            dpg.add_text("Pack uses dev-fast profile by default.")
 
         dpg.add_spacer(height=6)
         with dpg.collapsing_header(label="Log", default_open=True):
@@ -412,6 +380,7 @@ def run_launcher() -> None:
     _command_bus.register(PlayCommand, _handle_play)
     _command_bus.register(StopGameCommand, _handle_stop_game)
     _command_bus.register(PackMapCommand, _handle_pack_map)
+    _command_bus.register(EditMapCommand, _handle_edit_map)
 
     dpg.create_context()
     dpg.create_viewport(

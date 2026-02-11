@@ -1,6 +1,6 @@
 import pytest
 
-from launcher.commands import CommandBus, PackMapCommand, PlayCommand
+from launcher.commands import CommandBus, EditMapCommand, PackMapCommand, PlayCommand
 
 
 def test_command_bus_dispatches_typed_handler() -> None:
@@ -21,3 +21,16 @@ def test_command_bus_raises_for_unregistered_type() -> None:
 
     with pytest.raises(LookupError):
         bus.dispatch(PackMapCommand())
+
+
+def test_command_bus_dispatches_edit_command() -> None:
+    bus = CommandBus()
+    seen: list[str] = []
+
+    def _on_edit(cmd: EditMapCommand) -> None:
+        seen.append("edit")
+
+    bus.register(EditMapCommand, _on_edit)
+    bus.dispatch(EditMapCommand())
+
+    assert seen == ["edit"]

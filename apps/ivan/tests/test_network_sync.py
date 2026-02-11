@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from ivan.game import RunnerDemo
 from ivan.game import app as app_mod
-from ivan.game import netcode as net_mod
+from ivan.game import netcode as netcode_mod
 from ivan.game import tuning_profiles as profiles_mod
 from ivan.net.protocol import InputCommand
 from ivan.net.relevance import GoldSrcPvsRelevance
@@ -269,7 +269,7 @@ def test_open_to_network_restarts_embedded_server_before_connect() -> None:
     host._stop_embedded_server = lambda: calls.__setitem__("stop", calls["stop"] + 1)
     host._connect_multiplayer_if_requested = lambda: calls.__setitem__("connect", calls["connect"] + 1)
 
-    net_mod.on_toggle_open_network(host, True)
+    netcode_mod.on_toggle_open_network(host, True)
 
     assert calls["stop"] == 1
     assert calls["connect"] == 1
@@ -398,6 +398,26 @@ def test_handle_kill_plane_skips_local_respawn_while_network_connected() -> None
     demo._net_client = None
     RunnerDemo._handle_kill_plane(demo)
     assert calls["count"] == 1
+
+
+def test_disconnect_from_menu_clears_runtime_connect_target(monkeypatch) -> None:
+    demo = RunnerDemo.__new__(RunnerDemo)
+    demo._runtime_connect_host = "203.0.113.42"
+    demo._runtime_connect_port = 7777
+    demo._open_to_network = False
+    demo.pause_ui = _FakePauseUI()
+    called = {"disconnect": 0}
+
+    def _fake_disconnect(_host) -> None:
+        called["disconnect"] += 1
+
+    monkeypatch.setattr(netcode_mod, "disconnect_multiplayer", _fake_disconnect)
+
+    netcode_mod.on_disconnect_server_from_menu(demo)
+
+    assert called["disconnect"] == 1
+    assert demo._runtime_connect_host is None
+    assert demo.pause_ui.connect_target == ("127.0.0.1", 7777)
 
 
 def test_current_tuning_snapshot_reflects_active_client_values() -> None:

@@ -53,7 +53,13 @@ from ivan.replays import (
     new_recording,
     save_recording,
 )
-from ivan.state import IvanState, load_state, update_state
+from ivan.state import (
+    DEFAULT_WINDOW_HEIGHT,
+    DEFAULT_WINDOW_WIDTH,
+    IvanState,
+    load_state,
+    update_state,
+)
 from ivan.ui.debug_ui import DebugUI
 from ivan.ui.debug_hud_overlay import DebugHudOverlay
 from ivan.ui.console_ui import ConsoleUI
@@ -223,10 +229,10 @@ class RunnerDemo(ShowBase):
         self._last_input_time: float = 0.0
         self._embedded_server: EmbeddedHostServer | None = None
         self._open_to_network: bool = False
-        # If no explicit CLI connect target is provided, keep last used host/port for fast iteration.
-        st_host = str(self._loaded_state.last_net_host).strip() if self._loaded_state.last_net_host else None
+        # Single-player should remain the default on re-entry.
+        # Only explicit CLI `--connect` enables auto-connect at startup.
         st_port = int(self._loaded_state.last_net_port) if isinstance(self._loaded_state.last_net_port, int) else None
-        self._runtime_connect_host: str | None = (str(self.cfg.net_host).strip() if self.cfg.net_host else st_host)
+        self._runtime_connect_host: str | None = str(self.cfg.net_host).strip() if self.cfg.net_host else None
         self._runtime_connect_port: int = int(self.cfg.net_port) if self.cfg.net_host else int(st_port or self.cfg.net_port)
         self._local_hp: int = 100
         self._sim_prev_player_pos = LVector3f(0, 0, 0)
@@ -387,8 +393,21 @@ class RunnerDemo(ShowBase):
             return
         state = self._loaded_state
         fullscreen = bool(state.fullscreen)
-        win_w = int(state.window_width) if state.window_width else 1280
-        win_h = int(state.window_height) if state.window_height else 720
+        win_w = int(state.window_width) if state.window_width else int(DEFAULT_WINDOW_WIDTH)
+        win_h = int(state.window_height) if state.window_height else int(DEFAULT_WINDOW_HEIGHT)
+        if (
+            sys.platform.startswith("win")
+            and not fullscreen
+            and int(DEFAULT_WINDOW_WIDTH) == 1920
+            and int(DEFAULT_WINDOW_HEIGHT) == 1080
+            and win_w == 1280
+            and win_h == 720
+        ):
+            # One-time migration from legacy default to new Windows default.
+            win_w = int(DEFAULT_WINDOW_WIDTH)
+            win_h = int(DEFAULT_WINDOW_HEIGHT)
+            self._last_persisted_window_size = (win_w, win_h)
+            update_state(fullscreen=False, window_width=win_w, window_height=win_h)
 
         props = WindowProperties()
         props.setCursorHidden(self._pointer_locked)
@@ -2361,28 +2380,39 @@ class RunnerDemo(ShowBase):
                 if self.scene is not None:
                     try:
                         wd = self.scene.runtime_world_diagnostics()
+                        runtime_path = str(wd.get("runtime_path", "n/a"))
+                        if len(runtime_path) > 28:
+                            runtime_path = f"...{runtime_path[-25:]}"
                         world_diag_line = (
-                            f"world={wd.get('entry_kind')} path={wd.get('runtime_path')}({wd.get('runtime_path_source')}) "
-                            f"sky={wd.get('skyname')}[{wd.get('sky_source')}] "
-                            f"fog={wd.get('fog_source')}:{int(bool(wd.get('fog_enabled')))} "
+                            f"world | {wd.get('entry_kind')} | path={runtime_path} ({wd.get('runtime_path_source')}) "
+                            f"| sky={wd.get('skyname')}[{wd.get('sky_source')}] "
+                            f"| fog={wd.get('fog_source')}:{int(bool(wd.get('fog_enabled')))} {wd.get('fog_mode', 'linear')} "
                             f"{float(wd.get('fog_start', 0.0)):.0f}-{float(wd.get('fog_end', 0.0)):.0f}"
                         )
                     except Exception:
                         pass
+                cam_pos = LVector3f(0, 0, 0)
+                cam_hpr = LVector3f(0, 0, 0)
+                try:
+                    cam_pos = self.camera.getPos(self.render)
+                    cam_hpr = self.camera.getHpr(self.render)
+                except Exception:
+                    pass
+                net_diag = self._net_perf_text if self._net_perf_text else "net | waiting for samples..."
+                if len(net_diag) > 120:
+                    net_diag = f"{net_diag[:117]}..."
                 self.input_debug.set_text(
                     "input debug (F2)\n"
-                    f"mode={self._mode} lock={self._pointer_locked} dt={frame_dt:.3f} hasMouse={has_mouse} mouse=({mx:+.2f},{my:+.2f})\n"
-                    f"fps={1.0/max(1e-6,float(frame_dt)):.1f} frame_p95={self._feel_diag.frame_p95_ms():.2f}ms sim={self._sim_tick_rate_hz}hz steps={self._physics_steps_this_frame}\n"
-                    f"det_hash={self._det_trace_hash[:12]} det_samples={self._det_trace.sample_count()} replay_det={self._playback_det_checked}/{self._playback_det_mismatch}\n"
-                    f"raw WASD={int(raw_w)}{int(raw_a)}{int(raw_s)}{int(raw_d)} ascii WASD={int(asc_w)}{int(asc_a)}{int(asc_s)}{int(asc_d)}\n"
-                    f"state={state_name} wish=({wish_dbg.x:+.2f},{wish_dbg.y:+.2f}) pos=({pos.x:+.2f},{pos.y:+.2f},{pos.z:+.2f})\n"
-                    f"vel=({vel.x:+.2f},{vel.y:+.2f},{vel.z:+.2f}) accel=({accel.x:+.2f},{accel.y:+.2f},{accel.z:+.2f}) grounded={int(grounded)} contacts={contacts}\n"
-                    f"floor_n=({floor_n.x:+.2f},{floor_n.y:+.2f},{floor_n.z:+.2f}) wall_n=({wall_n.x:+.2f},{wall_n.y:+.2f},{wall_n.z:+.2f})\n"
-                    f"cam_fov={self._cam_dbg_fov:.2f} cam_tgt={self._cam_dbg_target_fov:.2f} cam_speed_r={self._cam_dbg_speed_ratio:.2f} cam_speed_t={self._cam_dbg_speed_t:.2f}\n"
-                    f"cam_event={self._cam_dbg_event_name} quality={self._cam_dbg_event_quality:.2f} applied_amp={self._cam_dbg_event_amp:.2f} blocked_reason={self._cam_dbg_event_blocked}\n"
-                    f"last_input_age={last_input_age:.3f}s jump_buf={jump_buf:.3f}s coyote={coyote:.3f}s vault={vault_dbg}\n"
+                    f"sim   | mode={self._mode} lock={self._pointer_locked} dt={frame_dt:.3f} has_mouse={has_mouse} mouse=({mx:+.2f},{my:+.2f})\n"
+                    f"perf  | fps={1.0/max(1e-6,float(frame_dt)):.1f} p95={self._feel_diag.frame_p95_ms():.2f}ms sim={self._sim_tick_rate_hz}hz steps={self._physics_steps_this_frame}\n"
+                    f"det   | hash={self._det_trace_hash[:12]} samples={self._det_trace.sample_count()} replay_det={self._playback_det_checked}/{self._playback_det_mismatch}\n"
+                    f"input | raw_wasd={int(raw_w)}{int(raw_a)}{int(raw_s)}{int(raw_d)} ascii_wasd={int(asc_w)}{int(asc_a)}{int(asc_s)}{int(asc_d)} age={last_input_age:.3f}s jump_buf={jump_buf:.3f}s coyote={coyote:.3f}s\n"
+                    f"move  | state={state_name} wish=({wish_dbg.x:+.2f},{wish_dbg.y:+.2f}) pos=({pos.x:+.2f},{pos.y:+.2f},{pos.z:+.2f}) vel=({vel.x:+.2f},{vel.y:+.2f},{vel.z:+.2f})\n"
+                    f"phys  | accel=({accel.x:+.2f},{accel.y:+.2f},{accel.z:+.2f}) grounded={int(grounded)} contacts={contacts} floor_n=({floor_n.x:+.2f},{floor_n.y:+.2f},{floor_n.z:+.2f}) wall_n=({wall_n.x:+.2f},{wall_n.y:+.2f},{wall_n.z:+.2f})\n"
+                    f"cam   | pos=({cam_pos.x:+.2f},{cam_pos.y:+.2f},{cam_pos.z:+.2f}) hpr=({cam_hpr.x:+.2f},{cam_hpr.y:+.2f},{cam_hpr.z:+.2f}) fov={self._cam_dbg_fov:.2f}/{self._cam_dbg_target_fov:.2f} speed={self._cam_dbg_speed_ratio:.2f}/{self._cam_dbg_speed_t:.2f}\n"
+                    f"camfx | event={self._cam_dbg_event_name} q={self._cam_dbg_event_quality:.2f} amp={self._cam_dbg_event_amp:.2f} blocked={self._cam_dbg_event_blocked} vault={vault_dbg}\n"
                     f"{world_diag_line}\n"
-                    f"{self._net_perf_text if self._net_perf_text else 'net perf | waiting for samples...'}\n"
+                    f"{net_diag}\n"
                     f"{self._feel_perf_text}"
                 )
             if self._input_debug_until and globalClock.getFrameTime() >= self._input_debug_until:
@@ -2464,10 +2494,11 @@ class RunnerDemo(ShowBase):
                     frame_spike_threshold_ms=self._feel_diag.frame_spike_threshold_ms(),
                 )
             self.ui.set_status(
-                f"speed: {hspeed:.2f} | z-vel: {self.player.vel.z:.2f} | grounded: {self.player.grounded} | "
-                f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()} | slide: {self.player.is_sliding()} | "
-                f"grapple: {self.player.is_grapple_attached()} | hp: {self._local_hp} | net: {self._net_connected} | "
-                f"rec: {self._active_recording is not None} | replay: {self._playback_active} | vault: {vault_dbg} | {combat_status}"
+                f"spd {hspeed:.1f} | z {self.player.vel.z:.1f} | g {int(bool(self.player.grounded))} | "
+                f"wall {int(bool(self.player.has_wall_for_jump()))} | surf {int(bool(self.player.has_surf_surface()))} | "
+                f"slide {int(bool(self.player.is_sliding()))} | grap {int(bool(self.player.is_grapple_attached()))} | "
+                f"hp {int(self._local_hp)} | net {int(bool(self._net_connected))} | rec {int(self._active_recording is not None)} | "
+                f"replay {int(bool(self._playback_active))} | vault {vault_dbg} | {combat_status}"
             )
 
             if self._game_mode is not None:

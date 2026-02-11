@@ -5,7 +5,7 @@ from __future__ import annotations
 from direct.gui import DirectGuiGlobals as DGG
 from direct.gui.DirectGui import DirectFrame, DirectLabel
 from direct.showbase import ShowBaseGlobal
-from panda3d.core import LineSegs, TextNode
+from panda3d.core import LineSegs, TextNode, TransparencyAttrib
 
 from irun_ui_kit.theme import Theme
 
@@ -49,12 +49,15 @@ class DebugHudOverlay:
             pos=(x, 0.0, y),
         )
         self._root["state"] = DGG.DISABLED
-        DirectFrame(
+        self._root.setTransparency(TransparencyAttrib.M_alpha)
+        inner = DirectFrame(
             parent=self._root,
-            frameColor=(theme.panel[0], theme.panel[1], theme.panel[2], 0.90),
+            frameColor=(theme.panel[0], theme.panel[1], theme.panel[2], 0.58),
             relief=DGG.FLAT,
             frameSize=(theme.outline_w, w - theme.outline_w, theme.outline_w, h - theme.outline_w),
-        )["state"] = DGG.DISABLED
+        )
+        inner["state"] = DGG.DISABLED
+        inner.setTransparency(TransparencyAttrib.M_alpha)
 
         self._label = DirectLabel(
             parent=self._root,
@@ -75,12 +78,13 @@ class DebugHudOverlay:
 
         self._graph_root = DirectFrame(
             parent=self._root,
-            frameColor=(0.15, 0.15, 0.18, 0.95),
+            frameColor=(0.15, 0.15, 0.18, 0.60),
             relief=DGG.FLAT,
             frameSize=(0.0, graph_w, 0.0, graph_h),
             pos=(graph_x, 0.0, graph_y),
         )
         self._graph_root["state"] = DGG.DISABLED
+        self._graph_root.setTransparency(TransparencyAttrib.M_alpha)
         self._graph_root.hide()
 
         self._graph_w = graph_w

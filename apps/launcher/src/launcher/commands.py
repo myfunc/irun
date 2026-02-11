@@ -38,3 +38,8 @@ class StopGameCommand:
 @dataclass(frozen=True)
 class PackMapCommand:
     pass
+
+
+@dataclass(frozen=True)
+class EditMapCommand:
+    pass

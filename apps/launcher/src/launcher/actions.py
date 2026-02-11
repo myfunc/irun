@@ -1,4 +1,4 @@
-"""Subprocess spawning for launcher actions (game, pack)."""
+"""Subprocess spawning for launcher actions (game, pack, editor)."""
 
 from __future__ import annotations
 
@@ -131,5 +131,16 @@ def spawn_pack(
         cmd.append("--wad-dirs")
         cmd.extend(wad_dirs)
     return _spawn("Pack Map", cmd, cwd=ivan_root, on_line=on_line)
+
+
+def spawn_trenchbroom(
+    trenchbroom_exe: str,
+    map_path: str,
+    *,
+    on_line: Callable[[str], None] | None = None,
+) -> ProcessHandle:
+    """Launch TrenchBroom with the selected source map."""
+    cmd = [trenchbroom_exe, map_path]
+    return _spawn("TrenchBroom", cmd, on_line=on_line)
 
 

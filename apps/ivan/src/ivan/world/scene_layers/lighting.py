@@ -14,6 +14,28 @@ from panda3d.core import (
 from ivan.world.scene_layers.contracts import SceneLayerContract
 
 
+def _light_intensity_scale(brightness: float) -> float:
+    # HL maps commonly use brightness around 150-300.
+    return max(0.08, min(4.0, float(brightness) / 200.0))
+
+
+def _light_attenuation_from_entity(ent) -> LVector3f:
+    """
+    Convert HL-style fade/falloff into Panda attenuation.
+    Tuned for scaled runtime maps so point/spot lights stay visible.
+    """
+    fade = max(0.0, float(getattr(ent, "fade", 1.0)))
+    falloff = int(getattr(ent, "falloff", 0))
+    if falloff == 1:
+        # Approximate linear attenuation.
+        return LVector3f(1.0, 0.045 * max(1.0, fade), 0.0)
+    if falloff == 2:
+        # Approximate inverse-square attenuation.
+        return LVector3f(1.0, 0.0, 0.010 * max(1.0, fade))
+    # HL default behaves softer than strict inverse-square at gameplay scale.
+    return LVector3f(1.0, 0.0, 0.004 * max(1.0, fade))
+
+
 def build_lighting(scene: SceneLayerContract, *, render) -> None:
     """Create default ambient + directional scene lights."""
     ambient = AmbientLight("ambient")
@@ -32,10 +54,13 @@ def apply_fog(scene: SceneLayerContract, *, cfg, render) -> None:
     """Apply baseline fog precedence: map override > run profile > engine default."""
     fog_defaults = {
         "enabled": True,
-        "mode": "linear",
-        "start": 120.0,
-        "end": 360.0,
-        "density": 0.02,
+        # Use exp2 by default to avoid visible angle-sensitive bands on large/low-tess surfaces.
+        "mode": "exp2",
+        # Keep defaults stable and orientation-neutral across maps.
+        "start": 40.0,
+        "end": 220.0,
+        # Optional for exp/exp2 (derived from end distance when omitted).
+        "density": None,
         "color": (0.63, 0.67, 0.73),
     }
     run_fog = getattr(cfg, "fog", None)
@@ -48,23 +73,31 @@ def apply_fog(scene: SceneLayerContract, *, cfg, render) -> None:
 
     runtime_override = getattr(scene, "_runtime_fog_override", None)
 
+    selected_cfg = fog_defaults
     if isinstance(runtime_override, dict):
         source = "runtime-console"
-        fog_cfg = {**fog_defaults, **runtime_override}
+        selected_cfg = runtime_override
+        fog_cfg = {**fog_defaults, **selected_cfg}
     elif isinstance(map_fog, dict):
         source = "map-override"
-        fog_cfg = {**fog_defaults, **map_fog}
+        selected_cfg = map_fog
+        fog_cfg = {**fog_defaults, **selected_cfg}
     elif isinstance(run_fog, dict):
         source = "run-profile"
-        fog_cfg = {**fog_defaults, **run_fog}
+        selected_cfg = run_fog
+        fog_cfg = {**fog_defaults, **selected_cfg}
 
     enabled = bool(fog_cfg.get("enabled", fog_defaults["enabled"]))
     mode = str(fog_cfg.get("mode", fog_defaults["mode"])).strip().lower()
     if mode not in ("linear", "exp", "exp2"):
         mode = "linear"
+    # Legacy linear fog on large triangles can show view-angle artifacts (banding/steps).
+    # Keep explicit console control intact, but normalize non-console linear fog to exp2.
+    if mode == "linear" and source != "runtime-console":
+        mode = "exp2"
     start = float(fog_defaults["start"])
     end = float(fog_defaults["end"])
-    density = float(fog_defaults["density"])
+    density = 0.0
     color = fog_defaults["color"]
 
     try:
@@ -75,11 +108,21 @@ def apply_fog(scene: SceneLayerContract, *, cfg, render) -> None:
         end = float(fog_cfg.get("end", end))
     except (TypeError, ValueError):
         pass
-    try:
-        density = float(fog_cfg.get("density", density))
-    except (TypeError, ValueError):
-        pass
-    density = max(0.0, density)
+    density_raw = fog_cfg.get("density", None)
+    density_from_cfg = False
+    if density_raw is not None:
+        try:
+            density = float(density_raw)
+            density_from_cfg = True
+        except (TypeError, ValueError):
+            density_from_cfg = False
+    if mode in ("exp", "exp2") and not density_from_cfg:
+        # Approximate "far mostly fogged" distance target (~20% transmittance at fog end).
+        # T(end) ~= exp(-(density*end)^2) = 0.2  -> density ~= sqrt(-ln(0.2)) / end
+        density = 1.2686 / max(1.0, float(end))
+    elif not density_from_cfg:
+        density = 0.02
+    density = max(0.0, float(density))
     c = fog_cfg.get("color")
     if isinstance(c, (list, tuple)) and len(c) >= 3:
         try:
@@ -121,7 +164,8 @@ def enhance_map_file_lighting(scene: SceneLayerContract, *, render, lights) -> N
     Set up bright preview lighting for direct `.map` file loading.
     """
     if scene._ambient_np is not None:
-        scene._ambient_np.node().setColor(LVector4f(0.55, 0.55, 0.58, 1))
+        # Lower ambient so placed map lights are visually readable.
+        scene._ambient_np.node().setColor(LVector4f(0.22, 0.22, 0.25, 1))
 
     has_env_light = False
     for i, le in enumerate(lights):
@@ -139,25 +183,23 @@ def enhance_map_file_lighting(scene: SceneLayerContract, *, render, lights) -> N
 
         elif cn == "light":
             r, g, b = le.color
-            intensity = le.brightness / 255.0
+            intensity = _light_intensity_scale(le.brightness)
             pl = PointLight(f"hl-light-{i}")
-            pl.setColor(LVector4f(r * intensity * 1.2, g * intensity * 1.2, b * intensity * 1.2, 1))
-            fade = max(le.fade, 0.1)
-            pl.setAttenuation(LVector3f(1.0, 0.0, fade * 8.0))
+            pl.setColor(LVector4f(r * intensity * 1.8, g * intensity * 1.8, b * intensity * 1.8, 1))
+            pl.setAttenuation(_light_attenuation_from_entity(le))
             pl_np = render.attachNewNode(pl)
             pl_np.setPos(le.origin[0], le.origin[1], le.origin[2])
             render.setLight(pl_np)
         elif cn == "light_spot":
             r, g, b = le.color
-            intensity = le.brightness / 255.0
+            intensity = _light_intensity_scale(le.brightness)
             sl = Spotlight(f"hl-spot-{i}")
-            sl.setColor(LVector4f(r * intensity * 1.2, g * intensity * 1.2, b * intensity * 1.2, 1))
+            sl.setColor(LVector4f(r * intensity * 1.8, g * intensity * 1.8, b * intensity * 1.8, 1))
             lens = PerspectiveLens()
             outer = float(le.outer_cone) if float(le.outer_cone) > 0.0 else 45.0
             lens.setFov(max(1.0, min(175.0, outer * 2.0)))
             sl.setLens(lens)
-            fade = max(le.fade, 0.1)
-            sl.setAttenuation(LVector3f(1.0, 0.0, fade * 8.0))
+            sl.setAttenuation(_light_attenuation_from_entity(le))
             sl_np = render.attachNewNode(sl)
             sl_np.setPos(le.origin[0], le.origin[1], le.origin[2])
             yaw = le.angles[1] if abs(le.angles[1]) > 0.01 else 0.0

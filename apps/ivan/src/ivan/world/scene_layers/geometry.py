@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from panda3d.core import (
-    CardMaker,
     ColorBlendAttrib,
     CompassEffect,
     DepthOffsetAttrib,
@@ -16,11 +15,108 @@ from panda3d.core import (
     GeomVertexWriter,
     LVector3f,
     LVector4f,
+    PNMImage,
+    Shader,
     Texture,
     TransparencyAttrib,
 )
 
 from ivan.world.scene_layers.contracts import SceneLayerContract
+
+
+_MOCK_SKYBOX_VERT = """
+#version 130
+uniform mat4 p3d_ModelViewProjectionMatrix;
+in vec4 p3d_Vertex;
+out vec3 v_dir;
+void main() {
+    gl_Position = p3d_ModelViewProjectionMatrix * p3d_Vertex;
+    v_dir = normalize(p3d_Vertex.xyz);
+}
+"""
+
+_MOCK_SKYBOX_FRAG = """
+#version 130
+uniform samplerCube sky_cube;
+in vec3 v_dir;
+out vec4 fragColor;
+void main() {
+    vec3 c = texture(sky_cube, normalize(v_dir)).rgb;
+    fragColor = vec4(c, 1.0);
+}
+"""
+
+
+def _build_mock_global_cubemap() -> Texture:
+    """
+    Create a simple global cubemap placeholder.
+    This avoids near-card seams and keeps horizon behavior stable.
+    """
+    tex = Texture("mock-global-cubemap")
+    size = 96
+    tex.setupCubeMap(size, Texture.T_unsigned_byte, Texture.F_rgba8)
+
+    def _dir_for_cube_face(face: int, u: float, v: float) -> LVector3f:
+        if face == 0:  # +X
+            d = LVector3f(1.0, -v, -u)
+        elif face == 1:  # -X
+            d = LVector3f(-1.0, -v, u)
+        elif face == 2:  # +Y
+            d = LVector3f(u, 1.0, v)
+        elif face == 3:  # -Y
+            d = LVector3f(u, -1.0, -v)
+        elif face == 4:  # +Z
+            d = LVector3f(u, -v, 1.0)
+        else:  # -Z
+            d = LVector3f(-u, -v, -1.0)
+        if d.lengthSquared() > 1e-8:
+            d.normalize()
+        return d
+
+    def _sky_color(direction: LVector3f) -> tuple[float, float, float]:
+        # Continuous direction-based gradient (same function for all faces).
+        # This removes face seams that looked like "angle-dependent fog".
+        t = max(0.0, min(1.0, (float(direction.z) + 1.0) * 0.5))
+        sky = (0.52, 0.66, 0.84)
+        horizon = (0.73, 0.76, 0.80)
+        ground = (0.19, 0.21, 0.24)
+        hz = max(0.0, 1.0 - abs(float(direction.z))) * 0.10
+        az = float(direction.y) * 0.03
+        if t >= 0.55:
+            tt = (t - 0.55) / 0.45
+            base = (
+                horizon[0] + (sky[0] - horizon[0]) * tt,
+                horizon[1] + (sky[1] - horizon[1]) * tt,
+                horizon[2] + (sky[2] - horizon[2]) * tt,
+            )
+        else:
+            tt = t / 0.55
+            base = (
+                ground[0] + (horizon[0] - ground[0]) * tt,
+                ground[1] + (horizon[1] - ground[1]) * tt,
+                ground[2] + (horizon[2] - ground[2]) * tt,
+            )
+        r = max(0.0, min(1.0, base[0] + hz + az))
+        g = max(0.0, min(1.0, base[1] + hz + az * 0.7))
+        b = max(0.0, min(1.0, base[2] + hz * 1.1))
+        return (r, g, b)
+
+    for face in range(6):
+        img = PNMImage(size, size, 4)
+        for y in range(size):
+            v = ((float(y) + 0.5) / float(size)) * 2.0 - 1.0
+            for x in range(size):
+                u = ((float(x) + 0.5) / float(size)) * 2.0 - 1.0
+                direction = _dir_for_cube_face(face, u, v)
+                r, g, b = _sky_color(direction)
+                img.setXelA(x, y, r, g, b, 1.0)
+        tex.load(img, face, 0)
+    tex.setWrapU(Texture.WM_clamp)
+    tex.setWrapV(Texture.WM_clamp)
+    tex.setMinfilter(Texture.FT_linear)
+    tex.setMagfilter(Texture.FT_linear)
+    return tex
+
 
 def attach_triangle_map_geometry(scene: SceneLayerContract, *, render, triangles: list[list[float]]) -> None:
     """Attach legacy position-only geometry (format v1)."""
@@ -384,65 +480,15 @@ def setup_skybox(
     skyname: str,
     fallback_skyname: str | None = None,
 ) -> tuple[str, str]:
-    """Attach cubemap-like skybox cards with a guaranteed preset fallback."""
-    # Source convention: materials/skybox/<skyname><face>.vtf -> converted to PNG.
+    """Attach a global mocked cubemap sky."""
     if scene._skybox_np is not None:
         scene._skybox_np.removeNode()
         scene._skybox_np = None
 
-    faces = {
-        "ft": ("ft", (0, 200, 0), (180, 0, 0)),
-        "bk": ("bk", (0, -200, 0), (0, 0, 0)),
-        "lf": ("lf", (-200, 0, 0), (90, 0, 0)),
-        "rt": ("rt", (200, 0, 0), (-90, 0, 0)),
-        "up": ("up", (0, 0, 200), (180, -90, 0)),
-        "dn": ("dn", (0, 0, -200), (180, 90, 0)),
-    }
-
-    if scene._material_texture_root and scene._material_texture_index is None:
-        scene._material_texture_index = scene._build_material_texture_index(scene._material_texture_root)
-
     requested = str(skyname or "").strip()
     fallback = str(fallback_skyname or "").strip()
-    active = requested or fallback
-
-    def has_any_face(name: str) -> bool:
-        if not name:
-            return False
-        for face in ("ft", "bk", "lf", "rt", "up", "dn"):
-            if find_face_for(name, face) is not None:
-                return True
-        return False
-
-    def find_face_for(name: str, face_suffix: str) -> Path | None:
-        if not name:
-            return None
-        return find_face_from_name(name, face_suffix)
-
-    def find_face_from_name(name: str, face_suffix: str) -> Path | None:
-        if scene._material_texture_index is None:
-            return None
-        candidates = [
-            f"skybox/{name}{face_suffix}",
-            f"skybox/{name.lower()}{face_suffix}",
-            f"skybox/{name.upper()}{face_suffix}",
-            f"skybox/{name.capitalize()}{face_suffix}",
-        ]
-        for c in candidates:
-            p = scene._material_texture_index.get(c.casefold())
-            if p:
-                return p
-        return None
-
-    sky_source = "default-preset"
-    if requested and has_any_face(requested):
-        active = requested
-        sky_source = "map-skyname"
-    elif fallback and has_any_face(fallback):
-        active = fallback
-        sky_source = "default-skyname"
-    elif not active:
-        active = "default"
+    active = requested or fallback or "default_horizon"
+    sky_source = "mock-global-cubemap"
 
     root = camera.getParent().attachNewNode("skybox-root")
     try:
@@ -453,35 +499,40 @@ def setup_skybox(
     root.setDepthWrite(False)
     root.setDepthTest(False)
     root.setLightOff(1)
+    root.setFogOff(1)
 
-    size = 200.0
-    preset_face_colors = {
-        "ft": (0.58, 0.63, 0.72, 1.0),
-        "bk": (0.58, 0.63, 0.72, 1.0),
-        "lf": (0.56, 0.61, 0.70, 1.0),
-        "rt": (0.56, 0.61, 0.70, 1.0),
-        "up": (0.22, 0.34, 0.54, 1.0),
-        "dn": (0.08, 0.09, 0.11, 1.0),
-    }
-    for _, (suffix, pos, hpr) in faces.items():
-        tex_path = find_face_for(active, suffix)
-        cm = CardMaker(f"sky-{suffix}")
-        cm.setFrame(-size, size, -size, size)
-        card = root.attachNewNode(cm.generate())
-        card.setPos(*pos)
-        card.setHpr(*hpr)
-        if tex_path is not None:
-            tex = loader.loadTexture(Filename.fromOsSpecific(str(tex_path)))
-        else:
-            color = preset_face_colors.get(suffix, (0.5, 0.55, 0.65, 1.0))
-            tex = scene._make_solid_texture(name=f"sky-default-{suffix}", rgba=color)
-            sky_source = "default-preset"
-            if not active:
-                active = fallback or requested or "default"
-        if tex is not None:
-            tex.setWrapU(Texture.WM_clamp)
-            tex.setWrapV(Texture.WM_clamp)
-            card.setTexture(tex, 1)
+    # Keep the sky far and camera-centered.
+    size = 2500.0
+    try:
+        cam_lens = camera.node().getLens() if hasattr(camera, "node") else None
+        if cam_lens is not None and hasattr(cam_lens, "getFar"):
+            far_plane = float(cam_lens.getFar())
+            if far_plane > 1.0:
+                size = max(1200.0, far_plane * 0.7)
+    except Exception:
+        pass
+
+    sphere = loader.loadModel("models/misc/sphere")
+    sphere.reparentTo(root)
+    sphere.setScale(size)
+    sphere.setTwoSided(True)
+    sphere.setLightOff(1)
+    sphere.setFogOff(1)
+    sphere.setDepthWrite(False)
+    sphere.setDepthTest(False)
+    sphere.setBin("background", 0)
+
+    cls = scene.__class__
+    shader = getattr(cls, "_MOCK_SKYBOX_SHADER", None)
+    if not isinstance(shader, Shader):
+        shader = Shader.make(Shader.SL_GLSL, _MOCK_SKYBOX_VERT, _MOCK_SKYBOX_FRAG)
+        setattr(cls, "_MOCK_SKYBOX_SHADER", shader)
+    cubemap = getattr(cls, "_MOCK_SKYBOX_CUBEMAP", None)
+    if not isinstance(cubemap, Texture):
+        cubemap = _build_mock_global_cubemap()
+        setattr(cls, "_MOCK_SKYBOX_CUBEMAP", cubemap)
+    sphere.setShader(shader, 1)
+    sphere.setShaderInput("sky_cube", cubemap)
 
     scene._skybox_np = root
     return active, sky_source
