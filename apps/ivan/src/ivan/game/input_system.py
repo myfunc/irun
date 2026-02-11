@@ -1,8 +1,30 @@
 from __future__ import annotations
 
+import time
+
 from panda3d.core import ButtonHandle, KeyboardButton
 
 from ivan.replays import DemoFrame
+
+
+_MOVE_FORWARD_KEYS: tuple[str, ...] = ("ц", "z")
+_MOVE_LEFT_KEYS: tuple[str, ...] = ("ф", "q")
+_MOVE_BACK_KEYS: tuple[str, ...] = ("ы", "і")
+_MOVE_RIGHT_KEYS: tuple[str, ...] = ("в",)
+_ROLL_LEFT_KEYS: tuple[str, ...] = ("й",)
+_ROLL_RIGHT_KEYS: tuple[str, ...] = ("у",)
+_RAW_LANE_KEYS: tuple[str, ...] = ("w", "a", "s", "d", "q", "e", "1", "2", "3", "4", "5", "6")
+
+# Non-ASCII layout symbols mapped to the same physical key lane as US WASD.
+_NON_ASCII_TO_RAW_WASD: dict[str, str] = {
+    "ц": "w",
+    "ф": "a",
+    "ы": "s",
+    "і": "s",
+    "в": "d",
+    "й": "q",
+    "у": "e",
+}
 
 
 def _window_allows_pointer_capture(host) -> bool:
@@ -50,6 +72,8 @@ class _InputCommand:
         key_a_held: bool = False,
         key_s_held: bool = False,
         key_d_held: bool = False,
+        key_q_held: bool = False,
+        key_e_held: bool = False,
         arrow_up_held: bool = False,
         arrow_down_held: bool = False,
         arrow_left_held: bool = False,
@@ -70,11 +94,13 @@ class _InputCommand:
         self.slide_pressed = bool(slide_pressed)
         self.grapple_pressed = bool(grapple_pressed)
         self.noclip_toggle_pressed = bool(noclip_toggle_pressed)
-        self.weapon_slot_select = max(0, min(4, int(weapon_slot_select)))
+        self.weapon_slot_select = max(0, min(6, int(weapon_slot_select)))
         self.key_w_held = bool(key_w_held)
         self.key_a_held = bool(key_a_held)
         self.key_s_held = bool(key_s_held)
         self.key_d_held = bool(key_d_held)
+        self.key_q_held = bool(key_q_held)
+        self.key_e_held = bool(key_e_held)
         self.arrow_up_held = bool(arrow_up_held)
         self.arrow_down_held = bool(arrow_down_held)
         self.arrow_left_held = bool(arrow_left_held)
@@ -104,6 +130,8 @@ class _InputCommand:
             key_a_held=self.key_a_held,
             key_s_held=self.key_s_held,
             key_d_held=self.key_d_held,
+            key_q_held=self.key_q_held,
+            key_e_held=self.key_e_held,
             arrow_up_held=self.arrow_up_held,
             arrow_down_held=self.arrow_down_held,
             arrow_left_held=self.arrow_left_held,
@@ -134,6 +162,8 @@ class _InputCommand:
             key_a_held=frame.key_a_held,
             key_s_held=frame.key_s_held,
             key_d_held=frame.key_d_held,
+            key_q_held=getattr(frame, "key_q_held", False),
+            key_e_held=getattr(frame, "key_e_held", False),
             arrow_up_held=frame.arrow_up_held,
             arrow_down_held=frame.arrow_down_held,
             arrow_left_held=frame.arrow_left_held,
@@ -188,6 +218,103 @@ def consume_mouse_look_delta(host) -> tuple[int, int]:
     return (dx, dy)
 
 
+def _button_down(host, *, key_name: str) -> bool:
+    if host.mouseWatcherNode is None:
+        return False
+    return bool(host.mouseWatcherNode.isButtonDown(ButtonHandle(str(key_name))))
+
+
+def _any_layout_key_down(host, keys: tuple[str, ...]) -> bool:
+    return any(is_key_down(host, key) for key in keys)
+
+
+def _keyboard_map_getter(win):
+    getter = getattr(win, "get_keyboard_map", None)
+    if callable(getter):
+        return getter
+    getter = getattr(win, "getKeyboardMap", None)
+    if callable(getter):
+        return getter
+    return None
+
+
+def _button_map_lookup(button_map, raw_key: str):
+    raw = str(raw_key).lower().strip()
+    if not raw:
+        return None
+    raw_variants = (raw, f"raw-{raw}", f"raw_{raw}")
+    getter = getattr(button_map, "get_mapped_button", None)
+    if callable(getter):
+        for name in raw_variants:
+            mapped = getter(str(name))
+            mapped_name = mapped.getName() if isinstance(mapped, ButtonHandle) and hasattr(mapped, "getName") else str(mapped)
+            if isinstance(mapped, ButtonHandle) and str(mapped_name).lower().strip() not in {"", "none"}:
+                return mapped
+    getter = getattr(button_map, "getMappedButton", None)
+    if callable(getter):
+        for name in raw_variants:
+            mapped = getter(str(name))
+            mapped_name = mapped.getName() if isinstance(mapped, ButtonHandle) and hasattr(mapped, "getName") else str(mapped)
+            if isinstance(mapped, ButtonHandle) and str(mapped_name).lower().strip() not in {"", "none"}:
+                return mapped
+    return None
+
+
+def _cached_layout_map(host) -> dict[str, ButtonHandle]:
+    cache = getattr(host, "_input_layout_map_cache", None)
+    if isinstance(cache, dict):
+        return cache
+    cache = {}
+    setattr(host, "_input_layout_map_cache", cache)
+    return cache
+
+
+def _refresh_layout_map_if_needed(host, *, force: bool = False) -> None:
+    win = getattr(host, "win", None)
+    if win is None:
+        return
+    getter = _keyboard_map_getter(win)
+    if getter is None:
+        return
+    now = float(time.monotonic())
+    last_raw = getattr(host, "_input_layout_map_refresh_s", None)
+    last = float(last_raw) if isinstance(last_raw, (int, float)) else -99999.0
+    if not force and isinstance(last_raw, (int, float)) and last > 0.0 and (now - last) < 0.75:
+        return
+    try:
+        button_map = getter()
+    except Exception:
+        return
+    out: dict[str, ButtonHandle] = {}
+    for raw in _RAW_LANE_KEYS:
+        try:
+            mapped = _button_map_lookup(button_map, raw)
+        except Exception:
+            mapped = None
+        if isinstance(mapped, ButtonHandle):
+            out[raw] = mapped
+    setattr(host, "_input_layout_map_cache", out)
+    setattr(host, "_input_layout_map_refresh_s", now)
+
+
+def _is_raw_lane_down(host, *, raw_key: str) -> bool:
+    if host.mouseWatcherNode is None:
+        return False
+    raw = str(raw_key).lower().strip()
+    if raw not in _RAW_LANE_KEYS:
+        return False
+    _refresh_layout_map_if_needed(host)
+    mapped = _cached_layout_map(host).get(raw)
+    if isinstance(mapped, ButtonHandle) and host.mouseWatcherNode.isButtonDown(mapped):
+        return True
+    # Fallbacks for runtimes that don't expose keyboard-map APIs.
+    if _button_down(host, key_name=f"raw-{raw}"):
+        return True
+    if _button_down(host, key_name=f"raw_{raw}"):
+        return True
+    return bool(host.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key(raw)))
+
+
 def is_key_down(host, key_name: str) -> bool:
     if host.mouseWatcherNode is None:
         return False
@@ -200,10 +327,24 @@ def is_key_down(host, key_name: str) -> bool:
         # ASCII key (layout-dependent) + raw key (layout-independent).
         if host.mouseWatcherNode.isButtonDown(KeyboardButton.ascii_key(k)):
             return True
-        return bool(host.mouseWatcherNode.isButtonDown(ButtonHandle(f"raw-{k}")))
+        if _is_raw_lane_down(host, raw_key=k):
+            return True
+        if _button_down(host, key_name=f"raw-{k}"):
+            return True
+        if _button_down(host, key_name=f"raw_{k}"):
+            return True
+        return _button_down(host, key_name=k)
+    if len(k) == 1:
+        # Non-ASCII symbol path for non-US layouts.
+        if _button_down(host, key_name=k):
+            return True
+        raw_fallback = _NON_ASCII_TO_RAW_WASD.get(k)
+        if raw_fallback:
+            return _button_down(host, key_name=f"raw-{raw_fallback}")
+        return False
     if k in {"tab", "enter", "escape", "shift", "control", "alt"}:
-        return bool(host.mouseWatcherNode.isButtonDown(ButtonHandle(k)))
-    return bool(host.mouseWatcherNode.isButtonDown(ButtonHandle(k)))
+        return _button_down(host, key_name=k)
+    return _button_down(host, key_name=k)
 
 
 def move_axes_from_keyboard(host) -> tuple[int, int]:
@@ -211,15 +352,17 @@ def move_axes_from_keyboard(host) -> tuple[int, int]:
         return (0, 0)
     fwd = 0
     right = 0
-    # Support non-US keyboard layouts by checking Cyrillic equivalents of WASD (RU):
-    # W/A/S/D -> Ц/Ф/Ы/В. Arrow keys are also supported as a fallback.
-    if is_key_down(host, "w") or is_key_down(host, "ц") or host.mouseWatcherNode.isButtonDown(KeyboardButton.up()):
+    # Layout-agnostic movement keys:
+    # - physical WASD lane via keyboard map/raw fallback
+    # - common symbol aliases for RU/UA/AZERTY
+    # - arrows as always-on fallback
+    if _is_raw_lane_down(host, raw_key="w") or _any_layout_key_down(host, _MOVE_FORWARD_KEYS) or host.mouseWatcherNode.isButtonDown(KeyboardButton.up()):
         fwd += 1
-    if is_key_down(host, "s") or is_key_down(host, "ы") or host.mouseWatcherNode.isButtonDown(KeyboardButton.down()):
+    if _is_raw_lane_down(host, raw_key="s") or _any_layout_key_down(host, _MOVE_BACK_KEYS) or host.mouseWatcherNode.isButtonDown(KeyboardButton.down()):
         fwd -= 1
-    if is_key_down(host, "d") or is_key_down(host, "в") or host.mouseWatcherNode.isButtonDown(KeyboardButton.right()):
+    if _is_raw_lane_down(host, raw_key="d") or _any_layout_key_down(host, _MOVE_RIGHT_KEYS) or host.mouseWatcherNode.isButtonDown(KeyboardButton.right()):
         right += 1
-    if is_key_down(host, "a") or is_key_down(host, "ф") or host.mouseWatcherNode.isButtonDown(KeyboardButton.left()):
+    if _is_raw_lane_down(host, raw_key="a") or _any_layout_key_down(host, _MOVE_LEFT_KEYS) or host.mouseWatcherNode.isButtonDown(KeyboardButton.left()):
         right -= 1
     return (max(-1, min(1, fwd)), max(-1, min(1, right)))
 
@@ -238,6 +381,8 @@ def sample_live_input_command(host, *, menu_open: bool) -> _InputCommand:
     key_a_held = False
     key_s_held = False
     key_d_held = False
+    key_q_held = False
+    key_e_held = False
     arrow_up_held = False
     arrow_down_held = False
     arrow_left_held = False
@@ -245,10 +390,12 @@ def sample_live_input_command(host, *, menu_open: bool) -> _InputCommand:
     weapon_slot_select = 0
     if not menu_open:
         move_forward, move_right = move_axes_from_keyboard(host)
-        key_w_held = is_key_down(host, "w") or is_key_down(host, "ц")
-        key_a_held = is_key_down(host, "a") or is_key_down(host, "ф")
-        key_s_held = is_key_down(host, "s") or is_key_down(host, "ы")
-        key_d_held = is_key_down(host, "d") or is_key_down(host, "в")
+        key_w_held = _is_raw_lane_down(host, raw_key="w") or _any_layout_key_down(host, _MOVE_FORWARD_KEYS)
+        key_a_held = _is_raw_lane_down(host, raw_key="a") or _any_layout_key_down(host, _MOVE_LEFT_KEYS)
+        key_s_held = _is_raw_lane_down(host, raw_key="s") or _any_layout_key_down(host, _MOVE_BACK_KEYS)
+        key_d_held = _is_raw_lane_down(host, raw_key="d") or _any_layout_key_down(host, _MOVE_RIGHT_KEYS)
+        key_q_held = _is_raw_lane_down(host, raw_key="q") or _any_layout_key_down(host, _ROLL_LEFT_KEYS)
+        key_e_held = _is_raw_lane_down(host, raw_key="e") or _any_layout_key_down(host, _ROLL_RIGHT_KEYS)
         arrow_up_held = bool(host.mouseWatcherNode and host.mouseWatcherNode.isButtonDown(KeyboardButton.up()))
         arrow_down_held = bool(host.mouseWatcherNode and host.mouseWatcherNode.isButtonDown(KeyboardButton.down()))
         arrow_left_held = bool(host.mouseWatcherNode and host.mouseWatcherNode.isButtonDown(KeyboardButton.left()))
@@ -261,10 +408,10 @@ def sample_live_input_command(host, *, menu_open: bool) -> _InputCommand:
         noclip_toggle_down = is_key_down(host, host._noclip_toggle_key)
         demo_save_down = is_key_down(host, host._demo_save_key)
     slot_prev_raw = getattr(host, "_prev_weapon_slot_down", None)
-    slot_prev = list(slot_prev_raw) if isinstance(slot_prev_raw, list) else [False, False, False, False]
-    if len(slot_prev) != 4:
-        slot_prev = [False, False, False, False]
-    for idx, key in enumerate(("1", "2", "3", "4")):
+    slot_prev = list(slot_prev_raw) if isinstance(slot_prev_raw, list) else [False, False, False, False, False, False]
+    if len(slot_prev) != 6:
+        slot_prev = [False, False, False, False, False, False]
+    for idx, key in enumerate(("1", "2", "3", "4", "5", "6")):
         down = (not menu_open) and is_key_down(host, key)
         if down and not bool(slot_prev[idx]):
             weapon_slot_select = idx + 1
@@ -288,6 +435,8 @@ def sample_live_input_command(host, *, menu_open: bool) -> _InputCommand:
         key_a_held=(not menu_open) and key_a_held,
         key_s_held=(not menu_open) and key_s_held,
         key_d_held=(not menu_open) and key_d_held,
+        key_q_held=(not menu_open) and key_q_held,
+        key_e_held=(not menu_open) and key_e_held,
         arrow_up_held=(not menu_open) and arrow_up_held,
         arrow_down_held=(not menu_open) and arrow_down_held,
         arrow_left_held=(not menu_open) and arrow_left_held,

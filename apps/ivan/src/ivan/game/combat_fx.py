@@ -70,6 +70,11 @@ class CombatFxRuntime:
     particles_np: NodePath | None = None
     view_np: NodePath | None = None
     weapon_np: NodePath | None = None
+    weapon_generic_np: NodePath | None = None
+    weapon_rocket_np: NodePath | None = None
+    weapon_rocket_metal_parts: list[NodePath] = field(default_factory=list)
+    weapon_rocket_wood_parts: list[NodePath] = field(default_factory=list)
+    weapon_rocket_accent_parts: list[NodePath] = field(default_factory=list)
     particle_template_np: NodePath | None = None
     tracer_template_np: NodePath | None = None
     shockwave_template_np: NodePath | None = None
@@ -90,6 +95,12 @@ _BASE_WEAPON_POS = LVector3f(0.36, 0.98, -0.27)
 _BASE_WEAPON_HPR = (0.0, -2.0, 0.0)
 _BASE_VIEW_POS = LVector3f(0.0, 0.0, 0.0)
 _BASE_VIEW_HPR = (0.0, 0.0, 0.0)
+
+_ROCKET_METAL_COLOR = _ColorSpec(0.58, 0.56, 0.52)
+_ROCKET_METAL_DARK = _ColorSpec(0.42, 0.37, 0.32)
+_ROCKET_WOOD_COLOR = _ColorSpec(0.54, 0.33, 0.17)
+_ROCKET_WOOD_DARK = _ColorSpec(0.33, 0.20, 0.11)
+_ROCKET_ACCENT_COLOR = _ColorSpec(0.20, 0.19, 0.18)
 
 _SLOT_COLORS: dict[int, _ColorSpec] = {
     1: _ColorSpec(0.16, 0.92, 1.0),   # blink
@@ -121,6 +132,51 @@ def _make_weapon_texture() -> Texture:
             a = 0.98
             img.setXelA(x, y, r, g, b, a)
     tex = Texture("combat-weapon-tech")
+    tex.load(img)
+    tex.setWrapU(Texture.WMRepeat)
+    tex.setWrapV(Texture.WMRepeat)
+    tex.setMinfilter(Texture.FTLinearMipmapLinear)
+    tex.setMagfilter(Texture.FTLinear)
+    return tex
+
+
+def _make_weapon_metal_texture() -> Texture:
+    img = PNMImage(256, 128, 4)
+    for y in range(128):
+        for x in range(256):
+            u = float(x) / 255.0
+            v = float(y) / 127.0
+            grain = 0.10 * math.sin((u * 28.0) + (v * 2.8))
+            brushed = 0.07 * math.sin((u * 74.0) + (v * 1.7))
+            weld = 0.09 if (x % 57) < 2 else 0.0
+            val = max(0.0, min(1.0, 0.48 + grain + brushed - weld))
+            cool = max(0.0, min(1.0, val * 0.94))
+            warm = max(0.0, min(1.0, val * 0.88))
+            img.setXelA(x, y, warm, cool, cool * 0.95, 0.98)
+    tex = Texture("combat-weapon-metal")
+    tex.load(img)
+    tex.setWrapU(Texture.WMRepeat)
+    tex.setWrapV(Texture.WMRepeat)
+    tex.setMinfilter(Texture.FTLinearMipmapLinear)
+    tex.setMagfilter(Texture.FTLinear)
+    return tex
+
+
+def _make_weapon_wood_texture() -> Texture:
+    img = PNMImage(256, 128, 4)
+    for y in range(128):
+        for x in range(256):
+            u = float(x) / 255.0
+            v = float(y) / 127.0
+            rings = 0.11 * math.sin((u * 17.0) + (v * 4.6))
+            fibers = 0.07 * math.sin((u * 55.0) + (v * 3.1) + 0.7)
+            knot = 0.06 * math.cos((u * 9.0) - (v * 5.0))
+            base = max(0.0, min(1.0, 0.42 + rings + fibers + knot))
+            r = max(0.0, min(1.0, base * 1.18))
+            g = max(0.0, min(1.0, base * 0.78))
+            b = max(0.0, min(1.0, base * 0.46))
+            img.setXelA(x, y, r, g, b, 0.98)
+    tex = Texture("combat-weapon-wood")
     tex.load(img)
     tex.setWrapU(Texture.WMRepeat)
     tex.setWrapV(Texture.WMRepeat)
@@ -211,6 +267,133 @@ def _runtime(host) -> CombatFxRuntime:
     return st
 
 
+def _setup_weapon_piece(np: NodePath, *, texture: Texture | None) -> None:
+    np.setTransparency(True)
+    np.setDepthTest(False)
+    np.setDepthWrite(False)
+    np.setBin("fixed", 35)
+    np.setLightOff(1)
+    np.setTwoSided(True)
+    if texture is not None:
+        np.setTexture(texture)
+
+
+def _spawn_weapon_piece(
+    *,
+    template: NodePath,
+    parent: NodePath,
+    pos: tuple[float, float, float],
+    scale: tuple[float, float, float],
+    color: _ColorSpec,
+    texture: Texture | None,
+    hpr: tuple[float, float, float] = (0.0, 0.0, 0.0),
+) -> NodePath:
+    np = template.copyTo(parent)
+    np.show()
+    np.setPos(float(pos[0]), float(pos[1]), float(pos[2]))
+    np.setHpr(float(hpr[0]), float(hpr[1]), float(hpr[2]))
+    np.setScale(float(scale[0]), float(scale[1]), float(scale[2]))
+    _setup_weapon_piece(np, texture=texture)
+    np.setColor(float(color.r), float(color.g), float(color.b), 0.97)
+    return np
+
+
+def _build_rocket_launcher_view(
+    *,
+    st: CombatFxRuntime,
+    template: NodePath,
+    weapon_root: NodePath,
+    metal_tex: Texture,
+    wood_tex: Texture,
+) -> None:
+    rocket = weapon_root.attachNewNode("combat-fx-weapon-rocket")
+    rocket.setPos(0.01, 0.03, -0.004)
+    rocket.setHpr(-3.0, 0.0, 0.0)
+    st.weapon_rocket_np = rocket
+    st.weapon_rocket_metal_parts.clear()
+    st.weapon_rocket_wood_parts.clear()
+    st.weapon_rocket_accent_parts.clear()
+
+    def add_metal(
+        *,
+        pos: tuple[float, float, float],
+        scale: tuple[float, float, float],
+        color: _ColorSpec = _ROCKET_METAL_COLOR,
+        hpr: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    ) -> None:
+        part = _spawn_weapon_piece(
+            template=template,
+            parent=rocket,
+            pos=pos,
+            scale=scale,
+            color=color,
+            texture=metal_tex,
+            hpr=hpr,
+        )
+        st.weapon_rocket_metal_parts.append(part)
+
+    def add_wood(
+        *,
+        pos: tuple[float, float, float],
+        scale: tuple[float, float, float],
+        color: _ColorSpec = _ROCKET_WOOD_COLOR,
+        hpr: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    ) -> None:
+        part = _spawn_weapon_piece(
+            template=template,
+            parent=rocket,
+            pos=pos,
+            scale=scale,
+            color=color,
+            texture=wood_tex,
+            hpr=hpr,
+        )
+        st.weapon_rocket_wood_parts.append(part)
+
+    def add_accent(
+        *,
+        pos: tuple[float, float, float],
+        scale: tuple[float, float, float],
+        color: _ColorSpec = _ROCKET_ACCENT_COLOR,
+        hpr: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    ) -> None:
+        part = _spawn_weapon_piece(
+            template=template,
+            parent=rocket,
+            pos=pos,
+            scale=scale,
+            color=color,
+            texture=metal_tex,
+            hpr=hpr,
+        )
+        st.weapon_rocket_accent_parts.append(part)
+
+    # Tube + sleeve body.
+    add_metal(pos=(0.0, -0.03, 0.0), scale=(0.11, 0.84, 0.09))
+    add_metal(pos=(0.0, 0.31, 0.0), scale=(0.12, 0.30, 0.095), color=_ROCKET_METAL_DARK)
+    add_metal(pos=(0.0, 0.58, 0.0), scale=(0.10, 0.11, 0.08), color=_ROCKET_METAL_DARK)
+    add_metal(pos=(0.0, -0.50, -0.01), scale=(0.12, 0.03, 0.09), color=_ROCKET_METAL_DARK)
+
+    # Muzzle guard ring and struts.
+    add_accent(pos=(0.0, 0.72, 0.0), scale=(0.12, 0.012, 0.09))
+    add_accent(pos=(0.052, 0.67, 0.032), scale=(0.009, 0.10, 0.009))
+    add_accent(pos=(-0.052, 0.67, 0.032), scale=(0.009, 0.10, 0.009))
+    add_accent(pos=(0.052, 0.67, -0.032), scale=(0.009, 0.10, 0.009))
+    add_accent(pos=(-0.052, 0.67, -0.032), scale=(0.009, 0.10, 0.009))
+
+    # Iron sights and trigger guard accents.
+    add_accent(pos=(0.0, -0.06, 0.066), scale=(0.016, 0.024, 0.016))
+    add_accent(pos=(0.0, 0.41, 0.066), scale=(0.012, 0.020, 0.014))
+    add_accent(pos=(0.0, 0.00, -0.103), scale=(0.047, 0.016, 0.010))
+
+    # Wood furniture similar to the reference silhouette.
+    add_wood(pos=(-0.018, -0.18, -0.123), scale=(0.045, 0.11, 0.10), hpr=(0.0, 20.0, 0.0))
+    add_wood(pos=(-0.012, 0.10, -0.123), scale=(0.040, 0.10, 0.095), hpr=(0.0, 24.0, 0.0))
+    add_wood(pos=(0.073, 0.02, -0.102), scale=(0.020, 0.30, 0.13), color=_ROCKET_WOOD_DARK)
+
+    rocket.hide()
+
+
 def init_runtime(host) -> None:
     st = _runtime(host)
     if st.root_np is not None:
@@ -250,19 +433,35 @@ def init_runtime(host) -> None:
     shockwave.setBillboardPointEye()
     st.shockwave_template_np = shockwave
 
-    weapon = host.loader.loadModel("models/box")
-    weapon.reparentTo(st.view_np)
-    weapon.setPos(_BASE_WEAPON_POS)
-    weapon.setHpr(*_BASE_WEAPON_HPR)
-    weapon.setScale(0.16, 0.56, 0.12)
-    weapon.setTransparency(True)
-    weapon.setDepthTest(False)
-    weapon.setDepthWrite(False)
-    weapon.setBin("fixed", 35)
-    weapon.setLightOff(1)
-    weapon.setTwoSided(True)
-    weapon.setTexture(_make_weapon_texture())
-    st.weapon_np = weapon
+    weapon_template = host.loader.loadModel("models/box")
+    weapon_template.reparentTo(st.root_np)
+    weapon_template.hide()
+    weapon_template.setLightOff(1)
+    weapon_template.setTwoSided(True)
+
+    weapon_root = st.view_np.attachNewNode("combat-fx-weapon")
+    weapon_root.setPos(_BASE_WEAPON_POS)
+    weapon_root.setHpr(*_BASE_WEAPON_HPR)
+    st.weapon_np = weapon_root
+
+    generic_weapon = _spawn_weapon_piece(
+        template=weapon_template,
+        parent=weapon_root,
+        pos=(0.0, 0.0, 0.0),
+        scale=(0.16, 0.56, 0.12),
+        color=_SLOT_COLORS[1],
+        texture=_make_weapon_texture(),
+    )
+    st.weapon_generic_np = generic_weapon
+
+    _build_rocket_launcher_view(
+        st=st,
+        template=weapon_template,
+        weapon_root=weapon_root,
+        metal_tex=_make_weapon_metal_texture(),
+        wood_tex=_make_weapon_wood_texture(),
+    )
+
     st.view_np.setPos(_BASE_VIEW_POS)
     st.view_np.setHpr(*_BASE_VIEW_HPR)
     st.view_punch_phase = st.rng.uniform(0.0, math.tau)
@@ -284,6 +483,7 @@ def reset_runtime(host, *, keep_weapon_slot: bool = True) -> None:
     _clear_shockwaves(st=st)
     _set_weapon_transform(st=st, spec=None, strength=0.0)
     _set_view_transform(st=st, strength=0.0, dt=0.0)
+    _apply_weapon_color(host, slot=int(st.anim_slot))
 
 
 def _clear_particles(*, st: CombatFxRuntime) -> None:
@@ -317,8 +517,20 @@ def _apply_weapon_color(host, *, slot: int) -> None:
     st = _runtime(host)
     if st.weapon_np is None:
         return
-    c = _SLOT_COLORS.get(int(slot), _SLOT_COLORS[1])
-    st.weapon_np.setColor(float(c.r), float(c.g), float(c.b), 0.94)
+    s = int(slot)
+    is_rocket = s == 3
+    if st.weapon_generic_np is not None:
+        if is_rocket:
+            st.weapon_generic_np.hide()
+        else:
+            st.weapon_generic_np.show()
+            c = _SLOT_COLORS.get(s, _SLOT_COLORS[1])
+            st.weapon_generic_np.setColor(float(c.r), float(c.g), float(c.b), 0.94)
+    if st.weapon_rocket_np is not None:
+        if is_rocket:
+            st.weapon_rocket_np.show()
+        else:
+            st.weapon_rocket_np.hide()
 
 
 def _set_weapon_transform(*, st: CombatFxRuntime, spec: _AnimSpec | None, strength: float) -> None:
@@ -519,11 +731,142 @@ def _trigger_view_punch(st: CombatFxRuntime, *, amp: float, duration_s: float) -
     st.view_punch_phase += st.rng.uniform(0.8, 2.6)
 
 
+def _impact_near_factor(host, *, impact_pos: LVector3f, radius: float) -> float:
+    player = getattr(host, "player", None)
+    if player is None:
+        return 0.0
+    half_h = float(getattr(getattr(host, "tuning", None), "player_half_height", 1.0))
+    center = LVector3f(float(player.pos.x), float(player.pos.y), float(player.pos.z) + half_h * 0.40)
+    dist = float((LVector3f(impact_pos) - center).length())
+    return max(0.0, min(1.0, 1.0 - (dist / max(1e-6, float(radius)))))
+
+
+def _emit_blink_impact(host, *, st: CombatFxRuntime, impact: LVector3f, power: float) -> None:
+    intensity = max(0.25, min(2.2, float(power)))
+    near = _impact_near_factor(host, impact_pos=impact, radius=11.5)
+    _trigger_view_punch(
+        st,
+        amp=0.10 + 0.13 * intensity + 0.12 * near,
+        duration_s=0.08 + 0.03 * intensity,
+    )
+    _emit_particle(
+        host,
+        pos=impact,
+        vel=LVector3f(0.0, 0.0, 0.0),
+        color=_ColorSpec(0.54, 1.0, 1.0),
+        life_s=0.09 + 0.02 * intensity,
+        start_scale=0.11 + 0.06 * intensity,
+        end_scale=0.0,
+        drag=5.5,
+    )
+    _emit_shockwave(
+        host,
+        pos=impact,
+        color=_ColorSpec(0.34, 0.96, 1.0),
+        life_s=0.14 + 0.04 * intensity,
+        start_scale=0.10,
+        end_scale=0.62 + 0.22 * intensity,
+        thickness=0.018 + 0.004 * intensity,
+        spin_deg_per_s=st.rng.uniform(-170.0, 170.0),
+    )
+    for _ in range(int(12 + 7 * intensity)):
+        ang = st.rng.uniform(0.0, math.tau)
+        rise = st.rng.uniform(-0.10, 0.70)
+        vel = LVector3f(math.cos(ang), math.sin(ang), rise) * st.rng.uniform(4.6, 9.0 + 1.4 * intensity)
+        _emit_particle(
+            host,
+            pos=impact,
+            vel=vel,
+            color=_ColorSpec(0.34, 0.94, 1.0),
+            life_s=st.rng.uniform(0.10, 0.22),
+            start_scale=st.rng.uniform(0.014, 0.030),
+            end_scale=0.0,
+            gravity=2.0,
+            drag=1.8,
+            spin_deg_per_s=st.rng.uniform(-360.0, 360.0),
+        )
+    for _ in range(int(3 + 2 * intensity)):
+        ang = st.rng.uniform(0.0, math.tau)
+        ray = LVector3f(math.cos(ang), math.sin(ang), st.rng.uniform(-0.02, 0.26))
+        if ray.lengthSquared() > 1e-12:
+            ray.normalize()
+        _emit_tracer(
+            host,
+            start=impact + ray * 0.03,
+            end=impact + ray * st.rng.uniform(1.3, 2.6 + 0.7 * intensity),
+            color=_ColorSpec(0.56, 1.0, 1.0),
+            speed=24.0 + 10.0 * intensity,
+            start_scale=0.010 + 0.003 * intensity,
+            end_scale=0.002,
+        )
+
+
+def _emit_slam_impact(host, *, st: CombatFxRuntime, impact: LVector3f, power: float) -> None:
+    intensity = max(0.30, min(2.4, float(power)))
+    near = _impact_near_factor(host, impact_pos=impact, radius=12.5)
+    _trigger_view_punch(
+        st,
+        amp=0.13 + 0.18 * intensity + 0.16 * near,
+        duration_s=0.10 + 0.04 * intensity,
+    )
+    _emit_particle(
+        host,
+        pos=impact,
+        vel=LVector3f(0.0, 0.0, 0.0),
+        color=_ColorSpec(1.0, 0.84, 0.42),
+        life_s=0.10 + 0.03 * intensity,
+        start_scale=0.15 + 0.08 * intensity,
+        end_scale=0.0,
+        drag=5.2,
+    )
+    _emit_shockwave(
+        host,
+        pos=impact,
+        color=_ColorSpec(1.0, 0.66, 0.24),
+        life_s=0.16 + 0.05 * intensity,
+        start_scale=0.11,
+        end_scale=0.76 + 0.32 * intensity,
+        thickness=0.022 + 0.005 * intensity,
+        spin_deg_per_s=st.rng.uniform(-210.0, 210.0),
+    )
+    for _ in range(int(18 + 11 * intensity)):
+        ang = st.rng.uniform(0.0, math.tau)
+        rise = st.rng.uniform(-0.16, 0.95)
+        vel = LVector3f(math.cos(ang), math.sin(ang), rise) * st.rng.uniform(5.2, 11.8 + 2.0 * intensity)
+        _emit_particle(
+            host,
+            pos=impact,
+            vel=vel,
+            color=_ColorSpec(1.0, 0.70, 0.22),
+            life_s=st.rng.uniform(0.12, 0.26),
+            start_scale=st.rng.uniform(0.016, 0.034),
+            end_scale=0.0,
+            gravity=3.2,
+            drag=1.4,
+            spin_deg_per_s=st.rng.uniform(-420.0, 420.0),
+        )
+    for _ in range(int(8 + 5 * intensity)):
+        ang = st.rng.uniform(0.0, math.tau)
+        ray = LVector3f(math.cos(ang), math.sin(ang), st.rng.uniform(0.00, 0.36))
+        if ray.lengthSquared() > 1e-12:
+            ray.normalize()
+        _emit_tracer(
+            host,
+            start=impact + ray * 0.04,
+            end=impact + ray * st.rng.uniform(1.4, 3.6 + 0.8 * intensity),
+            color=_ColorSpec(1.0, 0.78, 0.32),
+            speed=22.0 + 8.0 * intensity,
+            start_scale=0.012 + 0.004 * intensity,
+            end_scale=0.002,
+        )
+
+
 def _emit_blaster(host, *, event: CombatFireEvent) -> None:
     st = _runtime(host)
     fwd, right, up = _basis_from_forward(event.direction)
     muzzle = LVector3f(event.origin + fwd * 0.72)
     c = _SLOT_COLORS[1]
+    power = max(0.25, min(2.0, float(event.impact_power) if float(event.impact_power) > 0.0 else 0.9))
     _emit_particle(
         host,
         pos=muzzle,
@@ -562,15 +905,18 @@ def _emit_blaster(host, *, event: CombatFireEvent) -> None:
             drag=2.8,
         )
     if event.impact_pos is not None:
+        impact = LVector3f(event.impact_pos)
         _emit_tracer(
             host,
             start=muzzle,
-            end=LVector3f(event.impact_pos),
+            end=impact,
             color=_ColorSpec(0.28, 0.96, 1.0),
             speed=96.0,
             start_scale=0.036,
             end_scale=0.004,
         )
+        if bool(event.world_hit):
+            _emit_blink_impact(host, st=st, impact=impact, power=power)
 
 
 def _emit_scatter(host, *, event: CombatFireEvent) -> None:
@@ -578,6 +924,7 @@ def _emit_scatter(host, *, event: CombatFireEvent) -> None:
     fwd, right, up = _basis_from_forward(event.direction)
     muzzle = LVector3f(event.origin + fwd * 0.66)
     c = _SLOT_COLORS[2]
+    power = max(0.25, min(2.4, float(event.impact_power) if float(event.impact_power) > 0.0 else 1.0))
     _emit_particle(
         host,
         pos=muzzle,
@@ -621,15 +968,18 @@ def _emit_scatter(host, *, event: CombatFireEvent) -> None:
             drag=1.6,
         )
     if event.impact_pos is not None:
+        impact = LVector3f(event.impact_pos)
         _emit_tracer(
             host,
             start=muzzle,
-            end=LVector3f(event.impact_pos),
+            end=impact,
             color=_ColorSpec(1.0, 0.72, 0.22),
             speed=74.0,
             start_scale=0.048,
             end_scale=0.006,
         )
+        if bool(event.world_hit):
+            _emit_slam_impact(host, st=st, impact=impact, power=power)
 
 
 def _emit_rocket(host, *, event: CombatFireEvent) -> None:
@@ -915,10 +1265,10 @@ def on_fire(host, *, event: CombatFireEvent) -> None:
     _apply_weapon_color(host, slot=slot)
 
     if slot == 1:
-        _trigger_view_punch(st, amp=0.12, duration_s=0.08)
+        _trigger_view_punch(st, amp=0.10, duration_s=0.08)
         _emit_blaster(host, event=event)
     elif slot == 2:
-        _trigger_view_punch(st, amp=0.18, duration_s=0.10)
+        _trigger_view_punch(st, amp=0.15, duration_s=0.10)
         _emit_scatter(host, event=event)
     elif slot == 3:
         _trigger_view_punch(st, amp=0.22, duration_s=0.11)

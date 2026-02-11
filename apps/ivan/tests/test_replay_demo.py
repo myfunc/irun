@@ -104,6 +104,8 @@ def test_load_replay_v3_marks_raw_inputs_available_even_when_all_false(tmp_path:
                     "ka": False,
                     "ks": False,
                     "kd": False,
+                    "kq": False,
+                    "ke": False,
                     "au": False,
                     "ad": False,
                     "al": False,
@@ -119,3 +121,38 @@ def test_load_replay_v3_marks_raw_inputs_available_even_when_all_false(tmp_path:
     assert rec.frames[0].move_forward == -1
     assert rec.frames[0].key_s_held is False
     assert rec.frames[0].raw_wasd_available is True
+
+
+def test_load_replay_clamps_slot_selection_to_6(tmp_path: Path) -> None:
+    p = _write(
+        tmp_path / "slot6.ivan_demo.json",
+        {
+            "format_version": 3,
+            "metadata": {
+                "demo_name": "slot6",
+                "created_at_unix": 1.0,
+                "tick_rate": 60,
+                "look_scale": 256,
+                "map_id": "m",
+                "map_json": None,
+                "tuning": {},
+            },
+            "frames": [
+                {
+                    "dx": 0,
+                    "dy": 0,
+                    "mf": 0,
+                    "mr": 0,
+                    "jp": False,
+                    "jh": False,
+                    "sp": False,
+                    "gp": False,
+                    "nt": False,
+                    "ws": 999,
+                }
+            ],
+        },
+    )
+    rec = load_replay(p)
+    assert len(rec.frames) == 1
+    assert rec.frames[0].weapon_slot_select == 6

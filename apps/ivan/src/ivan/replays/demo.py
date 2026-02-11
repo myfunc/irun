@@ -28,6 +28,8 @@ class DemoFrame:
     key_a_held: bool = False
     key_s_held: bool = False
     key_d_held: bool = False
+    key_q_held: bool = False
+    key_e_held: bool = False
     arrow_up_held: bool = False
     arrow_down_held: bool = False
     arrow_left_held: bool = False
@@ -129,11 +131,13 @@ def save_recording(rec: DemoRecording) -> Path:
                 "dp": bool(f.slide_pressed),
                 "gp": bool(f.grapple_pressed),
                 "nt": bool(f.noclip_toggle_pressed),
-                "ws": int(max(0, min(4, int(f.weapon_slot_select)))),
+                "ws": int(max(0, min(6, int(f.weapon_slot_select)))),
                 "kw": bool(f.key_w_held),
                 "ka": bool(f.key_a_held),
                 "ks": bool(f.key_s_held),
                 "kd": bool(f.key_d_held),
+                "kq": bool(f.key_q_held),
+                "ke": bool(f.key_e_held),
                 "au": bool(f.arrow_up_held),
                 "ad": bool(f.arrow_down_held),
                 "al": bool(f.arrow_left_held),
@@ -195,13 +199,15 @@ def load_replay(path: Path) -> DemoRecording:
                 slide_pressed=bool(row.get("sp")) or bool(row.get("dp")),
                 grapple_pressed=bool(row.get("gp")),
                 noclip_toggle_pressed=bool(row.get("nt")),
-                weapon_slot_select=max(0, min(4, int(row.get("ws") or 0))),
+                weapon_slot_select=max(0, min(6, int(row.get("ws") or 0))),
                 # v3+ explicit held states for accurate replay HUD.
                 # Fallbacks preserve readable behavior for older demos.
                 key_w_held=bool(row.get("kw")) if "kw" in row else int(row.get("mf") or 0) > 0,
                 key_a_held=bool(row.get("ka")) if "ka" in row else int(row.get("mr") or 0) < 0,
                 key_s_held=bool(row.get("ks")) if "ks" in row else int(row.get("mf") or 0) < 0,
                 key_d_held=bool(row.get("kd")) if "kd" in row else int(row.get("mr") or 0) > 0,
+                key_q_held=bool(row.get("kq")) if "kq" in row else False,
+                key_e_held=bool(row.get("ke")) if "ke" in row else False,
                 arrow_up_held=bool(row.get("au")) if "au" in row else False,
                 arrow_down_held=bool(row.get("ad")) if "ad" in row else False,
                 arrow_left_held=bool(row.get("al")) if "al" in row else False,

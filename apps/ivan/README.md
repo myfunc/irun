@@ -71,7 +71,7 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 - `src/ivan/ui/debug_ui.py`: Debug/admin UI widgets and HUD labels.
 
 ## Controls
-- `WASD`: move (US layout). On RU layout you can use `ЦФЫВ`. Arrow keys also work.
+- `WASD`: move (layout-agnostic). Uses runtime keyboard-map/raw fallback for physical key lanes, so movement still works when keyboard layout changes (including non-Latin layouts).
 - `Shift` (hold): slide (low-profile hull; release to exit)
 - `Space`: jump
 - `R`: reset to spawn
@@ -91,9 +91,20 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 - `F2`: toggle input debug overlay (useful when keyboard/mouse don't seem to register)
 - `F3`: toggle error console overlay (shows recent errors without crashing)
 - `F12`: cycle debug HUD overlay (off → minimal → render → streaming → graph; compact fps/frametime view)
-- `LMB`: grapple hook primary
+- Combat/transport slots:
+  - `1-4`: weapon slots (`blink`, `slam`, `rocket`, `pulse`)
+  - `5`: `planer` transport mode
+  - `6`: `skateboard` transport mode
+- `LMB`: fire active weapon slot
+- `RMB`: grapple hook primary
   - click (not attached): fire grapple to aimed surface
   - click (attached): detach
+- `planer` controls:
+  - `W/S`: speed up/down
+  - `A/D`: turn left/right
+  - `Arrow Up/Down`: pitch
+  - `Arrow Left/Right`: yaw
+  - `Q/E`: roll
 - In multiplayer, grapple hit on another player deals `20` damage.
 - `V` (default): toggle noclip (rebindable from `Esc -> Key Bindings`)
 
