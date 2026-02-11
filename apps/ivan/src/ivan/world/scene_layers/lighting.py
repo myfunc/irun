@@ -95,8 +95,9 @@ def apply_fog(scene: SceneLayerContract, *, cfg, render) -> None:
     if mode not in ("linear", "exp", "exp2"):
         mode = "linear"
     # Linear fog in Panda can show angle-dependent steps/banding on large faces.
-    # Keep explicit live-console control intact, but normalize map/profile/default to exp2.
-    if mode == "linear" and source != "runtime-console":
+    # Normalize all linear requests to exp2 so runtime overrides cannot reintroduce
+    # the angle-dependent "veil" artifact on large surfaces.
+    if mode == "linear":
         mode = "exp2"
     start = float(fog_defaults["start"])
     end = float(fog_defaults["end"])

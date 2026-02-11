@@ -14,11 +14,15 @@ This module orchestrates the full pipeline:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from PIL import Image
 
@@ -33,6 +37,8 @@ from ivan.maps.material_defs import MaterialDef, MaterialResolver
 from ivan.paths import app_root as ivan_app_root
 
 logger = logging.getLogger(__name__)
+_TEXTURE_CACHE_MANIFEST = ".wad_texture_cache_manifest.json"
+_TEXTURE_CACHE_SCHEMA = "ivan.map_texture_cache.v1"
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +178,10 @@ class MapConvertResult:
 
     # Optional fog from worldspawn or env_fog (for runtime preview).
     fog: dict | None = None  # {"enabled": bool, "start": float, "end": float, "color": [r,g,b]}
+    # Fine-grained converter stage timings (milliseconds).
+    perf_stages_ms: dict[str, float] = field(default_factory=dict)
+    # Basic converter counters (entities, brushes, texture/material cardinality, ...).
+    perf_counts: dict[str, int] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +261,7 @@ def _extract_wad_textures(
     wad_paths: list[Path],
     *,
     cache_dir: Path,
-) -> tuple[dict[str, Path], dict[str, tuple[int, int]]]:
+) -> tuple[dict[str, Path], dict[str, tuple[int, int]], str]:
     """Extract all textures from a list of WAD files.
 
     Returns
@@ -260,14 +270,25 @@ def _extract_wad_textures(
         Mapping of texture name (original case) to the written PNG path.
     texture_sizes : dict[str, tuple[int, int]]
         Mapping of texture name to ``(width, height)``.
+    cache_status : str
+        `hit` when cached PNG set is reused, otherwise `miss`.
     """
-
-    goldsrc_wad = _import_goldsrc_wad()
 
     materials: dict[str, Path] = {}
     texture_sizes: dict[str, tuple[int, int]] = {}
 
     cache_dir.mkdir(parents=True, exist_ok=True)
+    wad_fingerprints = _build_wad_fingerprints(wad_paths)
+    manifest = _load_texture_cache_manifest(cache_dir)
+    if _manifest_matches_wads(manifest=manifest, wad_fingerprints=wad_fingerprints):
+        cached = _restore_cached_textures(cache_dir=cache_dir, manifest=manifest)
+        if cached is not None:
+            logger.info("WAD texture cache hit: %s (%d textures)", cache_dir, len(cached[0]))
+            return cached[0], cached[1], "hit"
+
+    # Cache miss or invalidated signature: remove stale PNGs/manifest before rebuild.
+    _clear_texture_cache_dir(cache_dir)
+    goldsrc_wad = _import_goldsrc_wad()
 
     for wad_path in wad_paths:
         logger.info("Loading WAD: %s", wad_path)
@@ -319,7 +340,158 @@ def _extract_wad_textures(
     except Exception:
         pass
 
+    _save_texture_cache_manifest(
+        cache_dir=cache_dir,
+        wad_fingerprints=wad_fingerprints,
+        texture_sizes=texture_sizes,
+    )
+    return materials, texture_sizes, "miss"
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _build_wad_fingerprints(wad_paths: list[Path]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for wad in wad_paths:
+        try:
+            st = wad.stat()
+            out.append(
+                {
+                    "path": str(wad.resolve()),
+                    "size_bytes": int(st.st_size),
+                    "mtime_ns": int(st.st_mtime_ns),
+                    "sha256": str(_sha256_file(wad)),
+                }
+            )
+        except Exception:
+            out.append(
+                {
+                    "path": str(wad),
+                    "size_bytes": 0,
+                    "mtime_ns": 0,
+                    "sha256": "",
+                }
+            )
+    return out
+
+
+def _manifest_path(cache_dir: Path) -> Path:
+    return cache_dir / _TEXTURE_CACHE_MANIFEST
+
+
+def _load_texture_cache_manifest(cache_dir: Path) -> dict[str, Any] | None:
+    p = _manifest_path(cache_dir)
+    if not p.exists():
+        return None
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    if str(raw.get("schema")) != _TEXTURE_CACHE_SCHEMA:
+        return None
+    return raw
+
+
+def _save_texture_cache_manifest(
+    *,
+    cache_dir: Path,
+    wad_fingerprints: list[dict[str, Any]],
+    texture_sizes: dict[str, tuple[int, int]],
+) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema": _TEXTURE_CACHE_SCHEMA,
+        "wads": list(wad_fingerprints),
+        "texture_sizes": {str(k): [int(v[0]), int(v[1])] for k, v in texture_sizes.items()},
+    }
+    try:
+        _manifest_path(cache_dir).write_text(
+            json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except Exception:
+        # Cache metadata is best-effort, runtime must continue.
+        pass
+
+
+def _manifest_matches_wads(*, manifest: dict[str, Any] | None, wad_fingerprints: list[dict[str, Any]]) -> bool:
+    if not isinstance(manifest, dict):
+        return False
+    w = manifest.get("wads")
+    if not isinstance(w, list):
+        return False
+    if len(w) != len(wad_fingerprints):
+        return False
+    for i, fp in enumerate(wad_fingerprints):
+        row = w[i]
+        if not isinstance(row, dict):
+            return False
+        if str(row.get("path")) != str(fp.get("path")):
+            return False
+        if str(row.get("sha256")) != str(fp.get("sha256")):
+            return False
+    return True
+
+
+def _restore_cached_textures(
+    *,
+    cache_dir: Path,
+    manifest: dict[str, Any] | None,
+) -> tuple[dict[str, Path], dict[str, tuple[int, int]]] | None:
+    if not isinstance(manifest, dict):
+        return None
+    sizes_raw = manifest.get("texture_sizes")
+    if not isinstance(sizes_raw, dict) or not sizes_raw:
+        return None
+    materials: dict[str, Path] = {}
+    texture_sizes: dict[str, tuple[int, int]] = {}
+    for key_raw, sz_raw in sizes_raw.items():
+        key = str(key_raw).strip().lower()
+        if not key:
+            return None
+        if not isinstance(sz_raw, list) or len(sz_raw) != 2:
+            return None
+        try:
+            w = int(sz_raw[0])
+            h = int(sz_raw[1])
+        except Exception:
+            return None
+        if w <= 0 or h <= 0:
+            return None
+        png = cache_dir / f"{key}.png"
+        if not png.exists():
+            return None
+        materials[key] = png
+        texture_sizes[key] = (w, h)
     return materials, texture_sizes
+
+
+def _clear_texture_cache_dir(cache_dir: Path) -> None:
+    try:
+        for png in cache_dir.glob("*.png"):
+            try:
+                png.unlink()
+            except Exception:
+                pass
+        m = _manifest_path(cache_dir)
+        try:
+            if m.exists():
+                m.unlink()
+        except Exception:
+            pass
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -459,6 +631,12 @@ def convert_map_file(
         Uses a temporary directory when *None*.
     """
 
+    perf_stages_ms: dict[str, float] = {}
+    perf_total_t0 = time.perf_counter()
+
+    def _mark_stage(stage: str, t0: float) -> None:
+        perf_stages_ms[str(stage)] = max(0.0, (time.perf_counter() - float(t0)) * 1000.0)
+
     map_path = Path(map_path).resolve()
     map_dir = map_path.parent
     wad_dirs = [Path(d).resolve() for d in (wad_search_dirs or [])]
@@ -466,12 +644,15 @@ def convert_map_file(
 
     # ── 1. Read and parse ──────────────────────────────────────────────
     logger.info("Parsing map: %s", map_path)
+    t0 = time.perf_counter()
     map_text = map_path.read_text(encoding="utf-8", errors="replace")
     entities = parse_map(map_text)
+    _mark_stage("read_parse_map", t0)
 
     if not entities:
         logger.warning("No entities found in %s", map_path)
-        return MapConvertResult()
+        _mark_stage("total_convert", perf_total_t0)
+        return MapConvertResult(perf_stages_ms=perf_stages_ms)
 
     # ── 2. Find worldspawn ─────────────────────────────────────────────
     worldspawn: MapEntity | None = None
@@ -482,7 +663,8 @@ def convert_map_file(
 
     if worldspawn is None:
         logger.warning("No worldspawn entity in %s", map_path)
-        return MapConvertResult()
+        _mark_stage("total_convert", perf_total_t0)
+        return MapConvertResult(perf_stages_ms=perf_stages_ms)
 
     # ── 3. Extract metadata ────────────────────────────────────────────
     ws_props = worldspawn.properties
@@ -501,6 +683,7 @@ def convert_map_file(
     raw_wad_paths = _parse_wad_paths(wad_raw)
 
     wad_files: list[Path] = []
+    t0 = time.perf_counter()
     if raw_wad_paths:
         wad_files = _resolve_wad_files(
             raw_wad_paths,
@@ -508,6 +691,7 @@ def convert_map_file(
             wad_search_dirs=wad_dirs,
         )
         logger.info("Resolved %d of %d WAD files", len(wad_files), len(raw_wad_paths))
+    _mark_stage("resolve_wad_files", t0)
 
     # ── 5. Extract textures from WADs ──────────────────────────────────
     _temp_dir = None
@@ -519,9 +703,11 @@ def convert_map_file(
 
     tex_materials: dict[str, Path] = {}
     texture_sizes: dict[str, tuple[int, int]] = {}
+    texture_cache_status = "none"
 
+    t0 = time.perf_counter()
     if wad_files:
-        tex_materials, texture_sizes = _extract_wad_textures(
+        tex_materials, texture_sizes, texture_cache_status = _extract_wad_textures(
             wad_files,
             cache_dir=cache_dir,
         )
@@ -535,10 +721,12 @@ def convert_map_file(
             "No WAD files resolved from worldspawn 'wad' = %r  |  raw paths: %s  |  search dirs: %s",
             wad_raw, raw_wad_paths, wad_dirs,
         )
+    _mark_stage("extract_textures", t0)
 
     # ── 6. Check for missing texture sizes ─────────────────────────────
     #    If a face references a texture not in texture_sizes, UVs default
     #    to (1,1) producing pixel-space coordinates (wrong tiling).
+    t0 = time.perf_counter()
     all_tex_names: set[str] = set()
     for ent in entities:
         for brush in ent.brushes:
@@ -553,11 +741,13 @@ def convert_map_file(
         )
     else:
         logger.info("All %d texture sizes resolved OK", len(all_tex_names))
+    _mark_stage("scan_texture_references", t0)
 
     # ── 6b. Convert worldspawn brushes ─────────────────────────────────
     all_tri_dicts: list[dict] = []
     all_collision: list[list[float]] = []
 
+    t0 = time.perf_counter()
     if worldspawn.brushes:
         ws_result: ConvertedBrushResult = convert_entity_brushes(
             worldspawn.brushes,
@@ -574,8 +764,10 @@ def convert_map_file(
             len(ws_result.triangles),
             len(ws_result.collision_triangles),
         )
+    _mark_stage("convert_worldspawn_brushes", t0)
 
     # ── 7. Process brush entities ──────────────────────────────────────
+    t0 = time.perf_counter()
     for ent in entities:
         classname = ent.properties.get("classname", "").lower()
 
@@ -621,18 +813,22 @@ def convert_map_file(
             len(result.triangles),
             len(result.collision_triangles) if category == "render_collide" else 0,
         )
+    _mark_stage("convert_entity_brushes", t0)
 
     # ── 8. Find spawn point ────────────────────────────────────────────
+    t0 = time.perf_counter()
     spawn_pos, spawn_yaw = _find_spawn(entities, scale=scale)
     if spawn_pos is not None:
         logger.info("Spawn point: %s  yaw=%.1f", spawn_pos, spawn_yaw)
     else:
         logger.warning("No spawn point entity found; defaulting to origin")
+    _mark_stage("extract_spawn", t0)
 
     # ── 8b. Parse Half-Life light entities ─────────────────────────────
     _LIGHT_CLASSNAMES = {"light", "light_environment", "light_spot"}
     lights: list[LightEntity] = []
 
+    t0 = time.perf_counter()
     for ent in entities:
         cn = ent.properties.get("classname", "").lower()
         if cn not in _LIGHT_CLASSNAMES:
@@ -742,8 +938,10 @@ def convert_map_file(
 
     if lights:
         logger.info("Parsed %d light entities", len(lights))
+    _mark_stage("extract_lights", t0)
 
     # ── 8c. Parse fog (worldspawn or env_fog) ──────────────────────────
+    t0 = time.perf_counter()
     fog: dict | None = None
     for ent in entities:
         cn = ent.properties.get("classname", "").lower()
@@ -764,6 +962,7 @@ def convert_map_file(
                     break
                 except (TypeError, ValueError):
                     pass
+    _mark_stage("extract_fog", t0)
     if fog is None:
         for ent in entities:
             if ent.properties.get("classname") != "worldspawn":
@@ -787,9 +986,12 @@ def convert_map_file(
                     pass
 
     # ── 9. Compute bounds ──────────────────────────────────────────────
+    t0 = time.perf_counter()
     bounds_min, bounds_max = _compute_bounds(all_tri_dicts)
+    _mark_stage("compute_bounds", t0)
 
     # ── 10. Resolve material definitions ───────────────────────────────
+    t0 = time.perf_counter()
     resolver = MaterialResolver(mat_dirs) if mat_dirs else None
 
     # Collect all unique material names from the converted triangles.
@@ -811,6 +1013,7 @@ def convert_map_file(
             resolved_material_defs[mat_name] = MaterialDef(
                 name=mat_name, albedo_path=albedo,
             )
+    _mark_stage("resolve_material_defs", t0)
 
     # ── 11. Build output ───────────────────────────────────────────────
     logger.info(
@@ -819,6 +1022,22 @@ def convert_map_file(
         len(all_collision),
         len(unique_materials),
     )
+
+    perf_counts = {
+        "entities_total": int(len(entities)),
+        "brushes_total": int(sum(len(ent.brushes) for ent in entities)),
+        "wad_paths_declared": int(len(raw_wad_paths)),
+        "wad_files_resolved": int(len(wad_files)),
+        "textures_with_albedo": int(len(tex_materials)),
+        "textures_with_size": int(len(texture_sizes)),
+        "texture_cache_hit": int(1 if texture_cache_status == "hit" else 0),
+        "unique_textures_referenced": int(len(all_tex_names)),
+        "render_triangles": int(len(all_tri_dicts)),
+        "collision_triangles": int(len(all_collision)),
+        "lights_total": int(len(lights)),
+        "materials_total": int(len(unique_materials)),
+    }
+    _mark_stage("total_convert", perf_total_t0)
 
     return MapConvertResult(
         triangles=all_tri_dicts,
@@ -834,4 +1053,6 @@ def convert_map_file(
         texture_sizes=texture_sizes,
         skyname=skyname,
         lights=lights,
+        perf_stages_ms=perf_stages_ms,
+        perf_counts=perf_counts,
     )

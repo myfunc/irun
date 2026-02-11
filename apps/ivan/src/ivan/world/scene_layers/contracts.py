@@ -52,6 +52,7 @@ class SceneLayerContract(Protocol):
     _fog_lens_default_far: float
     _runtime_fog_override: dict | None
     _pending_map_fog: dict | None
+    _map_convert_report: dict[str, object]
     _ambient_np: Any
     _sun_np: Any
     _skybox_np: Any

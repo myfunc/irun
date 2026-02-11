@@ -47,6 +47,28 @@ void main() {
 """
 
 
+def _configure_base_texture_sampling(tex: Texture, *, masked: bool) -> None:
+    """
+    Use stable sampling for map materials to reduce fine-angle aliasing artifacts.
+    """
+    tex.setWrapU(Texture.WM_repeat)
+    tex.setWrapV(Texture.WM_repeat)
+    if masked:
+        tex.setMinfilter(Texture.FT_nearest)
+        tex.setMagfilter(Texture.FT_nearest)
+        return
+    tex.setMinfilter(Texture.FT_linear_mipmap_linear)
+    tex.setMagfilter(Texture.FT_linear)
+    try:
+        tex.generateRamMipmapImages()
+    except Exception:
+        pass
+    try:
+        tex.setAnisotropicDegree(8)
+    except Exception:
+        pass
+
+
 def _build_mock_global_cubemap() -> Texture:
     """
     Create a simple global cubemap placeholder.
@@ -235,11 +257,7 @@ def attach_triangle_map_geometry_v2_unlit(
             if tex_path and tex_path.exists():
                 tex = loader.loadTexture(Filename.fromOsSpecific(str(tex_path)))
                 if tex is not None:
-                    tex.setWrapU(Texture.WM_repeat)
-                    tex.setWrapV(Texture.WM_repeat)
-                    if mat_name.startswith("{"):
-                        tex.setMinfilter(Texture.FT_nearest)
-                        tex.setMagfilter(Texture.FT_nearest)
+                    _configure_base_texture_sampling(tex, masked=mat_name.startswith("{"))
                 tex_cache[mat_name] = tex
             else:
                 missing_cache.add(mat_name)
@@ -389,11 +407,7 @@ def attach_triangle_map_geometry_v2(scene: SceneLayerContract, *, loader, render
             if tex_path and tex_path.exists():
                 tex = loader.loadTexture(Filename.fromOsSpecific(str(tex_path)))
                 if tex is not None:
-                    tex.setWrapU(Texture.WM_repeat)
-                    tex.setWrapV(Texture.WM_repeat)
-                    if mat_name.startswith("{"):
-                        tex.setMinfilter(Texture.FT_nearest)
-                        tex.setMagfilter(Texture.FT_nearest)
+                    _configure_base_texture_sampling(tex, masked=mat_name.startswith("{"))
                 base_tex_cache[mat_name] = tex
             else:
                 base_tex_missing.add(mat_name)

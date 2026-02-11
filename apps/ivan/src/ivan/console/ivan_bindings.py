@@ -402,7 +402,19 @@ def build_client_console(runner: Any) -> Console:
                 payload = fn()
             except Exception as e:
                 return [json.dumps({"error": str(e)}, ensure_ascii=True)]
-            return [json.dumps(payload, ensure_ascii=True)]
+            if not isinstance(payload, dict):
+                return [json.dumps(payload, ensure_ascii=True)]
+            lines: list[str] = ["world_runtime:"]
+            for key in sorted(payload.keys()):
+                val = payload.get(key)
+                if isinstance(val, dict):
+                    lines.append(f"  {key}:")
+                    for sub_key in sorted(val.keys()):
+                        sub_val = val.get(sub_key)
+                        lines.append(f"    - {sub_key}: {json.dumps(sub_val, ensure_ascii=True)}")
+                    continue
+                lines.append(f"  {key}: {json.dumps(val, ensure_ascii=True)}")
+            return lines
         return [json.dumps({"error": "diagnostics-unavailable"}, ensure_ascii=True)]
 
     def _bus_help(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:

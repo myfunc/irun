@@ -138,6 +138,7 @@ class WorldScene:
         self._load_reporter = LoadReporter()
         self._load_report_emitted = False
         self._visibility_cache_report: dict[str, object] = {}
+        self._map_convert_report: dict[str, object] = {}
 
     @property
     def map_id(self) -> str:
@@ -553,6 +554,8 @@ class WorldScene:
         }
         if isinstance(self._visibility_cache_report, dict) and self._visibility_cache_report:
             diag["visibility_cache"] = dict(self._visibility_cache_report)
+        if isinstance(self._map_convert_report, dict) and self._map_convert_report:
+            diag["map_convert"] = dict(self._map_convert_report)
         return diag
 
     def list_available_skyboxes(self) -> list[str]:

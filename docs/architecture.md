@@ -238,6 +238,7 @@ See: `docs/ui-kit.md`.
   - `ivan-mcp` runs an MCP stdio server (Python 3.9, no deps) with tools:
     - `console_exec`
     - `console_commands` (returns typed command metadata)
+  - Full command/cvar/MCP reference: `docs/console-control-and-mcp.md`
 - CLI telemetry export:
   - `python -m ivan --export-latest-replay-telemetry [--replay-telemetry-out <dir>]` exports latest replay metrics and exits.
   - `python -m ivan --compare-latest-replays [--replay-telemetry-out <dir>] [--replay-route-tag A]` auto-exports latest+previous and writes comparison JSON.
@@ -333,11 +334,21 @@ Fog and visibility config live in `run.json` under `fog` and `visibility`; profi
 - Report includes:
   - `stage_order`, per-stage timings, `total_ms`, stage budgets (`budgets_ms`), `budget_pass`
   - runtime diagnostics snapshot, plus visibility cache result (`memory-hit` / `disk-hit` / `rebuilt` / etc.)
+  - direct `.map` conversion telemetry in `runtime.map_convert`:
+    - `stages_ms`: fine-grained converter steps (`read_parse_map`, `extract_textures`, brush conversion, etc.)
+    - `counts`: entity/brush/triangle/material/texture cardinality to correlate size vs cost
   - optimization flags (material base-texture cache, visibility memory cache, deferred lightmap strategy)
+  - app startup telemetry in `app_startup`:
+    - `stages_ms`: `pre_scene_reset`, `resolve_run_config`, `scene_build`, `post_scene_setup`, `player_collision_network_init`, `mode_setup`
+    - `total_ms`: end-to-end `_start_game(...)` time up to mode install
 
 **Scope 03 optimizations and tunables:**
 - Base-material texture caching is now reused during geometry attach, avoiding repeated `loader.loadTexture(...)` calls for the same material across lightmap groups.
 - GoldSrc visibility cache now has an in-memory warm cache keyed by cache path/mtime; repeated runs in the same process avoid JSON decode churn.
+- Direct `.map` WAD texture extraction now uses a persistent cache manifest (`.wad_texture_cache_manifest.json`) in the texture cache directory:
+  - every resolved WAD is fingerprinted by SHA-256,
+  - cache is reused when WAD path + checksum set matches,
+  - cache is invalidated and rebuilt automatically when any checksum changes.
 - Existing tunables/knobs that affect load-vs-quality:
   - `--map-profile` (`dev-fast`/`prod-baked`) changes runtime-lighting and visibility defaults.
   - `--runtime-lighting` forces runtime path (skips baked-lightmap setup work).
