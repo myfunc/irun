@@ -116,6 +116,7 @@ def test_network_respawn_button_sends_server_request() -> None:
 
 def test_respawn_button_offline_uses_local_respawn() -> None:
     demo = RunnerDemo.__new__(RunnerDemo)
+    demo._feel_capture_open = False
     demo._net_connected = False
     demo._net_client = None
     demo.ui = _FakeUI()
@@ -130,6 +131,19 @@ def test_respawn_button_offline_uses_local_respawn() -> None:
 
     assert calls["count"] == 1
     assert calls["from_mode"] is False
+
+
+def test_respawn_button_ignored_while_feel_capture_open() -> None:
+    demo = RunnerDemo.__new__(RunnerDemo)
+    demo._feel_capture_open = True
+    demo.ui = _FakeUI()
+    calls = {"count": 0}
+    demo._do_respawn = lambda *, from_mode: calls.__setitem__("count", int(calls["count"]) + 1)
+
+    RunnerDemo._on_respawn_pressed(demo)
+
+    assert calls["count"] == 0
+    assert "Feel capture is open" in demo.ui.last_status
 
 
 def test_embedded_server_receives_host_tuning_snapshot(monkeypatch) -> None:

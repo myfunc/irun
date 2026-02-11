@@ -65,3 +65,66 @@ def test_suggest_adjustments_requires_feedback_intent() -> None:
         latest_summary=summary,
     )
     assert adjustments == []
+
+
+def test_suggest_adjustments_recognizes_curved_wallrun_and_false_ground_phrasing() -> None:
+    tuning = PhysicsTuning(
+        wallrun_sink_t90=0.22,
+        wallrun_min_entry_speed_mult=0.45,
+        wallrun_min_approach_dot=0.08,
+        wallrun_min_parallel_dot=0.30,
+        step_height=0.55,
+        ground_snap_dist=0.056,
+    )
+    text = "curved wallruns dont work and i can walk along bottom ledge where there is no ground"
+
+    adjustments = suggest_adjustments(
+        feedback_text=text,
+        tuning=tuning,
+        latest_summary=None,
+    )
+
+    by_field = {adj.field: adj for adj in adjustments}
+    assert by_field["wallrun_sink_t90"].after > by_field["wallrun_sink_t90"].before
+    assert by_field["wallrun_min_approach_dot"].after < by_field["wallrun_min_approach_dot"].before
+    assert by_field["wallrun_min_parallel_dot"].after < by_field["wallrun_min_parallel_dot"].before
+    assert by_field["ground_snap_dist"].after < by_field["ground_snap_dist"].before
+    assert by_field["step_height"].after < by_field["step_height"].before
+
+
+def test_suggest_adjustments_recognizes_wallrun_not_working_phrase() -> None:
+    tuning = PhysicsTuning(
+        wallrun_sink_t90=0.22,
+        wallrun_min_entry_speed_mult=0.45,
+        wallrun_min_approach_dot=0.08,
+        wallrun_min_parallel_dot=0.30,
+    )
+
+    adjustments = suggest_adjustments(
+        feedback_text="wallrun doesnt work really",
+        tuning=tuning,
+        latest_summary=None,
+    )
+
+    by_field = {adj.field: adj for adj in adjustments}
+    assert by_field["wallrun_sink_t90"].after > by_field["wallrun_sink_t90"].before
+    assert by_field["wallrun_min_entry_speed_mult"].after < by_field["wallrun_min_entry_speed_mult"].before
+
+
+def test_suggest_adjustments_recognizes_wallrun_not_engaging_phrase() -> None:
+    tuning = PhysicsTuning(
+        wallrun_sink_t90=0.22,
+        wallrun_min_entry_speed_mult=0.45,
+        wallrun_min_approach_dot=0.08,
+        wallrun_min_parallel_dot=0.30,
+    )
+
+    adjustments = suggest_adjustments(
+        feedback_text="wallrun is not engaging, i fall of the wall",
+        tuning=tuning,
+        latest_summary=None,
+    )
+
+    by_field = {adj.field: adj for adj in adjustments}
+    assert by_field["wallrun_sink_t90"].after > by_field["wallrun_sink_t90"].before
+    assert by_field["wallrun_min_entry_speed_mult"].after < by_field["wallrun_min_entry_speed_mult"].before

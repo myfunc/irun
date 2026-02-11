@@ -268,7 +268,7 @@ class PlayerController(
             self.grounded = False
             self._vault_exit_airborne_pending = False
 
-    def _has_wallrun_contact(self) -> bool:
+    def _has_wallrun_contact(self, *, wish_dir: LVector3f, was_wallrun: bool) -> bool:
         if not bool(self.tuning.wallrun_enabled):
             return False
         if self.grounded:
@@ -279,7 +279,63 @@ class PlayerController(
             return False
         if self._wall_contact_timer > 0.24:
             return False
-        return self._wall_normal.lengthSquared() > 0.01
+        wall_n = LVector3f(float(self._wall_normal.x), float(self._wall_normal.y), 0.0)
+        if wall_n.lengthSquared() <= 0.01:
+            return False
+        wall_n.normalize()
+
+        hvel = LVector3f(float(self.vel.x), float(self.vel.y), 0.0)
+        hspeed = float(hvel.length())
+        min_speed_mult = max(0.0, min(1.5, float(self.tuning.wallrun_min_entry_speed_mult)))
+        sustain_speed_mult = max(0.20, float(min_speed_mult) * 0.65)
+        # Keep gate meaningful across high-Vmax profiles: use Vmax-relative target, but cap
+        # absolute threshold so wallrun doesn't silently disappear after unrelated speed tuning.
+        raw_speed_req = float(self.tuning.max_ground_speed) * (sustain_speed_mult if bool(was_wallrun) else min_speed_mult)
+        speed_cap = 2.40 if bool(was_wallrun) else 3.50
+        min_entry_speed = max(0.5, min(float(speed_cap), float(raw_speed_req)))
+        if hspeed < min_entry_speed:
+            return False
+        hvel.normalize()
+
+        # Dot with wall normal classifies entry direction:
+        # - negative -> moving into wall
+        # - near 0   -> mostly parallel to wall
+        # - positive -> moving away from wall
+        vel_dot_wall = float(hvel.dot(wall_n))
+        into_wall = -vel_dot_wall
+        parallel = math.sqrt(max(0.0, 1.0 - min(1.0, abs(vel_dot_wall)) ** 2))
+        min_approach = max(0.0, min(0.8, float(self.tuning.wallrun_min_approach_dot)))
+        if bool(was_wallrun):
+            # Curved walls need softer sustain than initial acquire.
+            min_approach = max(-0.04, min_approach * 0.25 - 0.01)
+        # Approach requirement scales down as velocity becomes more parallel to the wall.
+        # This preserves anti-autowallrun behavior while allowing natural tangent carry.
+        approach_scale = max(0.15, 1.0 - parallel)
+        approach_req = float(min_approach) * float(approach_scale)
+        if into_wall < approach_req:
+            return False
+
+        min_parallel = max(0.0, min(1.0, float(self.tuning.wallrun_min_parallel_dot)))
+        if bool(was_wallrun):
+            min_parallel = max(0.10, min_parallel * 0.55)
+        else:
+            # Entry prefers input intent so incidental wall brushes don't auto-trigger.
+            wish_h = self._horizontal_unit(LVector3f(wish_dir))
+            if wish_h.lengthSquared() > 1e-12:
+                wish_dot = float(wish_h.dot(wall_n))
+                wish_into = -wish_dot
+                wish_parallel = math.sqrt(max(0.0, 1.0 - min(1.0, abs(wish_dot)) ** 2))
+                if wish_into < (min_approach * 0.5) and wish_parallel < max(0.18, min_parallel * 0.75):
+                    return False
+            else:
+                # If no input is held, demand a clearer diagonal trajectory before entry.
+                if into_wall < max(0.12, min_approach + 0.05):
+                    return False
+                if parallel < max(0.45, min_parallel + 0.12):
+                    return False
+        if parallel < min_parallel:
+            return False
+        return True
 
     def _can_coyote_jump(self) -> bool:
         if self.grounded:
@@ -301,6 +357,7 @@ class PlayerController(
         _ = crouching
         dt = float(dt)
         pre_step_vel = LVector3f(self.vel)
+        was_wallrun = bool(self._wallrun_active)
         self._motion_solver.sync_from_tuning(tuning=self.tuning)
         self._contact_count = 0
         self._wallrun_active = False
@@ -380,7 +437,7 @@ class PlayerController(
                 self._motion_solver.apply_ground_run(vel=self.vel, wish_dir=effective_wish, dt=dt, speed_scale=1.0)
         else:
             surf_active = self._has_recent_surf_contact_for_physics(dt)
-            wallrun_active = self._has_wallrun_contact()
+            wallrun_active = self._has_wallrun_contact(wish_dir=effective_wish, was_wallrun=was_wallrun)
             self._wallrun_active = bool(wallrun_active)
             air_wish = LVector3f(effective_wish)
             air_accel = float(self._motion_solver.air_accel())
