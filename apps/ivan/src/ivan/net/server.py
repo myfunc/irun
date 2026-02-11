@@ -17,7 +17,9 @@ from ivan.common.aabb import AABB
 from ivan.console.control_server import ConsoleControlServer
 from ivan.console.server_bindings import build_server_console
 from ivan.console.line_bus import ThreadSafeLineBus
+from ivan.games import RaceCourse, RaceEvent, RaceRuntime
 from ivan.maps.bundle_io import resolve_bundle_handle
+from ivan.maps.run_metadata import load_run_metadata
 from ivan.net.relevance import GoldSrcPvsRelevance, build_goldsrc_pvs_relevance_from_map
 from ivan.physics.collision_world import CollisionWorld
 from ivan.physics.motion.intent import MotionIntent
@@ -51,6 +53,8 @@ class _ClientState:
     respawn_seq: int
     last_input: InputCommand
     rewind_history: deque[tuple[int, LVector3f]]
+    last_interact_seq: int = 0
+    void_stuck_s: float = 0.0
 
 
 class MultiplayerServer:
@@ -64,6 +68,7 @@ class MultiplayerServer:
         initial_tuning: dict[str, float | bool] | None = None,
         initial_spawn: tuple[float, float, float] | None = None,
         initial_spawn_yaw: float | None = None,
+        initial_race_course: RaceCourse | None = None,
     ) -> None:
         self.host = str(host)
         self.tcp_port = int(tcp_port)
@@ -81,6 +86,10 @@ class MultiplayerServer:
 
         self.spawn_point = LVector3f(0, 35, 1.9)
         self.spawn_yaw = 0.0
+        self._host_spawn_override: LVector3f | None = None
+        self._host_spawn_yaw_override: float | None = None
+        self._world_bounds_min: LVector3f | None = None
+        self._world_bounds_max: LVector3f | None = None
         self.kill_z = -18.0
         self._relevance: GoldSrcPvsRelevance | None = None
 
@@ -89,15 +98,21 @@ class MultiplayerServer:
         self._load_map_bundle()
         if isinstance(initial_spawn, tuple) and len(initial_spawn) == 3:
             try:
-                self.spawn_point = LVector3f(
+                parsed_spawn = LVector3f(
                     float(initial_spawn[0]),
                     float(initial_spawn[1]),
                     float(initial_spawn[2]),
                 )
+                # Keep runtime spawn override host-only so late joiners always use authoritative map/default spawn.
+                self._host_spawn_override = LVector3f(parsed_spawn)
             except Exception:
                 pass
         if isinstance(initial_spawn_yaw, (int, float)):
-            self.spawn_yaw = float(initial_spawn_yaw)
+            parsed_yaw = float(initial_spawn_yaw)
+            if self._host_spawn_override is not None:
+                self._host_spawn_yaw_override = parsed_yaw
+            else:
+                self.spawn_yaw = parsed_yaw
 
         root_np = NodePath(PandaNode("server-root"))
         self.collision = CollisionWorld(
@@ -115,6 +130,20 @@ class MultiplayerServer:
         self._tick = 0
         self._config_owner_token: str | None = None
         self._tuning_version: int = 1
+        self._games_version: int = 0
+        self._race_runtime = RaceRuntime()
+        self._race_event_seq: int = 0
+        self._race_event_ring: deque[dict] = deque(maxlen=160)
+        if isinstance(initial_race_course, RaceCourse):
+            self._set_race_course(initial_race_course)
+        elif self.map_json:
+            try:
+                run_meta = load_run_metadata(bundle_ref=Path(str(self.map_json)))
+                games = run_meta.games if isinstance(run_meta.games, dict) else None
+                if isinstance(games, dict):
+                    self._set_race_games_payload(games=games)
+            except Exception:
+                pass
 
         self._tcp_listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._tcp_listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -217,6 +246,30 @@ class MultiplayerServer:
                 return st
         return None
 
+    def _set_race_course(self, course: RaceCourse | None) -> None:
+        self._race_runtime.set_course(course if isinstance(course, RaceCourse) else None)
+        self._games_version = int(self._games_version) + 1
+        self._race_event_seq = 0
+        self._race_event_ring.clear()
+
+    def _set_race_games_payload(self, *, games: dict | None) -> bool:
+        if not isinstance(games, dict):
+            self._set_race_course(None)
+            return True
+        if self._race_runtime.set_course_from_games_payload(games):
+            self._games_version = int(self._games_version) + 1
+            self._race_event_seq = 0
+            self._race_event_ring.clear()
+            return True
+        return False
+
+    def _append_race_events(self, events: list[RaceEvent]) -> None:
+        if not events:
+            return
+        for event in events:
+            self._race_event_seq = int(self._race_event_seq) + 1
+            self._race_event_ring.append(RaceRuntime.event_to_payload(event, seq=int(self._race_event_seq)))
+
     @staticmethod
     def _safe_close_socket(sock: socket.socket | None) -> None:
         if sock is None:
@@ -244,6 +297,8 @@ class MultiplayerServer:
 
     def _load_map_bundle(self) -> None:
         self._relevance = None
+        self._world_bounds_min = None
+        self._world_bounds_max = None
         if not self.map_json:
             return
         handle = resolve_bundle_handle(self.map_json)
@@ -278,11 +333,19 @@ class MultiplayerServer:
         bounds = payload.get("bounds")
         if isinstance(bounds, dict):
             bmin = bounds.get("min")
+            bmax = bounds.get("max")
             if isinstance(bmin, list) and len(bmin) == 3:
                 try:
                     self.kill_z = float(bmin[2]) - 5.0
                 except Exception:
                     pass
+            if isinstance(bmin, list) and len(bmin) == 3 and isinstance(bmax, list) and len(bmax) == 3:
+                try:
+                    self._world_bounds_min = LVector3f(float(bmin[0]), float(bmin[1]), float(bmin[2]))
+                    self._world_bounds_max = LVector3f(float(bmax[0]), float(bmax[1]), float(bmax[2]))
+                except Exception:
+                    self._world_bounds_min = None
+                    self._world_bounds_max = None
 
         tris = payload.get("triangles")
         if not isinstance(tris, list) or not tris:
@@ -372,6 +435,20 @@ class MultiplayerServer:
             self.kill_z = float(result.bounds_min[2]) - 5.0
         except Exception:
             pass
+        try:
+            self._world_bounds_min = LVector3f(
+                float(result.bounds_min[0]),
+                float(result.bounds_min[1]),
+                float(result.bounds_min[2]),
+            )
+            self._world_bounds_max = LVector3f(
+                float(result.bounds_max[0]),
+                float(result.bounds_max[1]),
+                float(result.bounds_max[2]),
+            )
+        except Exception:
+            self._world_bounds_min = None
+            self._world_bounds_max = None
 
         pos_tris: list[list[float]] = []
         for t in result.triangles:
@@ -399,21 +476,167 @@ class MultiplayerServer:
         if not self.collision_triangles:
             raise RuntimeError(f"Server map conversion produced no collision triangles: {map_file}")
 
+    @staticmethod
+    def _vec_is_finite(v: LVector3f) -> bool:
+        return math.isfinite(float(v.x)) and math.isfinite(float(v.y)) and math.isfinite(float(v.z))
+
+    def _in_world_bounds(self, *, pos: LVector3f, margin: float = 1.0) -> bool:
+        bmin = self._world_bounds_min
+        bmax = self._world_bounds_max
+        if bmin is None or bmax is None:
+            return True
+        m = max(0.0, float(margin))
+        return (
+            float(bmin.x) - m <= float(pos.x) <= float(bmax.x) + m
+            and float(bmin.y) - m <= float(pos.y) <= float(bmax.y) + m
+            and float(bmin.z) - m <= float(pos.z) <= float(bmax.z) + m
+        )
+
+    def _sanitize_spawn_point(self, *, candidate: LVector3f, fallback: LVector3f, reason: str) -> LVector3f:
+        if not self._vec_is_finite(candidate):
+            print(f"[ivan-server] Spawn fallback ({reason}): non-finite candidate")
+            return LVector3f(fallback)
+        if not self._in_world_bounds(pos=candidate, margin=1.0):
+            print(
+                "[ivan-server] Spawn fallback ("
+                f"{reason}): out-of-bounds candidate=({float(candidate.x):.3f}, {float(candidate.y):.3f}, {float(candidate.z):.3f})"
+            )
+            return LVector3f(fallback)
+        return LVector3f(candidate)
+
+    def _spawn_has_ground_support(self, *, pos: LVector3f) -> bool:
+        # If collision geometry is unavailable (debug/world-less scenarios), do not reject spawn candidates.
+        if self.collision is None or (not self.aabbs and not self.collision_triangles):
+            return True
+        half_h = max(0.20, float(self.tuning.player_half_height))
+        probe_down = max(6.0, half_h * 6.0)
+        origin = LVector3f(float(pos.x), float(pos.y), float(pos.z) + half_h * 0.30)
+        down = self.collision.ray_closest(origin, origin + LVector3f(0.0, 0.0, -probe_down))
+        if not down.hasHit():
+            return False
+        # Treat support as ground-like only when the hit looks like a floor and is reasonably near spawn height.
+        try:
+            n = down.getHitNormal()
+            if float(n.z) < 0.35:
+                return False
+        except Exception:
+            pass
+        try:
+            drop = max(0.0, min(1.0, float(down.getHitFraction()))) * probe_down
+            if drop > max(2.8, half_h * 2.8):
+                return False
+        except Exception:
+            pass
+        # Avoid spawn points inside sealed solids where both up and down rays hit almost immediately.
+        probe_up = max(2.0, half_h * 2.5)
+        up = self.collision.ray_closest(origin, origin + LVector3f(0.0, 0.0, probe_up))
+        if up.hasHit() and down.hasHit():
+            try:
+                up_frac = float(up.getHitFraction())
+                down_frac = float(down.getHitFraction())
+                if up_frac <= 0.02 and down_frac <= 0.02:
+                    return False
+            except Exception:
+                pass
+        return True
+
+    def _find_safe_spawn_near(self, *, candidate: LVector3f, fallback: LVector3f, reason: str) -> LVector3f:
+        base_candidate = self._sanitize_spawn_point(candidate=LVector3f(candidate), fallback=LVector3f(fallback), reason=reason)
+        if self._spawn_has_ground_support(pos=base_candidate):
+            return LVector3f(base_candidate)
+
+        # Try nearby offsets before giving up. This prevents late joiners from spawning inside void pockets
+        # when the base point is valid but one offset slot lands over missing collision.
+        search_centers = (LVector3f(base_candidate), LVector3f(fallback), LVector3f(self.spawn_point))
+        radii = (0.0, 0.8, 1.4, 2.1, 2.8)
+        for center in search_centers:
+            for radius in radii:
+                if radius <= 0.0:
+                    probe = self._sanitize_spawn_point(candidate=LVector3f(center), fallback=LVector3f(fallback), reason=reason)
+                    if self._spawn_has_ground_support(pos=probe):
+                        return probe
+                    continue
+                for slot in range(8):
+                    ang = math.tau * (float(slot) / 8.0)
+                    probe = self._sanitize_spawn_point(
+                        candidate=LVector3f(float(center.x) + math.cos(ang) * radius, float(center.y) + math.sin(ang) * radius, float(center.z)),
+                        fallback=LVector3f(fallback),
+                        reason=reason,
+                    )
+                    if self._spawn_has_ground_support(pos=probe):
+                        return probe
+
+        print(
+            "[ivan-server] Spawn fallback ("
+            f"{reason}): unsupported candidate=({float(base_candidate.x):.3f}, {float(base_candidate.y):.3f}, {float(base_candidate.z):.3f})"
+        )
+        return LVector3f(fallback)
+
     def _spawn_point_for_player(self, *, player_id: int) -> LVector3f:
         idx = max(0, int(player_id) - 1)
         if idx == 0:
-            return LVector3f(self.spawn_point)
+            if self._host_spawn_override is not None:
+                return self._find_safe_spawn_near(
+                    candidate=LVector3f(self._host_spawn_override),
+                    fallback=LVector3f(self.spawn_point),
+                    reason="host-override",
+                )
+            return self._find_safe_spawn_near(
+                candidate=LVector3f(self.spawn_point),
+                fallback=LVector3f(0.0, 35.0, 1.9),
+                reason="base-spawn",
+            )
         # Keep host at base spawn; spread other players in small rings to avoid overlap.
         ring = 1 + ((idx - 1) // 6)
         slot = (idx - 1) % 6
         angle = (math.tau * (float(slot) / 6.0)) + (float(ring) * 0.37)
         base_radius = max(float(self.tuning.player_radius) * 3.0, 0.9)
         r = base_radius * float(ring)
-        return LVector3f(
-            float(self.spawn_point.x) + math.cos(angle) * r,
-            float(self.spawn_point.y) + math.sin(angle) * r,
-            float(self.spawn_point.z),
+        return self._find_safe_spawn_near(
+            candidate=LVector3f(
+                float(self.spawn_point.x) + math.cos(angle) * r,
+                float(self.spawn_point.y) + math.sin(angle) * r,
+                float(self.spawn_point.z),
+            ),
+            fallback=LVector3f(self.spawn_point),
+            reason=f"ring-offset-p{int(player_id)}",
         )
+
+    def _spawn_yaw_for_player(self, *, player_id: int) -> float:
+        if int(player_id) == 1 and self._host_spawn_yaw_override is not None:
+            return float(self._host_spawn_yaw_override)
+        return float(self.spawn_yaw)
+
+    def _is_probably_void_stuck(self, st: _ClientState) -> bool:
+        # Only classify as "void stuck" when player is deep below typical play height and not in fast free-fall.
+        if bool(st.ctrl.grounded):
+            return False
+        pos = LVector3f(st.ctrl.pos)
+        vel = LVector3f(st.ctrl.vel)
+        if float(pos.z) >= float(self.spawn_point.z) - 18.0:
+            return False
+        if abs(float(vel.z)) > 4.0:
+            return False
+        probe = max(12.0, float(self.tuning.player_half_height) * 10.0)
+        origin = LVector3f(float(pos.x), float(pos.y), float(pos.z) + float(self.tuning.player_half_height) * 0.25)
+        down = self.collision.ray_closest(origin, origin + LVector3f(0.0, 0.0, -probe))
+        if down.hasHit():
+            return False
+        up = self.collision.ray_closest(origin, origin + LVector3f(0.0, 0.0, probe))
+        if up.hasHit():
+            return False
+        return True
+
+    def _respawn_player(self, *, st: _ClientState, reset_void_stuck: bool = True) -> None:
+        target_spawn = self._spawn_point_for_player(player_id=int(st.player_id))
+        st.ctrl.spawn_point = LVector3f(target_spawn)
+        st.ctrl.respawn()
+        st.yaw = float(self._spawn_yaw_for_player(player_id=int(st.player_id)))
+        st.pitch = 0.0
+        st.hp = 100
+        st.respawn_seq = int(st.respawn_seq) + 1
+        if reset_void_stuck:
+            st.void_stuck_s = 0.0
 
     def _make_controller(self, *, spawn_point: LVector3f | None = None) -> PlayerController:
         return PlayerController(
@@ -467,11 +690,28 @@ class MultiplayerServer:
                     st = self._client_state_by_tcp(cs)
                     if st is None:
                         continue
-                    st.ctrl.respawn()
-                    st.yaw = float(self.spawn_yaw)
-                    st.pitch = 0.0
-                    st.hp = 100
-                    st.respawn_seq = int(st.respawn_seq) + 1
+                    self._respawn_player(st=st)
+                    continue
+                if t == "interact":
+                    st = self._client_state_by_tcp(cs)
+                    if st is None:
+                        continue
+                    events = self._race_runtime.interact(
+                        player_id=int(st.player_id),
+                        pos=LVector3f(st.ctrl.pos),
+                        now=float(self._tick) * float(self.fixed_dt),
+                    )
+                    self._append_race_events(events)
+                    continue
+                if t == "games_set":
+                    st = self._client_state_by_tcp(cs)
+                    if st is None:
+                        continue
+                    if self._config_owner_token is None or st.token != self._config_owner_token:
+                        continue
+                    payload = obj.get("games")
+                    if isinstance(payload, dict):
+                        self._set_race_games_payload(games=payload)
                     continue
                 if t != "hello":
                     continue
@@ -488,7 +728,7 @@ class MultiplayerServer:
                     tcp_sock=cs,
                     udp_addr=None,
                     ctrl=ctrl,
-                    yaw=float(self.spawn_yaw),
+                    yaw=float(self._spawn_yaw_for_player(player_id=int(pid))),
                     pitch=0.0,
                     hp=100,
                     respawn_seq=0,
@@ -505,6 +745,7 @@ class MultiplayerServer:
                         slide_pressed=False,
                         grapple_pressed=False,
                     ),
+                    last_interact_seq=0,
                     rewind_history=deque(maxlen=240),
                 )
                 self._clients_by_token[token] = st
@@ -518,11 +759,13 @@ class MultiplayerServer:
                     "tick_rate": self.tick_rate_hz,
                     "udp_port": self.udp_port,
                     "spawn": [float(player_spawn.x), float(player_spawn.y), float(player_spawn.z)],
-                    "spawn_yaw": float(self.spawn_yaw),
+                    "spawn_yaw": float(self._spawn_yaw_for_player(player_id=int(pid))),
                     "map_json": self.map_json,
                     "can_configure": bool(token == self._config_owner_token),
                     "cfg_v": int(self._tuning_version),
                     "tuning": self._tuning_snapshot(),
+                    "games_v": int(self._games_version),
+                    "games": (self._race_runtime.games_payload() if self._race_runtime.has_course() else None),
                 }
                 try:
                     cs.sendall(encode_json(resp))
@@ -541,9 +784,11 @@ class MultiplayerServer:
                 token_to_drop = token
                 break
         if token_to_drop is not None:
-            self._clients_by_token.pop(token_to_drop, None)
+            st = self._clients_by_token.pop(token_to_drop, None)
             if token_to_drop == self._config_owner_token:
                 self._config_owner_token = None
+            if st is not None:
+                self._race_runtime.remove_player(player_id=int(st.player_id))
         try:
             cs.close()
         except Exception:
@@ -663,11 +908,7 @@ class MultiplayerServer:
         if nearest_player is not None and (world_t is None or float(nearest_player_t) <= float(world_t)):
             nearest_player.hp = max(0, int(nearest_player.hp) - 20)
             if nearest_player.hp <= 0:
-                nearest_player.ctrl.respawn()
-                nearest_player.yaw = float(self.spawn_yaw)
-                nearest_player.pitch = 0.0
-                nearest_player.hp = 100
-                nearest_player.respawn_seq = int(nearest_player.respawn_seq) + 1
+                self._respawn_player(st=nearest_player)
             return
 
         if st.ctrl.is_grapple_attached():
@@ -683,6 +924,33 @@ class MultiplayerServer:
 
     def _simulate_tick(self) -> None:
         self._tick += 1
+        now_s = float(self._tick) * float(self.fixed_dt)
+
+        for st in self._clients_by_token.values():
+            cmd = st.last_input
+            if bool(cmd.interact_pressed) and int(cmd.seq) > int(st.last_interact_seq):
+                st.last_interact_seq = int(cmd.seq)
+                events = self._race_runtime.interact(
+                    player_id=int(st.player_id),
+                    pos=LVector3f(st.ctrl.pos),
+                    now=float(now_s),
+                )
+                self._append_race_events(events)
+
+        for st in self._clients_by_token.values():
+            tp = self._race_runtime.consume_teleport_target(player_id=int(st.player_id))
+            if tp is None:
+                continue
+            safe_tp = self._find_safe_spawn_near(
+                candidate=LVector3f(tp),
+                fallback=self._spawn_point_for_player(player_id=int(st.player_id)),
+                reason=f"race-teleport-p{int(st.player_id)}",
+            )
+            st.ctrl.pos = LVector3f(safe_tp)
+            st.ctrl.spawn_point = LVector3f(safe_tp)
+            st.ctrl.vel = LVector3f(0.0, 0.0, 0.0)
+        race_active = self._race_runtime.status in {"lobby", "intro", "countdown", "running"}
+
         for st in self._clients_by_token.values():
             cmd = st.last_input
             st.yaw -= (float(cmd.look_dx) / float(max(1, int(cmd.look_scale)))) * float(self.tuning.mouse_sensitivity)
@@ -691,38 +959,53 @@ class MultiplayerServer:
                 -88.0,
                 88.0,
             )
+            frozen = bool(self._race_runtime.is_player_frozen(player_id=int(st.player_id)))
 
-            jump_requested = bool(cmd.jump_pressed)
-            if self.tuning.autojump_enabled and cmd.jump_held and st.ctrl.grounded:
+            jump_requested = bool(cmd.jump_pressed) and not frozen
+            if (not frozen) and self.tuning.autojump_enabled and cmd.jump_held and st.ctrl.grounded:
                 jump_requested = True
 
-            if cmd.grapple_pressed:
+            if (not frozen) and (not race_active) and cmd.grapple_pressed:
                 self._grapple_or_damage(st)
 
-            if not bool(self.tuning.grapple_enabled):
+            if (not bool(self.tuning.grapple_enabled)) or frozen:
                 st.ctrl.detach_grapple()
-            wish = self._wish_from_axes(
-                yaw_deg=st.yaw,
-                move_forward=int(cmd.move_forward),
-                move_right=int(cmd.move_right),
-            )
-            st.ctrl.step_with_intent(
-                dt=self.fixed_dt,
-                intent=MotionIntent(
-                    wish_dir=LVector3f(wish),
-                    jump_requested=bool(jump_requested),
-                    slide_requested=bool(cmd.slide_pressed),
-                ),
-                yaw_deg=st.yaw,
-                pitch_deg=st.pitch,
-            )
+            if frozen:
+                st.ctrl.vel = LVector3f(0.0, 0.0, 0.0)
+            else:
+                wish = self._wish_from_axes(
+                    yaw_deg=st.yaw,
+                    move_forward=int(cmd.move_forward),
+                    move_right=int(cmd.move_right),
+                )
+                st.ctrl.step_with_intent(
+                    dt=self.fixed_dt,
+                    intent=MotionIntent(
+                        wish_dir=LVector3f(wish),
+                        jump_requested=bool(jump_requested),
+                        slide_requested=bool(cmd.slide_pressed),
+                    ),
+                    yaw_deg=st.yaw,
+                    pitch_deg=st.pitch,
+                )
             if float(st.ctrl.pos.z) < float(self.kill_z):
-                st.ctrl.respawn()
-                st.yaw = float(self.spawn_yaw)
-                st.pitch = 0.0
-                st.hp = 100
-                st.respawn_seq = int(st.respawn_seq) + 1
+                self._respawn_player(st=st, reset_void_stuck=True)
+            elif self._is_probably_void_stuck(st):
+                st.void_stuck_s = float(st.void_stuck_s) + float(self.fixed_dt)
+                if float(st.void_stuck_s) >= 0.65:
+                    print(
+                        "[ivan-server] Respawn fallback (void-stuck): "
+                        f"pid={int(st.player_id)} pos=({float(st.ctrl.pos.x):.3f}, {float(st.ctrl.pos.y):.3f}, {float(st.ctrl.pos.z):.3f})"
+                    )
+                    self._respawn_player(st=st, reset_void_stuck=True)
+            else:
+                st.void_stuck_s = 0.0
             st.rewind_history.append((int(self._tick), LVector3f(st.ctrl.pos)))
+        events = self._race_runtime.tick(
+            now=float(now_s),
+            player_positions={int(st.player_id): LVector3f(st.ctrl.pos) for st in self._clients_by_token.values()},
+        )
+        self._append_race_events(events)
 
     def _snapshot_players(self) -> tuple[list[int], dict[int, dict], dict[int, LVector3f], dict[int, int | None]]:
         ordered_ids: list[int] = []
@@ -762,12 +1045,21 @@ class MultiplayerServer:
             return
 
         all_players = [rows_by_id[int(pid)] for pid in ordered_ids if int(pid) in rows_by_id]
+        games_payload = self._race_runtime.games_payload() if self._race_runtime.has_course() else None
+        game_state_payload: dict | None = None
+        if self._race_runtime.has_course():
+            game_state_payload = {"race": self._race_runtime.export_state_payload()}
+        game_events_payload = list(self._race_event_ring)[-48:] if self._race_event_ring else None
         packet_cache: dict[tuple[int, ...], bytes] = {
             tuple(int(pid) for pid in ordered_ids): encode_snapshot_packet(
                 tick=self._tick,
                 players=all_players,
                 cfg_v=int(self._tuning_version),
                 tuning=self._tuning_snapshot(),
+                games_v=int(self._games_version),
+                games=games_payload,
+                game_state=game_state_payload,
+                game_events=game_events_payload,
             )
         }
         for st in self._clients_by_token.values():
@@ -790,6 +1082,10 @@ class MultiplayerServer:
                     players=players,
                     cfg_v=int(self._tuning_version),
                     tuning=self._tuning_snapshot(),
+                    games_v=int(self._games_version),
+                    games=games_payload,
+                    game_state=game_state_payload,
+                    game_events=game_events_payload,
                 )
                 packet_cache[key_ids] = pkt
             try:
@@ -835,6 +1131,7 @@ class EmbeddedHostServer:
         initial_tuning: dict[str, float | bool] | None = None,
         initial_spawn: tuple[float, float, float] | None = None,
         initial_spawn_yaw: float | None = None,
+        initial_race_course: RaceCourse | None = None,
     ) -> None:
         self._srv = MultiplayerServer(
             host=host,
@@ -844,6 +1141,7 @@ class EmbeddedHostServer:
             initial_tuning=initial_tuning,
             initial_spawn=initial_spawn,
             initial_spawn_yaw=initial_spawn_yaw,
+            initial_race_course=initial_race_course,
         )
         self._stop = threading.Event()
         self._thread = threading.Thread(
@@ -871,6 +1169,7 @@ def run_server(
     initial_tuning: dict[str, float | bool] | None = None,
     initial_spawn: tuple[float, float, float] | None = None,
     initial_spawn_yaw: float | None = None,
+    initial_race_course: RaceCourse | None = None,
 ) -> None:
     srv = MultiplayerServer(
         host=host,
@@ -880,5 +1179,6 @@ def run_server(
         initial_tuning=initial_tuning,
         initial_spawn=initial_spawn,
         initial_spawn_yaw=initial_spawn_yaw,
+        initial_race_course=initial_race_course,
     )
     srv.run_forever()

@@ -109,6 +109,10 @@ def _ensure_assets() -> dict[str, Path]:
         "grapple_detach": root / "grapple_detach.wav",
         "step_walk": root / "step_walk.wav",
         "step_run": root / "step_run.wav",
+        "race_countdown": root / "race_countdown.wav",
+        "race_go": root / "race_go.wav",
+        "race_checkpoint": root / "race_checkpoint.wav",
+        "race_finish": root / "race_finish.wav",
     }
     if not paths["weapon_blink"].exists():
         _write_wav(paths["weapon_blink"], samples=_tone_sweep(f0=700.0, f1=310.0, duration_s=0.16, amp=0.54, noise_mix=0.10))
@@ -146,6 +150,14 @@ def _ensure_assets() -> dict[str, Path]:
         _write_wav(paths["step_walk"], samples=_clicky_step(duration_s=0.11, amp=0.45))
     if not paths["step_run"].exists():
         _write_wav(paths["step_run"], samples=_clicky_step(duration_s=0.09, amp=0.56, seed=13))
+    if not paths["race_countdown"].exists():
+        _write_wav(paths["race_countdown"], samples=_tone_sweep(f0=720.0, f1=650.0, duration_s=0.16, amp=0.54, noise_mix=0.06))
+    if not paths["race_go"].exists():
+        _write_wav(paths["race_go"], samples=_tone_sweep(f0=420.0, f1=940.0, duration_s=0.25, amp=0.62, noise_mix=0.06))
+    if not paths["race_checkpoint"].exists():
+        _write_wav(paths["race_checkpoint"], samples=_tone_sweep(f0=840.0, f1=1120.0, duration_s=0.16, amp=0.50, noise_mix=0.08))
+    if not paths["race_finish"].exists():
+        _write_wav(paths["race_finish"], samples=_tone_sweep(f0=560.0, f1=1320.0, duration_s=0.28, amp=0.64, noise_mix=0.08))
     return paths
 
 
@@ -195,6 +207,10 @@ def init_runtime(host, *, master_volume: float, sfx_volume: float) -> None:
         "grapple_detach": 2,
         "step_walk": 3,
         "step_run": 3,
+        "race_countdown": 2,
+        "race_go": 2,
+        "race_checkpoint": 2,
+        "race_finish": 2,
     }
     any_loaded = False
     for key, path in paths.items():
@@ -276,6 +292,23 @@ def on_grapple_toggle(host, *, attached: bool) -> None:
     _play(host, key=("grapple_attach" if bool(attached) else "grapple_detach"), gain=0.74)
 
 
+def on_race_countdown(host, *, value: int) -> None:
+    _ = int(value)
+    _play(host, key="race_countdown", gain=0.72)
+
+
+def on_race_go(host) -> None:
+    _play(host, key="race_go", gain=0.84)
+
+
+def on_race_checkpoint(host) -> None:
+    _play(host, key="race_checkpoint", gain=0.80)
+
+
+def on_race_finish(host) -> None:
+    _play(host, key="race_finish", gain=0.86)
+
+
 def update_footsteps(host, *, dt: float) -> None:
     st = _runtime(host)
     if not st.enabled:
@@ -316,6 +349,10 @@ def update_footsteps(host, *, dt: float) -> None:
 __all__ = [
     "init_runtime",
     "on_grapple_toggle",
+    "on_race_checkpoint",
+    "on_race_countdown",
+    "on_race_finish",
+    "on_race_go",
     "on_weapon_fire",
     "on_weapon_impact",
     "set_master_volume",

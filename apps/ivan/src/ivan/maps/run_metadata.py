@@ -21,6 +21,7 @@ class RunMetadata:
     lighting: dict | None = None  # {"preset": str, "overrides": {style(str): pattern(str)}}
     visibility: dict | None = None  # {"enabled": bool, "mode": "auto"|"goldsrc_pvs", "build_cache": bool}
     fog: dict | None = None  # {"enabled": bool, "start": float, "end": float, "color": [r,g,b]}
+    games: dict | None = None  # {"definitions":[...]}
 
 
 def load_run_metadata(*, bundle_ref: Path | None) -> RunMetadata:
@@ -69,6 +70,9 @@ def load_run_metadata(*, bundle_ref: Path | None) -> RunMetadata:
     fog = payload.get("fog")
     if not isinstance(fog, dict):
         fog = None
+    games = payload.get("games")
+    if not isinstance(games, dict):
+        games = None
 
     return RunMetadata(
         mode=mode,
@@ -77,6 +81,7 @@ def load_run_metadata(*, bundle_ref: Path | None) -> RunMetadata:
         lighting=lighting,
         visibility=visibility,
         fog=fog,
+        games=games,
     )
 
 
@@ -124,5 +129,28 @@ def set_run_metadata_visibility(*, bundle_ref: Path, visibility: dict | None) ->
         payload.pop("visibility", None)
     else:
         payload["visibility"] = dict(visibility)
+
+    p.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def set_run_metadata_games(*, bundle_ref: Path, games: dict | None) -> None:
+    """
+    Persist games definitions config for this bundle in <bundle>/run.json.
+    """
+
+    p = run_json_path_for_bundle_ref(bundle_ref)
+    payload: dict = {}
+    if p.exists():
+        try:
+            old = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(old, dict):
+                payload = dict(old)
+        except Exception:
+            payload = {}
+
+    if games is None:
+        payload.pop("games", None)
+    else:
+        payload["games"] = dict(games)
 
     p.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

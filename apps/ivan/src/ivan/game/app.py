@@ -35,7 +35,7 @@ from ivan.console.core import CommandContext
 from ivan.console.ivan_bindings import build_client_console
 from ivan.console.line_bus import ThreadSafeLineBus
 from ivan.maps.bundle_io import infer_map_profile_from_path, resolve_bundle_handle
-from ivan.maps.run_metadata import RunMetadata, load_run_metadata
+from ivan.maps.run_metadata import RunMetadata, load_run_metadata, set_run_metadata_games
 from ivan.modes.base import ModeContext
 from ivan.modes.loader import load_mode
 from ivan.net import EmbeddedHostServer, MultiplayerClient
@@ -43,6 +43,17 @@ from ivan.physics.collision_world import CollisionWorld
 from ivan.physics.motion.intent import MotionIntent
 from ivan.physics.player_controller import PlayerController
 from ivan.physics.tuning import PhysicsTuning
+from ivan.paths import app_root as ivan_app_root
+from ivan.games import (
+    GameModePickerUI,
+    ModeItem,
+    RaceCourse,
+    RaceEvent,
+    RaceMarkerRenderer,
+    RaceRuntime,
+    RaceUiFeedback,
+)
+from ivan.course.time_trial import make_marker_cylinder
 from ivan.replays import (
     DemoFrame,
     DemoRecording,
@@ -58,6 +69,7 @@ from ivan.state import (
     DEFAULT_WINDOW_WIDTH,
     IvanState,
     load_state,
+    state_dir,
     update_state,
 )
 from ivan.ui.debug_ui import DebugUI
@@ -79,11 +91,11 @@ from . import feel_capture_flow as _feel_capture
 from . import combat_system as _combat
 from . import combat_fx as _combat_fx
 from . import audio_system as _audio
-from . import transport_system as _transport
 from . import grapple_rope as _grapple_rope
 from . import input_system as _input
 from . import menu_flow as _menu
 from . import netcode as _net
+from . import time_trial_markers as _tt_markers
 from . import tuning_profiles as _profiles
 from .animation_observer import AnimationObserver
 from .camera_feedback_observer import CameraFeedbackObserver
@@ -153,6 +165,7 @@ class RunnerDemo(ShowBase):
         self._yaw = 0.0
         self._pitch = 0.0
         self._pointer_locked = True
+        self._race_leaderboard_held = False
         self._pause_menu_open = False
         self._debug_menu_open = False
         self._replay_browser_open = False
@@ -162,9 +175,11 @@ class RunnerDemo(ShowBase):
         self._mode: str = "boot"  # boot | menu | game
         self._last_mouse: tuple[float, float] | None = None
         self._input_debug_until: float = 0.0
-        self._noclip_toggle_key: str = "v"
+        self._editor_toggle_key: str = "v"
+        self._interact_key: str = "f"
+        self._noclip_toggle_key: str = "n"
         self._awaiting_noclip_rebind: bool = False
-        self._demo_save_key: str = "f"
+        self._demo_save_key: str = "k"
         self._sim_tick_rate_hz: int = 60
         self._sim_fixed_dt: float = 1.0 / float(self._sim_tick_rate_hz)
         self._look_input_scale: int = 256
@@ -187,12 +202,14 @@ class RunnerDemo(ShowBase):
         self._net_connected: bool = False
         self._net_player_id: int = 0
         self._remote_players: dict[int, _RemotePlayerVisual] = {}
+        self._net_seen_remote_players: set[int] = set()
         self._net_seq_counter: int = 0
         self._net_pending_inputs: list[_PredictedInput] = []
         self._net_predicted_states: list[_PredictedState] = []
         self._net_last_server_tick: int = 0
         self._net_last_acked_seq: int = 0
         self._net_local_respawn_seq: int = 0
+        self._net_interact_pending: bool = False
         self._net_last_snapshot_local_time: float = 0.0
         self._net_interp_delay_ticks: float = 6.0
         # GoldSrc/Source-style dead reckoning when snapshots stall (short clamp to avoid runaway).
@@ -212,6 +229,8 @@ class RunnerDemo(ShowBase):
         self._net_local_cam_smooth_hz: float = 28.0
         self._net_cfg_apply_pending_version: int = 0
         self._net_cfg_apply_sent_at: float = 0.0
+        self._net_games_version: int = 0
+        self._net_race_last_event_seq: int = 0
         self._net_perf = _NetPerfStats()
         self._net_perf_last_publish: float = 0.0
         self._net_perf_text: str = ""
@@ -269,13 +288,22 @@ class RunnerDemo(ShowBase):
         self._grapple_rope_np.hide()
         _combat.init_runtime(self)
         _combat_fx.init_runtime(self)
-        _transport.init_runtime(self)
+        self._race_runtime = RaceRuntime()
+        self._race_markers = RaceMarkerRenderer()
+        self._race_editor_enabled: bool = False
+        self._race_editor_mode_id: str | None = None
+        self._race_editor_selection_pos: LVector3f | None = None
+        self._race_draft_start = None
+        self._race_draft_checkpoints: list = []
+        self._race_draft_finish = None
+        self._race_bundle_ref: Path | None = None
 
         self.scene: WorldScene | None = None
         self.collision: CollisionWorld | None = None
         self.player: PlayerController | None = None
         self.player_node = self.render.attachNewNode("player-node")
         self.world_root = self.render.attachNewNode("world-root")
+        _tt_markers.init_runtime(self)
         self._game_mode: Any | None = None
         self._game_mode_ctx: ModeContext | None = None
         self._game_mode_events: list[str] = []
@@ -291,7 +319,7 @@ class RunnerDemo(ShowBase):
         self._menu_hold_since: float = 0.0
         self._menu_hold_next: float = 0.0
 
-        self.error_log = ErrorLog(max_items=30)
+        self.error_log = ErrorLog(max_items=30, persist_path=(state_dir() / "logs" / "critical.log"))
 
         self._setup_window()
         self.ui = DebugUI(
@@ -364,6 +392,13 @@ class RunnerDemo(ShowBase):
         )
         self.replay_input_ui = ReplayInputUI(aspect2d=self.aspect2d, theme=self.ui_theme)
         self.replay_input_ui.hide()
+        self.game_mode_picker_ui = GameModePickerUI(
+            aspect2d=self.aspect2d,
+            theme=self.ui_theme,
+            on_select=self._on_game_mode_selected,
+            on_close=self._close_game_mode_picker,
+        )
+        self.race_ui_feedback = RaceUiFeedback(aspect2d=self.aspect2d)
         self.console_ui = ConsoleUI(aspect2d=self.aspect2d, theme=self.ui_theme, on_submit=self._console_submit_line)
         self.input_debug = InputDebugUI(aspect2d=self.aspect2d, theme=self.ui_theme)
         self.debug_hud = DebugHudOverlay(aspect2d=self.aspect2d, theme=self.ui_theme)
@@ -573,11 +608,19 @@ class RunnerDemo(ShowBase):
         if self._mode == "menu" and self._menu is not None and not self._importing:
             self._safe_call("menu.wheel", lambda: self._menu.move(-direction))
             return
+        if self._mode == "game" and self.game_mode_picker_ui.is_visible():
+            self.game_mode_picker_ui.move(-int(direction))
+            return
         if self._mode == "game" and self._debug_menu_open:
             self.ui.scroll_wheel(direction)
 
     def _setup_input(self) -> None:
         self.accept("escape", lambda: self._safe_call("input.escape", self._on_escape))
+        self.accept(self._editor_toggle_key, lambda: self._safe_call("input.editor_toggle", self._on_editor_toggle_pressed))
+        self.accept(self._interact_key, lambda: self._safe_call("input.interact", self._on_interact_pressed))
+        self.accept("1", lambda: self._safe_call("input.editor_place_start", lambda: self._on_editor_place_pressed(1)))
+        self.accept("2", lambda: self._safe_call("input.editor_place_checkpoint", lambda: self._on_editor_place_pressed(2)))
+        self.accept("3", lambda: self._safe_call("input.editor_place_finish", lambda: self._on_editor_place_pressed(3)))
         self.accept("`", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
         self.accept("ascii`", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
         self.accept("grave", lambda: self._safe_call("input.debug_menu", self._toggle_debug_menu))
@@ -597,7 +640,8 @@ class RunnerDemo(ShowBase):
         self.accept("arrow_left", lambda: self._menu_page(-1))
         self.accept("arrow_right", lambda: self._menu_page(1))
         self.accept("enter", self._menu_select)
-        self.accept("tab", lambda: self._safe_call("input.tab", self._on_console_autocomplete))
+        self.accept("tab", lambda: self._safe_call("input.tab_down", self._on_tab_down))
+        self.accept("tab-up", lambda: self._safe_call("input.tab_up", self._on_tab_up))
         self.accept("delete", self._menu_delete)
         self.accept("backspace", self._menu_delete)
         self.accept("w", lambda: self._menu_nav_press(-1))
@@ -673,12 +717,18 @@ class RunnerDemo(ShowBase):
             return payload
 
     def _on_arrow_up(self) -> None:
+        if self._mode == "game" and self.game_mode_picker_ui.is_visible():
+            self.game_mode_picker_ui.move(-1)
+            return
         if self._console_open:
             self.console_ui.history_prev()
             return
         self._menu_nav_press(-1)
 
     def _on_arrow_down(self) -> None:
+        if self._mode == "game" and self.game_mode_picker_ui.is_visible():
+            self.game_mode_picker_ui.move(1)
+            return
         if self._console_open:
             self.console_ui.history_next()
             return
@@ -697,6 +747,332 @@ class RunnerDemo(ShowBase):
         cmd = str(rows[0][0])
         tail = text[len(head) :]
         self.console_ui.set_input_text(cmd + tail)
+
+    def _on_tab_down(self) -> None:
+        if self._console_open:
+            self._on_console_autocomplete()
+            return
+        self._race_leaderboard_held = True
+
+    def _on_tab_up(self) -> None:
+        self._race_leaderboard_held = False
+
+    def _local_player_id(self) -> int:
+        if self._net_connected and int(self._net_player_id) > 0:
+            return int(self._net_player_id)
+        return 1
+
+    def _marker_radius_half_z(self) -> tuple[float, float]:
+        radius = max(0.20, float(self.tuning.course_marker_half_extent_xy))
+        half_z = max(0.20, float(self.tuning.course_marker_half_extent_z))
+        return (radius, half_z)
+
+    def _on_editor_toggle_pressed(self) -> None:
+        if self._mode != "game" or self.player is None:
+            return
+        if self._net_connected and not self._net_can_configure:
+            self.ui.set_status("Game editor is host-only in multiplayer.")
+            return
+        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open or self._feel_capture_open:
+            return
+        if self._playback_active:
+            self.ui.set_status("Replay lock: press R to exit replay.")
+            return
+        if self._race_editor_enabled:
+            self._publish_race_from_editor()
+            self._race_editor_enabled = False
+            self._race_editor_mode_id = None
+            self._close_game_mode_picker()
+            self.tuning.noclip_enabled = False
+            self.ui.set_status("Game editor disabled.")
+            return
+        self._race_editor_enabled = True
+        self._race_editor_mode_id = None
+        self._race_editor_selection_pos = None
+        self._race_draft_start = None
+        self._race_draft_checkpoints = []
+        self._race_draft_finish = None
+        self._close_game_mode_picker()
+        self.tuning.noclip_enabled = True
+        self.ui.set_status("Game editor enabled (noclip). Press F to select game mode.")
+        self._sync_race_markers()
+
+    def _on_interact_pressed(self) -> None:
+        if self._mode != "game" or self.player is None:
+            return
+        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open or self._feel_capture_open:
+            return
+        if self._race_editor_enabled:
+            if self.game_mode_picker_ui.is_visible():
+                self.game_mode_picker_ui.on_enter()
+            else:
+                self._open_game_mode_picker()
+            return
+        if self._net_connected:
+            self._net_interact_pending = False
+            if self._net_client is not None:
+                self._net_client.send_interact()
+            return
+        events = self._race_runtime.interact(
+            player_id=self._local_player_id(),
+            pos=LVector3f(self.player.pos),
+            now=float(globalClock.getFrameTime()),
+        )
+        if not events:
+            return
+        self._apply_race_events(events, now=float(globalClock.getFrameTime()))
+        self._sync_race_markers()
+
+    def _open_game_mode_picker(self) -> None:
+        if self._mode != "game":
+            return
+        rows = [ModeItem(id="race", label="Race")]
+        self.game_mode_picker_ui.show(items=rows, status="Select mode to author.")
+        self._set_pointer_lock(False)
+
+    def _close_game_mode_picker(self) -> None:
+        self.game_mode_picker_ui.hide()
+        if self._mode == "game" and not (
+            self._pause_menu_open
+            or self._debug_menu_open
+            or self._replay_browser_open
+            or self._console_open
+            or self._feel_capture_open
+        ):
+            self._set_pointer_lock(True)
+
+    def _on_game_mode_selected(self, mode_id: str) -> None:
+        if self._mode != "game" or self.player is None:
+            return
+        self._race_editor_mode_id = str(mode_id)
+        self._race_editor_selection_pos = LVector3f(self.player.pos)
+        self._race_draft_start = None
+        self._race_draft_checkpoints = []
+        self._race_draft_finish = None
+        self._close_game_mode_picker()
+        self.ui.set_status("Race editor: 1 start | 2 checkpoint | 3 finish | V publish")
+        self._sync_race_markers()
+
+    def _on_editor_place_pressed(self, slot: int) -> None:
+        if not self._race_editor_enabled or self._race_editor_mode_id != "race":
+            return
+        if self.player is None:
+            return
+        radius, half_z = self._marker_radius_half_z()
+        marker = make_marker_cylinder(pos=LVector3f(self.player.pos), radius=radius, half_z=half_z)
+        s = int(slot)
+        if s == 1:
+            self._race_draft_start = marker
+            self.ui.set_status("Race editor: start marker placed.")
+        elif s == 2:
+            self._race_draft_checkpoints.append(marker)
+            self.ui.set_status(f"Race editor: checkpoint {len(self._race_draft_checkpoints)} placed.")
+        elif s == 3:
+            self._race_draft_finish = marker
+            self.ui.set_status("Race editor: finish marker placed.")
+        self._sync_race_markers()
+
+    def _publish_race_from_editor(self) -> None:
+        if self._race_editor_mode_id != "race":
+            return
+        if self._race_editor_selection_pos is None:
+            self.ui.set_status("Race editor: no mode selected; nothing published.")
+            return
+        if self._race_draft_start is None or self._race_draft_finish is None:
+            self.ui.set_status("Race editor: place start and finish before publishing.")
+            return
+        radius, half_z = self._marker_radius_half_z()
+        mission = make_marker_cylinder(pos=LVector3f(self._race_editor_selection_pos), radius=radius * 1.18, half_z=half_z)
+        course = RaceCourse(
+            mission_marker=mission,
+            start=self._race_draft_start,
+            checkpoints=tuple(self._race_draft_checkpoints),
+            finish=self._race_draft_finish,
+        )
+        self._race_runtime.set_course(course)
+        self._persist_published_race(course=course)
+        self.ui.set_status(
+            f"Race published. Mission marker set ({1 + len(self._race_draft_checkpoints)} checkpoints before finish)."
+        )
+        self._sync_race_markers()
+
+    def _persist_published_race(self, *, course: RaceCourse) -> None:
+        ref = self._race_bundle_ref
+        payload = {
+            "definitions": [course.to_definition_payload(definition_id="race_001")]
+        }
+        if self._net_connected and self._net_client is not None and self._net_can_configure:
+            self._net_client.send_games_definitions(games=payload)
+            self._net_games_version = 0
+            self._net_race_last_event_seq = 0
+        if ref is None:
+            return
+        try:
+            set_run_metadata_games(bundle_ref=ref, games=payload)
+        except Exception:
+            pass
+
+    def _set_race_from_run_metadata(self, *, run_meta: RunMetadata) -> None:
+        self._race_runtime.set_course(None)
+        games = run_meta.games if isinstance(run_meta.games, dict) else None
+        if isinstance(games, dict):
+            if self._race_runtime.set_course_from_games_payload(games):
+                self._sync_race_markers()
+                return
+
+    def _apply_network_games_payload(self, *, games_v: int, games: dict | None) -> None:
+        v = max(0, int(games_v))
+        if v <= int(self._net_games_version):
+            return
+        self._net_games_version = int(v)
+        self._net_race_last_event_seq = 0
+        if isinstance(games, dict):
+            self._race_runtime.set_course_from_games_payload(games)
+        else:
+            self._race_runtime.set_course(None)
+        self._sync_race_markers()
+
+    def _apply_network_game_state(self, *, game_state: dict | None) -> None:
+        if not isinstance(game_state, dict):
+            return
+        race = game_state.get("race")
+        if not isinstance(race, dict):
+            return
+        self._race_runtime.apply_authoritative_state_payload(race)
+        self._sync_race_markers()
+
+    def _apply_network_game_events(self, *, events: list[dict], now: float) -> None:
+        now_ui = float(globalClock.getFrameTime())
+        out: list[RaceEvent] = []
+        for row in events:
+            parsed = RaceRuntime.event_from_payload(row if isinstance(row, dict) else None)
+            if parsed is None:
+                continue
+            seq, event = parsed
+            if int(seq) <= int(self._net_race_last_event_seq):
+                continue
+            self._net_race_last_event_seq = int(seq)
+            out.append(event)
+        if not out:
+            return
+        self._apply_race_events(out, now=float(now_ui))
+        self._sync_race_markers()
+
+    def _sync_race_markers(self) -> None:
+        if self.world_root is None:
+            return
+        self._race_markers.attach(world_root=self.world_root)
+        if self._race_editor_enabled and self._race_editor_mode_id == "race":
+            mission = None
+            if self._race_editor_selection_pos is not None:
+                radius, half_z = self._marker_radius_half_z()
+                mission = make_marker_cylinder(
+                    pos=LVector3f(self._race_editor_selection_pos),
+                    radius=radius * 1.18,
+                    half_z=half_z,
+                )
+            self._race_markers.render(
+                mission=mission,
+                start=self._race_draft_start,
+                checkpoints=tuple(self._race_draft_checkpoints),
+                finish=self._race_draft_finish,
+                show_mission=True,
+                show_course=True,
+            )
+            return
+        self._race_markers.render(
+            mission=self._race_runtime.mission_marker(),
+            start=self._race_runtime.start_marker(),
+            checkpoints=self._race_runtime.checkpoint_markers(),
+            finish=self._race_runtime.finish_marker(),
+            show_mission=self._race_runtime.mission_visible(),
+            show_course=self._race_runtime.checkpoints_visible(),
+        )
+
+    def _apply_race_events(self, events: list[RaceEvent], *, now: float) -> None:
+        if not events:
+            return
+        local_id = self._local_player_id()
+        for ev in events:
+            kind = str(ev.kind)
+            if kind == "race_lobby_join":
+                if int(ev.player_id) == int(local_id):
+                    self.race_ui_feedback.notice(
+                        text="Race lobby: press F again to start.",
+                        color=(0.84, 0.92, 1.00, 0.96),
+                        now=float(now),
+                    )
+            elif kind == "race_intro":
+                self.race_ui_feedback.notice(
+                    text="Race intro",
+                    color=(0.90, 0.95, 1.00, 0.96),
+                    now=float(now),
+                    duration=1.0,
+                )
+            elif kind == "race_countdown_tick":
+                self.race_ui_feedback.notice(
+                    text=str(int(ev.countdown_value)),
+                    color=(1.00, 0.96, 0.76, 0.98),
+                    now=float(now),
+                    duration=0.78,
+                )
+                _audio.on_race_countdown(self, value=int(ev.countdown_value))
+            elif kind == "race_go":
+                self.race_ui_feedback.notice(
+                    text="GO!",
+                    color=(0.45, 1.00, 0.45, 0.98),
+                    now=float(now),
+                    duration=1.0,
+                )
+                _audio.on_race_go(self)
+            elif kind == "race_checkpoint_collected":
+                if int(ev.player_id) == int(local_id):
+                    self.race_ui_feedback.flash(color=(1.00, 0.88, 0.18, 0.34), now=float(now), duration=0.16)
+                    self.race_ui_feedback.notice(
+                        text=f"Checkpoint {int(ev.checkpoint_index) + 1}",
+                        color=(1.00, 0.92, 0.20, 0.96),
+                        now=float(now),
+                        duration=0.7,
+                    )
+                    _audio.on_race_checkpoint(self)
+            elif kind == "race_finished":
+                if int(ev.player_id) == int(local_id):
+                    self.race_ui_feedback.flash(color=(0.22, 1.00, 0.30, 0.40), now=float(now), duration=0.24)
+                    t = float(ev.elapsed_seconds) if ev.elapsed_seconds is not None else 0.0
+                    self.race_ui_feedback.notice(
+                        text=f"Finish {t:0.3f}s",
+                        color=(0.30, 1.00, 0.36, 0.98),
+                        now=float(now),
+                        duration=1.2,
+                    )
+                    _audio.on_race_finish(self)
+            elif kind == "race_all_finished":
+                self.ui.set_status("Race finished. Enter mission marker and press F to race again.")
+
+    def _tick_race_runtime(self, *, now: float) -> None:
+        if self.player is None:
+            return
+        if self._net_connected:
+            return
+        tp = self._race_runtime.consume_teleport_target(player_id=self._local_player_id())
+        if tp is not None:
+            self.player.pos = LVector3f(tp)
+            self.player.vel = LVector3f(0.0, 0.0, 0.0)
+            self._push_sim_snapshot()
+        events = self._race_runtime.tick(
+            now=float(now),
+            player_positions={int(self._local_player_id()): LVector3f(self.player.pos)},
+        )
+        if events:
+            self._apply_race_events(events, now=float(now))
+            self._sync_race_markers()
+
+    def are_weapons_enabled(self) -> bool:
+        if self._race_editor_enabled and self._race_editor_mode_id == "race":
+            return False
+        if self._race_runtime.status in {"lobby", "intro", "countdown", "running"}:
+            return False
+        return True
 
     def _refresh_console_hint(self) -> None:
         if not self._console_open:
@@ -813,6 +1189,7 @@ class RunnerDemo(ShowBase):
         self._feel_capture_open = False
         self._feel_capture_staged_demo_path = None
         self._awaiting_noclip_rebind = False
+        self._close_game_mode_picker()
         self.pause_ui.hide()
         try:
             self.feel_capture_ui.hide()
@@ -893,6 +1270,9 @@ class RunnerDemo(ShowBase):
             return
         if self._playback_active:
             self.ui.set_status("Replay lock: press R to exit replay.")
+            return
+        if self.game_mode_picker_ui.is_visible():
+            self._close_game_mode_picker()
             return
         if self._replay_browser_open:
             self._close_replay_browser()
@@ -1312,6 +1692,9 @@ class RunnerDemo(ShowBase):
         _menu.menu_page(self, dir01)
 
     def _menu_select(self) -> None:
+        if self._mode == "game" and self.game_mode_picker_ui.is_visible():
+            self.game_mode_picker_ui.on_enter()
+            return
         _menu.menu_select(self)
 
     def _menu_delete(self) -> None:
@@ -1353,9 +1736,17 @@ class RunnerDemo(ShowBase):
             self._debug_menu_open = False
             self._replay_browser_open = False
             self._console_open = False
+            self._race_leaderboard_held = False
             self._feel_capture_open = False
             self._feel_capture_staged_demo_path = None
             self._awaiting_noclip_rebind = False
+            self._race_editor_enabled = False
+            self._race_editor_mode_id = None
+            self._race_editor_selection_pos = None
+            self._race_draft_start = None
+            self._race_draft_checkpoints = []
+            self._race_draft_finish = None
+            self._close_game_mode_picker()
             self._pointer_locked = True
             self._last_mouse = None
             if not self.cfg.smoke:
@@ -1378,10 +1769,14 @@ class RunnerDemo(ShowBase):
             self.world_root.removeNode()
             self.world_root = self.render.attachNewNode("world-root")
             _mark_stage("pre_scene_reset")
+            _tt_markers.init_runtime(self)
+            self._race_markers.attach(world_root=self.world_root)
+            self._race_runtime.clear()
 
             handle = resolve_bundle_handle(map_json) if map_json else None
             # Use bundle_ref for run.json; for .map files handle is None, use the map path.
             bundle_ref = handle.bundle_ref if handle is not None else (Path(map_json) if map_json else None)
+            self._race_bundle_ref = bundle_ref if isinstance(bundle_ref, Path) else None
             run_meta: RunMetadata = load_run_metadata(bundle_ref=bundle_ref)
 
             cfg_map_json = str(handle.map_json) if handle is not None else map_json
@@ -1468,7 +1863,6 @@ class RunnerDemo(ShowBase):
             self._prev_weapon_slot_down = [False, False, False, False, False, False]
             _combat.reset_runtime(self, keep_active_slot=True)
             _combat_fx.reset_runtime(self, keep_weapon_slot=True)
-            _transport.reset_runtime(self)
             if not self._playback_active:
                 self._start_new_demo_recording()
             if self._runtime_connect_host or self._open_to_network:
@@ -1484,6 +1878,8 @@ class RunnerDemo(ShowBase):
             # Install game mode after the world/player exist.
             mode = load_mode(mode=run_meta.mode, config=run_meta.mode_config)
             self._setup_game_mode(mode=mode, bundle_root=bundle_ref)
+            self._set_race_from_run_metadata(run_meta=run_meta)
+            self._sync_race_markers()
             _mark_stage("mode_setup")
             self._start_game_stage_ms = dict(startup_stage_ms)
             self._start_game_total_ms = max(0.0, (time.perf_counter() - float(startup_t0)) * 1000.0)
@@ -1504,6 +1900,102 @@ class RunnerDemo(ShowBase):
                 pass
         if isinstance(yaw, (int, float)):
             self.scene.spawn_yaw = float(yaw)
+
+    def _sanitize_network_spawn(self, *, pos: LVector3f) -> LVector3f:
+        scene = getattr(self, "scene", None)
+        if scene is None:
+            return LVector3f(pos)
+        try:
+            px = float(pos.x)
+            py = float(pos.y)
+            pz = float(pos.z)
+            if not (math.isfinite(px) and math.isfinite(py) and math.isfinite(pz)):
+                raise ValueError("non-finite")
+            if pz < float(scene.kill_z) - 2.0:
+                raise ValueError("below-kill-plane")
+            # Reject clearly invalid teleports while still allowing large custom maps.
+            if abs(px) > 100000.0 or abs(py) > 100000.0 or abs(pz) > 100000.0:
+                raise ValueError("abs-bound")
+            return LVector3f(pos)
+        except Exception as e:
+            try:
+                self.error_log.log_message(
+                    context="net.spawn.invalid",
+                    message=f"Rejected server spawn ({e}); fallback to scene spawn.",
+                )
+            except Exception:
+                pass
+            return LVector3f(scene.spawn_point)
+
+    @staticmethod
+    def _same_map_ref(a: str | None, b: str | None) -> bool:
+        sa = str(a or "").strip()
+        sb = str(b or "").strip()
+        if not sa or not sb:
+            return False
+        try:
+            pa = Path(sa).expanduser().resolve()
+            pb = Path(sb).expanduser().resolve()
+            return str(pa) == str(pb)
+        except Exception:
+            return sa == sb
+
+    def _resolve_server_map_reference(self, *, server_map_json: str | None) -> str | None:
+        raw = str(server_map_json or "").strip()
+        if not raw:
+            return None
+        p = Path(raw).expanduser()
+        if p.exists():
+            try:
+                return str(p.resolve())
+            except Exception:
+                return str(p)
+
+        app_root = ivan_app_root()
+        parts = tuple(str(x) for x in p.parts)
+
+        # Rebase host absolute paths that include ".../apps/ivan/...".
+        for i in range(0, max(0, len(parts) - 1)):
+            if str(parts[i]) == "apps" and i + 1 < len(parts) and str(parts[i + 1]) == "ivan":
+                suffix = Path(*parts[i + 2 :]) if (i + 2) < len(parts) else Path()
+                candidate = (app_root / suffix).resolve()
+                if candidate.exists():
+                    return str(candidate)
+                break
+
+        # Rebase host paths that include ".../assets/...".
+        if "assets" in parts:
+            try:
+                j = parts.index("assets")
+                suffix = Path(*parts[j:])
+                candidate = (app_root / suffix).resolve()
+                if candidate.exists():
+                    return str(candidate)
+            except Exception:
+                pass
+
+        # Final fallback: search known local asset roots by filename.
+        name = p.name.strip()
+        if not name:
+            return None
+        search_roots = [
+            app_root / "assets" / "maps",
+            app_root / "assets" / "imported",
+            app_root / "assets" / "generated",
+        ]
+        for root in search_roots:
+            if not root.exists():
+                continue
+            try:
+                matches = sorted(x for x in root.rglob(name) if x.is_file())
+            except Exception:
+                continue
+            if matches:
+                try:
+                    return str(matches[0].resolve())
+                except Exception:
+                    return str(matches[0])
+        return None
 
     def _setup_game_mode(self, *, mode: Any, bundle_root: Path | None) -> None:
         if self.scene is None:
@@ -1791,7 +2283,8 @@ class RunnerDemo(ShowBase):
                 name=str(self.cfg.net_name),
             )
             server_map_json = str(self._net_client.server_map_json or "").strip() or None
-            if server_map_json and server_map_json != self._current_map_json:
+            resolved_server_map = self._resolve_server_map_reference(server_map_json=server_map_json)
+            if server_map_json and resolved_server_map is None:
                 try:
                     self._net_client.close()
                 except Exception:
@@ -1799,9 +2292,27 @@ class RunnerDemo(ShowBase):
                 self._net_client = None
                 self._net_connected = False
                 self._net_player_id = 0
+                self._net_interact_pending = False
+                self.error_log.log_message(
+                    context="net.map.resolve",
+                    message=f"Server map is unavailable locally: {server_map_json}",
+                )
+                self.pause_ui.set_multiplayer_status("Server map is unavailable locally.")
+                self.ui.set_status("Connect failed: server map not found on this client.")
+                return
+            target_map_json = resolved_server_map if resolved_server_map is not None else server_map_json
+            if target_map_json and not self._same_map_ref(target_map_json, self._current_map_json):
+                try:
+                    self._net_client.close()
+                except Exception:
+                    pass
+                self._net_client = None
+                self._net_connected = False
+                self._net_player_id = 0
+                self._net_interact_pending = False
                 self.pause_ui.set_multiplayer_status("Loading server map...")
                 self.ui.set_status("Loading server map from host...")
-                self._start_game(map_json=server_map_json)
+                self._start_game(map_json=target_map_json)
                 return
             self._net_connected = True
             self._net_can_configure = bool(self._net_client.can_configure)
@@ -1813,6 +2324,7 @@ class RunnerDemo(ShowBase):
             self._net_last_server_tick = 0
             self._net_last_acked_seq = 0
             self._net_local_respawn_seq = 0
+            self._net_interact_pending = False
             self._net_last_snapshot_local_time = time.monotonic()
             self._net_authoritative_tuning_version = int(self._net_client.server_tuning_version)
             if isinstance(self._net_client.server_tuning, dict):
@@ -1832,12 +2344,20 @@ class RunnerDemo(ShowBase):
             self._camera_feedback_observer.reset()
             self._net_cfg_apply_pending_version = 0
             self._net_cfg_apply_sent_at = 0.0
+            self._net_games_version = 0
+            self._net_race_last_event_seq = 0
+            server_games = getattr(self._net_client, "server_games", None)
+            if isinstance(server_games, dict):
+                games_v = int(getattr(self._net_client, "server_games_version", 0))
+                if games_v <= 0:
+                    games_v = 1
+                self._apply_network_games_payload(games_v=games_v, games=dict(server_games))
             self._net_perf.reset()
             self._net_perf_last_publish = 0.0
             self._net_perf_text = ""
             if self.player is not None and self._net_client.server_spawn is not None:
                 sx, sy, sz = self._net_client.server_spawn
-                self.player.pos = LVector3f(float(sx), float(sy), float(sz))
+                self.player.pos = self._sanitize_network_spawn(pos=LVector3f(float(sx), float(sy), float(sz)))
                 self.player.vel = LVector3f(0, 0, 0)
                 if isinstance(self._net_client.server_spawn_yaw, (int, float)):
                     self._yaw = float(self._net_client.server_spawn_yaw)
@@ -1845,6 +2365,13 @@ class RunnerDemo(ShowBase):
                 self._push_sim_snapshot()
             if self._runtime_connect_host:
                 update_state(last_net_host=str(self._runtime_connect_host), last_net_port=int(self._runtime_connect_port))
+            self._race_editor_enabled = False
+            self._race_editor_mode_id = None
+            # Noclip is not authoritative in network gameplay. Always reset it on connect.
+            self.tuning.noclip_enabled = False
+            self._close_game_mode_picker()
+            self._race_runtime.clear()
+            self._sync_race_markers()
             self.ui.set_status(f"Connected to server {target_host}:{target_port} as #{self._net_player_id}")
             role = "host config owner" if self._net_can_configure else "client (read-only config)"
             self.pause_ui.set_multiplayer_status(f"Connected to {target_host}:{target_port} | {role}")
@@ -1884,6 +2411,8 @@ class RunnerDemo(ShowBase):
                 spawn_override = None
                 spawn_yaw_override = None
         try:
+            rr = getattr(self, "_race_runtime", None)
+            initial_race_course = rr.course if (rr is not None and hasattr(rr, "has_course") and rr.has_course()) else None
             self._embedded_server = _EmbeddedHostServer(
                 host=host,
                 tcp_port=int(self._runtime_connect_port),
@@ -1892,6 +2421,7 @@ class RunnerDemo(ShowBase):
                 initial_tuning=self._current_tuning_snapshot(),
                 initial_spawn=spawn_override,
                 initial_spawn_yaw=spawn_yaw_override,
+                initial_race_course=initial_race_course,
             )
             self._embedded_server.start()
         except OSError as e:
@@ -1925,6 +2455,9 @@ class RunnerDemo(ShowBase):
             self._net_client = None
         self._net_connected = False
         self._net_player_id = 0
+        self._net_interact_pending = False
+        self._net_games_version = 0
+        self._net_race_last_event_seq = 0
         self._clear_remote_players()
         self._connect_multiplayer_if_requested()
 
@@ -2029,12 +2562,13 @@ class RunnerDemo(ShowBase):
             look_scale=cmd.look_scale,
             allow_look=(not menu_open),
         )
+        self._tick_race_runtime(now=float(globalClock.getFrameTime()))
+        player_frozen = bool(self._race_runtime.is_player_frozen(player_id=self._local_player_id()))
 
-        if cmd.noclip_toggle_pressed:
+        if cmd.noclip_toggle_pressed and not player_frozen:
             self._toggle_noclip()
-        if cmd.grapple_pressed:
+        if cmd.grapple_pressed and not player_frozen:
             self._on_grapple_primary_down()
-        _transport.handle_slot_select(self, slot=int(cmd.weapon_slot_select))
 
         wish = self._wish_direction_from_axes(move_forward=cmd.move_forward, move_right=cmd.move_right)
         jump_requested = bool(cmd.jump_pressed)
@@ -2059,11 +2593,21 @@ class RunnerDemo(ShowBase):
             # Autojump is for chained grounded hops; don't feed airborne wall-jump retries.
             jump_requested = True
 
-        transport_consumed_movement = False
-        if not bool(self.tuning.noclip_enabled):
-            transport_consumed_movement = _transport.tick(self, cmd=cmd, dt=float(self._sim_fixed_dt))
-
-        if self.tuning.noclip_enabled:
+        if player_frozen:
+            if not bool(self.tuning.grapple_enabled):
+                self.player.detach_grapple()
+            self.player.step_with_intent(
+                dt=self._sim_fixed_dt,
+                intent=MotionIntent(
+                    wish_dir=LVector3f(0.0, 0.0, 0.0),
+                    jump_requested=False,
+                    slide_requested=False,
+                ),
+                yaw_deg=self._yaw,
+                pitch_deg=self._pitch,
+            )
+            self.player.vel = LVector3f(0.0, 0.0, 0.0)
+        elif self.tuning.noclip_enabled:
             self._step_noclip(
                 dt=self._sim_fixed_dt,
                 move_forward=int(cmd.move_forward),
@@ -2071,8 +2615,6 @@ class RunnerDemo(ShowBase):
                 jump_held=bool(cmd.jump_held),
                 slide_pressed=bool(cmd.slide_pressed),
             )
-        elif transport_consumed_movement:
-            pass
         else:
             if not bool(self.tuning.grapple_enabled):
                 self.player.detach_grapple()
@@ -2088,9 +2630,7 @@ class RunnerDemo(ShowBase):
             )
 
         self._handle_kill_plane()
-        fire_event = None
-        if not _transport.is_transport_slot(_transport.active_slot(self)):
-            fire_event = _combat.tick(self, cmd=cmd, dt=float(self._sim_fixed_dt))
+        fire_event = _combat.tick(self, cmd=cmd, dt=float(self._sim_fixed_dt))
         if fire_event is not None:
             _combat_fx.on_fire(self, event=fire_event)
             _audio.on_weapon_fire(self, slot=int(fire_event.slot))
@@ -2157,6 +2697,7 @@ class RunnerDemo(ShowBase):
             coyote_left=self.player.coyote_left(),
         )
         self._det_trace_hash = self._det_trace.record(t=now_tick, tick_hash=tick_hash)
+        self._tick_race_runtime(now=now_tick)
         if self._playback_active and self._playback_last_frame is not None:
             tm = self._playback_last_frame.telemetry if isinstance(self._playback_last_frame.telemetry, dict) else None
             exp_hash = str(tm.get("det_h") or "") if tm else ""
@@ -2178,6 +2719,8 @@ class RunnerDemo(ShowBase):
             seq = int(self._net_seq_counter)
             self._net_pending_inputs.append(_PredictedInput(seq=seq, cmd=cmd))
             self._append_predicted_state(seq=seq)
+            interact_pressed = bool(self._net_interact_pending)
+            self._net_interact_pending = False
             self._net_client.send_input(
                 seq=seq,
                 server_tick_hint=int(self._net_last_server_tick),
@@ -2191,6 +2734,7 @@ class RunnerDemo(ShowBase):
                     "jh": bool(cmd.jump_held),
                     "sp": bool(cmd.slide_pressed),
                     "gp": bool(cmd.grapple_pressed),
+                    "ip": bool(interact_pressed),
                     "ws": int(cmd.weapon_slot_select),
                 },
             )
@@ -2269,7 +2813,6 @@ class RunnerDemo(ShowBase):
                 "inp_ar": bool(cmd.arrow_right_held),
                 "inp_m1": bool(cmd.mouse_left_held),
                 "inp_m2": bool(cmd.mouse_right_held),
-                "transport_slot": int(_transport.active_slot(self)),
             }
 
         pos = self.player.pos
@@ -2333,7 +2876,6 @@ class RunnerDemo(ShowBase):
             "inp_ar": bool(cmd.arrow_right_held),
             "inp_m1": bool(cmd.mouse_left_held),
             "inp_m2": bool(cmd.mouse_right_held),
-            "transport_slot": int(_transport.active_slot(self)),
         }
 
     def _fire_grapple(self) -> bool:
@@ -2388,6 +2930,19 @@ class RunnerDemo(ShowBase):
     def player_yaw_deg(self) -> float:
         return float(self._yaw)
 
+    def race_leaderboard_held(self) -> bool:
+        return bool(
+            self._race_leaderboard_held
+            and self._mode == "game"
+            and not self._console_open
+            and not self._pause_menu_open
+            and not self._debug_menu_open
+            and not self._replay_browser_open
+        )
+
+    def set_time_trial_markers(self, *, start, finish) -> None:
+        _tt_markers.set_markers(self, start=start, finish=finish)
+
     def _do_respawn(self, *, from_mode: bool) -> None:
         if self.player is None or self.scene is None:
             return
@@ -2404,6 +2959,7 @@ class RunnerDemo(ShowBase):
         self.player.respawn()
         self._yaw = float(self.scene.spawn_yaw)
         self._pitch = 0.0
+        self._race_leaderboard_held = False
         self._local_hp = 100
         self._net_reconcile_pos_offset = LVector3f(0, 0, 0)
         self._net_reconcile_yaw_offset = 0.0
@@ -2418,7 +2974,6 @@ class RunnerDemo(ShowBase):
         self._sim_state_ready = False
         _combat.reset_runtime(self, keep_active_slot=True)
         _combat_fx.reset_runtime(self, keep_weapon_slot=True)
-        _transport.reset_runtime(self)
         self._push_sim_snapshot()
         self._render_interpolated_state(alpha=1.0)
         # Recording starts from each spawn/respawn window.
@@ -2444,6 +2999,10 @@ class RunnerDemo(ShowBase):
         self._do_respawn(from_mode=False)
 
     def _toggle_noclip(self) -> None:
+        if self._net_connected and not self._race_editor_enabled:
+            self.tuning.noclip_enabled = False
+            self.ui.set_status("Noclip is disabled in multiplayer gameplay.")
+            return
         self.tuning.noclip_enabled = not bool(self.tuning.noclip_enabled)
 
     def _step_noclip(
@@ -2498,6 +3057,8 @@ class RunnerDemo(ShowBase):
                 pass
 
             if self._mode == "menu":
+                if self.game_mode_picker_ui.is_visible():
+                    self._close_game_mode_picker()
                 if self.replay_input_ui.is_visible():
                     self.replay_input_ui.hide()
                 self.ui.set_crosshair_visible(False)
@@ -2552,6 +3113,9 @@ class RunnerDemo(ShowBase):
                 self.scene.tick(now=now)
             if self._replay_browser_open:
                 self.replay_browser_ui.tick(now)
+            if self.game_mode_picker_ui.is_visible():
+                self.game_mode_picker_ui.tick(now)
+            self.race_ui_feedback.tick(now=now)
 
             menu_open = (
                 self._pause_menu_open
@@ -2559,6 +3123,7 @@ class RunnerDemo(ShowBase):
                 or self._replay_browser_open
                 or self._console_open
                 or self._feel_capture_open
+                or self.game_mode_picker_ui.is_visible()
             )
             self.ui.set_crosshair_visible(not menu_open)
 
@@ -2696,7 +3261,6 @@ class RunnerDemo(ShowBase):
             hspeed = math.sqrt(self.player.vel.x * self.player.vel.x + self.player.vel.y * self.player.vel.y)
             vault_dbg = self.player.vault_debug_status()
             combat_status = _combat.status_fragment(self)
-            transport_status = _transport.status_fragment(self)
             self.ui.set_speed(hspeed)
             self.ui.set_health(self._local_hp)
             if self.debug_hud.is_visible():
@@ -2718,7 +3282,7 @@ class RunnerDemo(ShowBase):
                 f"wall {int(bool(self.player.has_wall_for_jump()))} | surf {int(bool(self.player.has_surf_surface()))} | "
                 f"slide {int(bool(self.player.is_sliding()))} | grap {int(bool(self.player.is_grapple_attached()))} | "
                 f"hp {int(self._local_hp)} | net {int(bool(self._net_connected))} | rec {int(self._active_recording is not None)} | "
-                f"replay {int(bool(self._playback_active))} | vault {vault_dbg} | {transport_status} | {combat_status}"
+                f"replay {int(bool(self._playback_active))} | vault {vault_dbg} | {combat_status}"
             )
 
             if self._game_mode is not None:
@@ -2753,6 +3317,14 @@ class RunnerDemo(ShowBase):
                     self.console_control.close()
                 except Exception:
                     pass
+            try:
+                self.game_mode_picker_ui.destroy()
+            except Exception:
+                pass
+            try:
+                self.race_ui_feedback.destroy()
+            except Exception:
+                pass
         finally:
             super().userExit(*args, **kwargs)
 

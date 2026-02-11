@@ -187,6 +187,7 @@ def disconnect_multiplayer(host) -> None:
     host._net_last_server_tick = 0
     host._net_last_acked_seq = 0
     host._net_local_respawn_seq = 0
+    host._net_interact_pending = False
     host._net_last_snapshot_local_time = 0.0
     host._net_pending_inputs.clear()
     host._net_predicted_states.clear()
@@ -206,9 +207,13 @@ def disconnect_multiplayer(host) -> None:
         host._camera_feedback_observer.reset()
     host._net_cfg_apply_pending_version = 0
     host._net_cfg_apply_sent_at = 0.0
+    host._net_games_version = 0
+    host._net_race_last_event_seq = 0
     host._net_perf.reset()
     host._net_perf_last_publish = 0.0
     host._net_perf_text = ""
+    if hasattr(host, "_net_seen_remote_players"):
+        host._net_seen_remote_players.clear()
     clear_remote_players(host)
     host.pause_ui.set_multiplayer_status("Not connected.")
 
@@ -275,6 +280,9 @@ def clear_remote_players(host) -> None:
         except Exception:
             pass
     host._remote_players.clear()
+    seen = getattr(host, "_net_seen_remote_players", None)
+    if isinstance(seen, set):
+        seen.clear()
     host._net_pending_inputs.clear()
     host._net_predicted_states.clear()
 
@@ -283,17 +291,21 @@ def ensure_remote_player_visual(host, *, player_id: int, name: str) -> _RemotePl
     rp = host._remote_players.get(int(player_id))
     if rp is not None:
         return rp
-    # Simple two-box avatar: body + head.
+    # Character-sized white avatar for high visibility in multiplayer.
+    player_radius = max(0.14, float(getattr(host.tuning, "player_radius", 0.42)))
+    player_half_height = max(player_radius * 1.25, float(getattr(host.tuning, "player_half_height", 1.05)))
+    root = host.world_root.attachNewNode(f"remote-player-{int(player_id)}")
     body = host.loader.loadModel("models/box")
-    body.reparentTo(host.world_root)
-    body.setScale(0.28, 0.28, 0.92)
-    body.setColor(0.22, 0.72, 0.95, 1.0)
+    body.reparentTo(root)
+    body.setScale(player_radius * 2.0, player_radius * 2.0, player_half_height * 2.0)
+    body.setColor(1.00, 1.00, 1.00, 1.0)
     head = host.loader.loadModel("models/box")
-    head.reparentTo(body)
-    head.setPos(0.0, 0.0, 1.20)
-    head.setScale(0.18, 0.18, 0.18)
-    head.setColor(0.95, 0.85, 0.70, 1.0)
-    rp = _RemotePlayerVisual(player_id=int(player_id), root_np=body, head_np=head, name=str(name or "player"))
+    head.reparentTo(root)
+    head_size = max(0.18, player_radius * 0.62)
+    head.setPos(0.0, 0.0, player_half_height + head_size * 0.58)
+    head.setScale(head_size, head_size, head_size)
+    head.setColor(0.94, 0.94, 0.94, 1.0)
+    rp = _RemotePlayerVisual(player_id=int(player_id), root_np=root, head_np=head, name=str(name or "player"))
     host._remote_players[int(player_id)] = rp
     return rp
 
@@ -352,10 +364,35 @@ def poll_network_snapshot(host) -> None:
                 normalized[field] = float(value)
         if normalized:
             host._apply_authoritative_tuning(tuning=normalized, version=int(cfg_v))
+    games_v = int(snap.get("games_v") or 0)
+    games_payload = snap.get("games")
+    if int(games_v) > int(getattr(host, "_net_games_version", 0)):
+        if hasattr(host, "_apply_network_games_payload"):
+            host._apply_network_games_payload(
+                games_v=int(games_v),
+                games=(games_payload if isinstance(games_payload, dict) else None),
+            )
+        else:
+            host._net_games_version = int(games_v)
+            host._net_race_last_event_seq = 0
+    game_state = snap.get("game_state")
+    if isinstance(game_state, dict) and hasattr(host, "_apply_network_game_state"):
+        host._apply_network_game_state(game_state=game_state)
+    game_events = snap.get("game_events")
+    if isinstance(game_events, list) and hasattr(host, "_apply_network_game_events"):
+        host._apply_network_game_events(
+            events=[row for row in game_events if isinstance(row, dict)],
+            now=float(now_mono),
+        )
     players = snap.get("players")
     if not isinstance(players, list):
         return
 
+    seen_remote = getattr(host, "_net_seen_remote_players", None)
+    if not isinstance(seen_remote, set):
+        seen_remote = set()
+        host._net_seen_remote_players = seen_remote
+    join_notices: list[str] = []
     seen: set[int] = set()
     for row in players:
         if not isinstance(row, dict):
@@ -411,7 +448,11 @@ def poll_network_snapshot(host) -> None:
                     ack=ack,
                 )
             continue
-        rp = ensure_remote_player_visual(host, player_id=pid, name=str(row.get("n") or "player"))
+        pname = str(row.get("n") or "player").strip() or f"Player #{int(pid)}"
+        if int(pid) not in seen_remote:
+            seen_remote.add(int(pid))
+            join_notices.append(str(pname))
+        rp = ensure_remote_player_visual(host, player_id=pid, name=pname)
         if int(rs) > int(rp.respawn_seq):
             rp.respawn_seq = int(rs)
             rp.sample_ticks.clear()
@@ -436,6 +477,23 @@ def poll_network_snapshot(host) -> None:
             rp.root_np.removeNode()
         except Exception:
             pass
+    for pname in join_notices:
+        msg = f"{pname} joined the server."
+        try:
+            host.ui.set_status(msg)
+        except Exception:
+            pass
+        ui_feedback = getattr(host, "race_ui_feedback", None)
+        if ui_feedback is not None and hasattr(ui_feedback, "notice"):
+            try:
+                ui_feedback.notice(
+                    text=msg,
+                    color=(0.86, 0.96, 1.00, 0.96),
+                    now=float(now_mono),
+                    duration=1.3,
+                )
+            except Exception:
+                pass
 
 
 def render_remote_players(host, *, alpha: float) -> None:
@@ -506,6 +564,8 @@ def start_embedded_server(host) -> bool:
             spawn_override = None
             spawn_yaw_override = None
     try:
+        rr = getattr(host, "_race_runtime", None)
+        initial_race_course = rr.course if (rr is not None and hasattr(rr, "has_course") and rr.has_course()) else None
         host._embedded_server = host.EmbeddedHostServer(  # type: ignore[attr-defined]
             host=bind_host,
             tcp_port=int(host._runtime_connect_port),
@@ -514,6 +574,7 @@ def start_embedded_server(host) -> bool:
             initial_tuning=host._current_tuning_snapshot(),
             initial_spawn=spawn_override,
             initial_spawn_yaw=spawn_yaw_override,
+            initial_race_course=initial_race_course,
         )
         host._embedded_server.start()
     except OSError as e:
