@@ -38,7 +38,15 @@ class PlayerControllerActionsMixin:
             return None
         return LVector3f(self._grapple_anchor)
 
-    def _apply_wall_jump(self, *, yaw_deg: float, pitch_deg: float = 0.0, prefer_camera_forward: bool = False) -> None:
+    def _apply_wall_jump(
+        self,
+        *,
+        yaw_deg: float,
+        pitch_deg: float = 0.0,
+        prefer_camera_forward: bool = False,
+        speed_floor_total: float | None = None,
+    ) -> None:
+        pre_vel = LVector3f(self.vel)
         away = LVector3f(self._wall_normal.x, self._wall_normal.y, 0)
         if away.lengthSquared() > 0.001:
             away.normalize()
@@ -110,6 +118,11 @@ class PlayerControllerActionsMixin:
         self._wall_normal = LVector3f(0, 0, 0)
         self._jump_buffer_timer = 0.0
         self._slide_active = False
+        floor_total = max(float(speed_floor_total or 0.0), self._total_speed_of(pre_vel))
+        self._preserve_total_speed_floor(
+            floor=floor_total,
+            ref_vel=pre_vel,
+        )
 
     def _try_vault(self, *, yaw_deg: float) -> bool:
         if self.collision is None:

@@ -16,6 +16,7 @@ def test_input_command_roundtrip_preserves_raw_held_states() -> None:
         slide_pressed=True,
         grapple_pressed=True,
         noclip_toggle_pressed=False,
+        weapon_slot_select=3,
         key_w_held=True,
         key_a_held=True,
         key_s_held=False,
@@ -35,6 +36,7 @@ def test_input_command_roundtrip_preserves_raw_held_states() -> None:
     assert replay_cmd.look_dy == -7
     assert replay_cmd.move_forward == 1
     assert replay_cmd.move_right == -1
+    assert replay_cmd.weapon_slot_select == 3
     assert replay_cmd.slide_pressed is True
     assert replay_cmd.key_w_held is True
     assert replay_cmd.key_a_held is True
@@ -66,4 +68,5 @@ def test_from_demo_frame_without_raw_flags_marks_wasd_unavailable() -> None:
     assert cmd.key_s_held is False
     assert cmd.key_a_held is False
     assert cmd.key_d_held is False
+    assert cmd.weapon_slot_select == 0
     assert cmd.raw_wasd_available is False

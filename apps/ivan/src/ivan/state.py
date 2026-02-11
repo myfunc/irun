@@ -25,6 +25,9 @@ class IvanState:
     fullscreen: bool = False
     window_width: int = 1280
     window_height: int = 720
+    # Audio settings.
+    master_volume: float = 0.85
+    sfx_volume: float = 0.90
 
 
 def state_dir() -> Path:
@@ -97,6 +100,8 @@ def load_state() -> IvanState:
     fs = payload.get("fullscreen")
     ww = payload.get("window_width")
     wh = payload.get("window_height")
+    mv = payload.get("master_volume")
+    sv = payload.get("sfx_volume")
 
     return IvanState(
         last_map_json=str(lm) if isinstance(lm, str) and lm.strip() else None,
@@ -111,6 +116,8 @@ def load_state() -> IvanState:
         fullscreen=bool(fs) if isinstance(fs, bool) else False,
         window_width=int(ww) if isinstance(ww, int) and 320 <= int(ww) <= 7680 else 1280,
         window_height=int(wh) if isinstance(wh, int) and 240 <= int(wh) <= 4320 else 720,
+        master_volume=max(0.0, min(1.0, float(mv))) if isinstance(mv, (int, float)) else 0.85,
+        sfx_volume=max(0.0, min(1.0, float(sv))) if isinstance(sv, (int, float)) else 0.90,
     )
 
 
@@ -135,6 +142,8 @@ def save_state(state: IvanState) -> None:
                 "fullscreen": state.fullscreen,
                 "window_width": int(state.window_width),
                 "window_height": int(state.window_height),
+                "master_volume": float(state.master_volume),
+                "sfx_volume": float(state.sfx_volume),
             },
             indent=2,
             sort_keys=True,
@@ -158,6 +167,8 @@ def update_state(
     fullscreen: bool | None = None,
     window_width: int | None = None,
     window_height: int | None = None,
+    master_volume: float | None = None,
+    sfx_volume: float | None = None,
 ) -> None:
     s = load_state()
     merged_tuning = dict(s.tuning_overrides)
@@ -181,6 +192,16 @@ def update_state(
             fullscreen=bool(fullscreen) if fullscreen is not None else s.fullscreen,
             window_width=int(window_width) if window_width is not None else s.window_width,
             window_height=int(window_height) if window_height is not None else s.window_height,
+            master_volume=(
+                max(0.0, min(1.0, float(master_volume)))
+                if isinstance(master_volume, (int, float))
+                else s.master_volume
+            ),
+            sfx_volume=(
+                max(0.0, min(1.0, float(sfx_volume)))
+                if isinstance(sfx_volume, (int, float))
+                else s.sfx_volume
+            ),
         )
     )
 
@@ -238,6 +259,8 @@ def set_time_trial_course_override(*, map_id: str, course: dict | None) -> None:
             fullscreen=s.fullscreen,
             window_width=s.window_width,
             window_height=s.window_height,
+            master_volume=s.master_volume,
+            sfx_volume=s.sfx_volume,
         )
     )
 
@@ -311,6 +334,8 @@ def record_time_trial_run(
             fullscreen=s.fullscreen,
             window_width=s.window_width,
             window_height=s.window_height,
+            master_volume=s.master_volume,
+            sfx_volume=s.sfx_volume,
         )
     )
     return (new_pb, last, rank_info)

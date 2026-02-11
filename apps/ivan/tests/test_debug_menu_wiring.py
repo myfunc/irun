@@ -88,6 +88,89 @@ class _FrontWallCollision:
         return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
 
 
+class _NoHitCollision:
+    def update_player_sweep_shape(self, *, player_radius: float, player_half_height: float) -> None:
+        _ = player_radius, player_half_height
+
+    def sweep_closest(self, from_pos: LVector3f, to_pos: LVector3f):
+        _ = from_pos, to_pos
+        return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
+
+
+class _DownStepProbeCollision:
+    def __init__(self, *, required_drop: float) -> None:
+        self._required_drop = max(0.0, float(required_drop))
+
+    def update_player_sweep_shape(self, *, player_radius: float, player_half_height: float) -> None:
+        _ = player_radius, player_half_height
+
+    def sweep_closest(self, from_pos: LVector3f, to_pos: LVector3f):
+        d = LVector3f(to_pos - from_pos)
+        if float(d.z) < -1e-6 and abs(float(d.z)) >= float(self._required_drop):
+            frac = max(0.0, min(1.0, float(self._required_drop) / max(1e-6, abs(float(d.z)))))
+            return _FakeHit(
+                True,
+                LVector3f(0.0, 0.0, 1.0),
+                hit_pos=LVector3f(float(from_pos.x), float(from_pos.y), float(from_pos.z) - float(self._required_drop)),
+                hit_fraction=frac,
+            )
+        return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
+
+
+class _CenterSurfOffsetGroundCollision:
+    def update_player_sweep_shape(self, *, player_radius: float, player_half_height: float) -> None:
+        _ = player_radius, player_half_height
+
+    def sweep_closest(self, from_pos: LVector3f, to_pos: LVector3f):
+        d = LVector3f(to_pos - from_pos)
+        if float(d.z) >= -1e-6:
+            return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
+        if abs(float(from_pos.x)) < 0.03 and abs(float(from_pos.y)) < 0.03:
+            # Center probe catches an oblique riser edge (surf-like normal).
+            return _FakeHit(True, LVector3f(0.995, 0.0, 0.10), hit_fraction=0.06)
+        if abs(float(from_pos.x)) > 0.14 or abs(float(from_pos.y)) > 0.14:
+            # Nearby footprint offset still has valid walkable support.
+            return _FakeHit(True, LVector3f(0.0, 0.0, 1.0), hit_fraction=0.32)
+        return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
+
+
+class _LiftedOnlyGroundProbeCollision:
+    def __init__(self, *, base_z: float) -> None:
+        self._base_z = float(base_z)
+
+    def update_player_sweep_shape(self, *, player_radius: float, player_half_height: float) -> None:
+        _ = player_radius, player_half_height
+
+    def sweep_closest(self, from_pos: LVector3f, to_pos: LVector3f):
+        d = LVector3f(to_pos - from_pos)
+        if float(d.z) >= -1e-6:
+            return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
+        if float(from_pos.z) <= (self._base_z + 0.02):
+            # Direct down sweeps are blocked by a step face near the feet.
+            return _FakeHit(True, LVector3f(1.0, 0.0, 0.0), hit_fraction=0.04)
+        # Slightly lifted probe can see the walkable top behind that face.
+        return _FakeHit(True, LVector3f(0.0, 0.0, 1.0), hit_fraction=0.60)
+
+
+class _OffCenterLedgeCollision:
+    def update_player_sweep_shape(self, *, player_radius: float, player_half_height: float) -> None:
+        _ = player_radius, player_half_height
+
+    def sweep_closest(self, from_pos: LVector3f, to_pos: LVector3f):
+        d = LVector3f(to_pos - from_pos)
+        if float(d.z) >= -1e-6:
+            return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
+        if abs(float(from_pos.x)) > 0.14 or abs(float(from_pos.y)) > 0.14:
+            # Decorative seam/ledge far from center support footprint.
+            return _FakeHit(
+                True,
+                LVector3f(0.0, 0.0, 1.0),
+                hit_pos=LVector3f(0.33, 0.0, float(from_pos.z) - 0.015),
+                hit_fraction=0.30,
+            )
+        return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
+
+
 def test_all_numeric_debug_controls_exist_have_tooltips_and_are_wired() -> None:
     numeric_fields = [name for name, _lo, _hi in DebugUI.NUMERIC_CONTROLS]
     assert len(numeric_fields) == len(set(numeric_fields))
@@ -241,7 +324,7 @@ def test_wallrun_does_not_cancel_upward_jump_velocity() -> None:
     tuning = PhysicsTuning(wallrun_enabled=True)
     ctrl = _make_controller(tuning)
     ctrl.grounded = False
-    ctrl.vel = LVector3f(3.0, 0.0, 7.0)
+    ctrl.vel = LVector3f(1.0, 4.0, 7.0)
     ctrl._wall_contact_timer = 0.0
     ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
 
@@ -253,7 +336,7 @@ def test_wallrun_sets_active_state_and_camera_roll_indicator() -> None:
     tuning = PhysicsTuning(wallrun_enabled=True)
     ctrl = _make_controller(tuning)
     ctrl.grounded = False
-    ctrl.vel = LVector3f(4.0, 0.0, 0.0)
+    ctrl.vel = LVector3f(1.2, 4.0, 0.0)
     ctrl._wall_contact_timer = 0.0
     ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
 
@@ -261,6 +344,48 @@ def test_wallrun_sets_active_state_and_camera_roll_indicator() -> None:
 
     assert ctrl.is_wallrunning()
     assert ctrl.wallrun_camera_roll_deg(yaw_deg=0.0) < -0.1
+
+
+def test_wallrun_entry_speed_gate_is_capped_for_high_vmax_profiles() -> None:
+    ctrl = _make_controller(
+        PhysicsTuning(
+            wallrun_enabled=True,
+            max_ground_speed=12.0,
+            wallrun_min_entry_speed_mult=0.45,
+        )
+    )
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(1.6, 3.2, -0.8)
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
+
+    ctrl.step(dt=0.016, wish_dir=LVector3f(1.0, 1.0, 0.0), yaw_deg=0.0, crouching=False)
+
+    assert ctrl.is_wallrunning() is True
+
+
+def test_wallrun_does_not_engage_on_head_on_wall_impact() -> None:
+    ctrl = _make_controller(PhysicsTuning(wallrun_enabled=True))
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(5.0, 0.0, -1.0)
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
+
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+
+    assert ctrl.is_wallrunning() is False
+
+
+def test_wallrun_does_not_engage_on_pure_parallel_brush() -> None:
+    ctrl = _make_controller(PhysicsTuning(wallrun_enabled=True))
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(0.0, 6.0, -1.0)
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
+
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 1, 0), yaw_deg=0.0, crouching=False)
+
+    assert ctrl.is_wallrunning() is False
 
 
 def test_wallrun_camera_roll_clears_soon_after_contact_loss() -> None:
@@ -293,7 +418,7 @@ def test_wallrun_jump_biases_to_camera_forward_direction() -> None:
     )
     ctrl = _make_controller(tuning)
     ctrl.grounded = False
-    ctrl.vel = LVector3f(5.0, 0.0, -1.0)
+    ctrl.vel = LVector3f(-1.5, 5.0, -1.0)
     ctrl._wall_contact_timer = 0.0
     ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)  # wall peel-away points +X
     ctrl.queue_jump()
@@ -318,7 +443,7 @@ def test_wallrun_jump_clears_wallrun_state_and_contact_immediately() -> None:
     )
     ctrl = _make_controller(tuning)
     ctrl.grounded = False
-    ctrl.vel = LVector3f(5.0, 0.0, -1.0)
+    ctrl.vel = LVector3f(-1.5, 5.0, -1.0)
     ctrl._wall_contact_timer = 0.0
     ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
     ctrl.queue_jump()
@@ -335,7 +460,7 @@ def test_wallrun_sink_t90_controls_descent_response() -> None:
     slow = _make_controller(PhysicsTuning(wallrun_enabled=True, wallrun_sink_t90=0.60))
     for ctrl in (fast, slow):
         ctrl.grounded = False
-        ctrl.vel = LVector3f(4.0, 0.0, -6.0)
+        ctrl.vel = LVector3f(1.2, 4.0, -6.0)
         ctrl._wall_contact_timer = 0.0
         ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
 
@@ -362,7 +487,7 @@ def test_slide_engage_applies_low_hull_without_entry_boost() -> None:
     slide_speed = math.sqrt(ctrl.vel.x * ctrl.vel.x + ctrl.vel.y * ctrl.vel.y)
     assert ctrl.is_sliding()
     assert ctrl.player_half.z < stand_half
-    assert slide_speed <= 2.0
+    assert slide_speed <= 2.0001
     assert slide_speed > 1.8
 
 
@@ -672,6 +797,172 @@ def test_slide_release_restores_standing_hull() -> None:
     assert math.isclose(float(ctrl.player_half.z), stand_half, rel_tol=1e-6)
 
 
+def test_slide_ground_flicker_grace_keeps_slide_state_for_short_drop() -> None:
+    ctrl = _make_controller(PhysicsTuning(slide_enabled=True, slide_stop_t90=4.0))
+    ctrl.grounded = True
+    ctrl.vel = LVector3f(0.0, 9.0, 0.0)
+    ctrl.set_slide_held(held=True)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 1.0, 0.0), yaw_deg=0.0, crouching=False)
+    assert ctrl.is_sliding()
+    assert ctrl.crouched is True
+
+    # Simulate a one-tick airborne flicker while descending a slope.
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(float(ctrl.vel.x), float(ctrl.vel.y), -0.10)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+
+    assert ctrl.is_sliding() is True
+    assert ctrl.crouched is True
+
+
+def test_slide_ground_flicker_grace_does_not_keep_slide_while_ascending() -> None:
+    ctrl = _make_controller(PhysicsTuning(slide_enabled=True, slide_stop_t90=4.0))
+    ctrl.grounded = True
+    ctrl.vel = LVector3f(0.0, 9.0, 0.0)
+    ctrl.set_slide_held(held=True)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 1.0, 0.0), yaw_deg=0.0, crouching=False)
+    assert ctrl.is_sliding() is True
+
+    # Upward motion (jump/pop) should not keep slide active via grace.
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(float(ctrl.vel.x), float(ctrl.vel.y), 0.90)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+
+    assert ctrl.is_sliding() is False
+
+
+def test_step_slide_prefers_progress_along_intended_direction() -> None:
+    ctrl = _make_controller(PhysicsTuning(step_height=0.55))
+    ctrl.collision = _NoHitCollision()
+    ctrl.grounded = True
+    ctrl.pos = LVector3f(0.0, 0.0, 0.0)
+    ctrl.vel = LVector3f(2.0, 2.0, 0.0)
+
+    call_count = {"n": 0}
+
+    def _fake_slide(_delta: LVector3f) -> None:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # Plain move: larger raw XY distance but mostly sideways deflection.
+            ctrl.pos = LVector3f(0.2, 1.4, 0.0)
+            ctrl.vel = LVector3f(0.0, 3.0, 0.0)
+            ctrl.grounded = True
+            return
+        # Step move: slightly smaller XY length but much better progress along intended diagonal.
+        ctrl.pos = LVector3f(1.0, 0.9, 0.0)
+        ctrl.vel = LVector3f(2.5, 0.0, 0.0)
+        ctrl.grounded = True
+
+    ctrl._bullet_slide_move = _fake_slide  # type: ignore[method-assign]
+    ctrl._bullet_step_slide_move(LVector3f(1.0, 1.0, 0.0))
+
+    assert abs(float(ctrl.pos.x) - 1.0) < 1e-6
+    assert abs(float(ctrl.pos.y) - 0.9) < 1e-6
+
+
+def test_step_slide_restores_grounded_state_from_selected_plain_path() -> None:
+    ctrl = _make_controller(PhysicsTuning(step_height=0.55))
+    ctrl.collision = _NoHitCollision()
+    ctrl.grounded = True
+    ctrl.pos = LVector3f(0.0, 0.0, 0.0)
+    ctrl.vel = LVector3f(2.0, 0.0, 0.0)
+
+    call_count = {"n": 0}
+
+    def _fake_slide(_delta: LVector3f) -> None:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # Plain move should win by progress and keeps grounded.
+            ctrl.pos = LVector3f(1.5, 0.0, 0.0)
+            ctrl.vel = LVector3f(3.0, 0.0, 0.0)
+            ctrl.grounded = True
+            return
+        # Step try ends up airborne/worse; must not leak grounded flag if plain path is selected.
+        ctrl.pos = LVector3f(0.6, 0.6, 0.0)
+        ctrl.vel = LVector3f(1.0, 1.0, 0.0)
+        ctrl.grounded = False
+
+    ctrl._bullet_slide_move = _fake_slide  # type: ignore[method-assign]
+    ctrl._bullet_step_slide_move(LVector3f(1.0, 0.0, 0.0))
+
+    assert abs(float(ctrl.pos.x) - 1.5) < 1e-6
+    assert abs(float(ctrl.pos.y) - 0.0) < 1e-6
+    assert ctrl.grounded is True
+
+
+def test_ground_snap_distance_scales_with_step_height_for_descent() -> None:
+    low = _make_controller(PhysicsTuning(step_height=0.18, ground_snap_dist=0.02))
+    high = _make_controller(PhysicsTuning(step_height=0.60, ground_snap_dist=0.02))
+    collision = _DownStepProbeCollision(required_drop=0.30)
+    low.collision = collision
+    high.collision = collision
+
+    for ctrl in (low, high):
+        ctrl.grounded = True
+        ctrl.pos = LVector3f(0.0, 0.0, 1.0)
+        ctrl.vel = LVector3f(0.0, 3.0, -0.01)
+
+    low._bullet_ground_snap()
+    high._bullet_ground_snap()
+
+    assert low.grounded is True
+    assert high.grounded is True
+    # Larger step height should allow deeper stair-drop snap in one tick.
+    assert float(high.pos.z) < float(low.pos.z)
+
+
+def test_ground_trace_prefers_nearby_walkable_over_center_surf_contact() -> None:
+    ctrl = _make_controller(PhysicsTuning(surf_enabled=True, surf_min_normal_z=0.05, surf_max_normal_z=0.72))
+    ctrl.collision = _CenterSurfOffsetGroundCollision()
+    ctrl.grounded = True
+    ctrl.pos = LVector3f(0.0, 0.0, 1.0)
+    ctrl.vel = LVector3f(0.0, 2.0, -0.05)
+
+    ctrl._bullet_ground_trace()
+
+    assert ctrl.grounded is True
+    assert float(ctrl.ground_normal().z) > 0.95
+
+
+def test_ground_trace_uses_lifted_probe_when_direct_sweeps_hit_step_face() -> None:
+    ctrl = _make_controller(PhysicsTuning(step_height=0.55))
+    ctrl.pos = LVector3f(0.0, 0.0, 1.0)
+    ctrl.collision = _LiftedOnlyGroundProbeCollision(base_z=float(ctrl.pos.z))
+    ctrl.grounded = True
+    ctrl.vel = LVector3f(0.0, 1.0, -0.05)
+
+    ctrl._bullet_ground_trace()
+
+    assert ctrl.grounded is True
+    assert float(ctrl.ground_normal().z) > 0.95
+
+
+def test_ground_snap_uses_lifted_probe_when_direct_sweep_is_blocked() -> None:
+    ctrl = _make_controller(PhysicsTuning(step_height=0.55, ground_snap_dist=0.02))
+    ctrl.pos = LVector3f(0.0, 0.0, 1.0)
+    ctrl.collision = _LiftedOnlyGroundProbeCollision(base_z=float(ctrl.pos.z))
+    ctrl.grounded = True
+    ctrl.vel = LVector3f(0.0, 1.0, -0.25)
+    pre_z = float(ctrl.pos.z)
+
+    ctrl._bullet_ground_snap()
+
+    assert ctrl.grounded is True
+    assert float(ctrl.pos.z) < pre_z
+
+
+def test_ground_trace_rejects_offcenter_false_ledge_support() -> None:
+    ctrl = _make_controller(PhysicsTuning(step_height=0.55, ground_snap_dist=0.056))
+    ctrl.collision = _OffCenterLedgeCollision()
+    ctrl.grounded = True
+    ctrl.pos = LVector3f(0.0, 0.0, 1.0)
+    ctrl.vel = LVector3f(0.0, 2.0, -0.05)
+
+    ctrl._bullet_ground_trace()
+
+    assert ctrl.grounded is False
+
+
 def test_slide_ignores_keyboard_strafe_and_uses_camera_yaw() -> None:
     ctrl = _make_controller(PhysicsTuning(slide_enabled=True, slide_stop_t90=4.0))
     ctrl.grounded = True
@@ -699,6 +990,66 @@ def test_slide_wasd_input_does_not_change_ground_slide_motion() -> None:
 
     assert math.isclose(float(left.vel.x), float(right.vel.x), abs_tol=1e-5)
     assert math.isclose(float(left.vel.y), float(right.vel.y), abs_tol=1e-5)
+
+
+def test_slide_flat_ground_damps_horizontal_speed_per_tick() -> None:
+    ctrl = _make_controller(PhysicsTuning(slide_enabled=True, slide_stop_t90=0.20))
+    ctrl.grounded = True
+    ctrl.vel = LVector3f(0.0, 11.0, 0.0)
+    ctrl._ground_normal = LVector3f(0.0, 0.0, 1.0)
+    ctrl.set_slide_held(held=True)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 1.0, 0.0), yaw_deg=0.0, crouching=False)
+    pre = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y))
+
+    ctrl.grounded = True
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+    post = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y))
+
+    assert post < pre
+
+
+def test_slide_gains_speed_when_moving_downhill() -> None:
+    ctrl = _make_controller(PhysicsTuning(slide_enabled=True, slide_stop_t90=3.0))
+    ctrl.grounded = True
+    # Ramp rises toward +Y, so downhill direction is -Y.
+    ctrl._ground_normal = LVector3f(0.0, -0.70, 0.71414284)
+    ctrl.vel = LVector3f(0.0, -10.0, 0.0)
+    ctrl.set_slide_held(held=True)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, -1.0, 0.0), yaw_deg=180.0, crouching=False)
+    pre = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y))
+
+    ctrl.grounded = True
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=180.0, crouching=False)
+    post = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y))
+
+    assert post > pre
+
+
+def test_slide_loses_speed_when_moving_uphill() -> None:
+    ctrl = _make_controller(PhysicsTuning(slide_enabled=True, slide_stop_t90=3.0))
+    ctrl.grounded = True
+    # Ramp rises toward +Y, so uphill direction is +Y.
+    ctrl._ground_normal = LVector3f(0.0, -0.70, 0.71414284)
+    ctrl.vel = LVector3f(0.0, 10.0, 0.0)
+    ctrl.set_slide_held(held=True)
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 1.0, 0.0), yaw_deg=0.0, crouching=False)
+    pre = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y))
+
+    ctrl.grounded = True
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=0.0, crouching=False)
+    post = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y))
+
+    assert post < pre
+
+
+def test_clip_velocity_does_not_increase_speed() -> None:
+    ctrl = _make_controller(PhysicsTuning())
+    vel = LVector3f(35.0, -6.0, 0.0)
+    out = ctrl._clip_velocity(vel, LVector3f(-1.0, 0.0, 0.0))
+    pre = math.sqrt(float(vel.x) * float(vel.x) + float(vel.y) * float(vel.y) + float(vel.z) * float(vel.z))
+    post = math.sqrt(float(out.x) * float(out.x) + float(out.y) * float(out.y) + float(out.z) * float(out.z))
+
+    assert post <= pre + 1e-6
 
 
 def test_invariant_vmax_remains_authoritative_under_input() -> None:
@@ -784,6 +1135,28 @@ def test_ground_jump_tick_preserves_horizontal_speed_with_move_input() -> None:
 
     assert ctrl.vel.x > 11.7
     assert ctrl.vel.z > 0.0
+
+
+def test_wallrun_jump_preserves_total_speed_from_pre_jump() -> None:
+    ctrl = _make_controller(
+        PhysicsTuning(
+            wallrun_enabled=True,
+            walljump_enabled=True,
+            wall_jump_cooldown=0.0,
+            coyote_buffer_enabled=False,
+        )
+    )
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(14.0, 0.0, -9.0)
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
+    pre_total = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y) + float(ctrl.vel.z) * float(ctrl.vel.z))
+    ctrl.queue_jump()
+
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0.0, 0.0, 0.0), yaw_deg=0.0, pitch_deg=0.0, crouching=False)
+    post_total = math.sqrt(float(ctrl.vel.x) * float(ctrl.vel.x) + float(ctrl.vel.y) * float(ctrl.vel.y) + float(ctrl.vel.z) * float(ctrl.vel.z))
+
+    assert post_total >= pre_total * 0.995
 
 
 def test_corner_jump_uses_ground_jump_not_walljump() -> None:

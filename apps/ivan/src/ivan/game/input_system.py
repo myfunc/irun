@@ -5,6 +5,32 @@ from panda3d.core import ButtonHandle, KeyboardButton
 from ivan.replays import DemoFrame
 
 
+def _window_allows_pointer_capture(host) -> bool:
+    win = getattr(host, "win", None)
+    if win is None:
+        return False
+    try:
+        props = win.getProperties()
+    except Exception:
+        return False
+    try:
+        if hasattr(props, "getOpen") and not bool(props.getOpen()):
+            return False
+    except Exception:
+        pass
+    try:
+        if hasattr(props, "getMinimized") and bool(props.getMinimized()):
+            return False
+    except Exception:
+        pass
+    try:
+        if hasattr(props, "getForeground") and not bool(props.getForeground()):
+            return False
+    except Exception:
+        pass
+    return True
+
+
 class _InputCommand:
     def __init__(
         self,
@@ -19,6 +45,7 @@ class _InputCommand:
         slide_pressed: bool = False,
         grapple_pressed: bool = False,
         noclip_toggle_pressed: bool = False,
+        weapon_slot_select: int = 0,
         key_w_held: bool = False,
         key_a_held: bool = False,
         key_s_held: bool = False,
@@ -43,6 +70,7 @@ class _InputCommand:
         self.slide_pressed = bool(slide_pressed)
         self.grapple_pressed = bool(grapple_pressed)
         self.noclip_toggle_pressed = bool(noclip_toggle_pressed)
+        self.weapon_slot_select = max(0, min(4, int(weapon_slot_select)))
         self.key_w_held = bool(key_w_held)
         self.key_a_held = bool(key_a_held)
         self.key_s_held = bool(key_s_held)
@@ -71,6 +99,7 @@ class _InputCommand:
             slide_pressed=self.slide_pressed,
             grapple_pressed=self.grapple_pressed,
             noclip_toggle_pressed=self.noclip_toggle_pressed,
+            weapon_slot_select=self.weapon_slot_select,
             key_w_held=self.key_w_held,
             key_a_held=self.key_a_held,
             key_s_held=self.key_s_held,
@@ -100,6 +129,7 @@ class _InputCommand:
             slide_pressed=frame.slide_pressed,
             grapple_pressed=frame.grapple_pressed,
             noclip_toggle_pressed=frame.noclip_toggle_pressed,
+            weapon_slot_select=getattr(frame, "weapon_slot_select", 0),
             key_w_held=frame.key_w_held,
             key_a_held=frame.key_a_held,
             key_s_held=frame.key_s_held,
@@ -119,6 +149,13 @@ class _InputCommand:
 def poll_mouse_look_delta(host) -> None:
     if host.cfg.smoke or not host._pointer_locked:
         host._last_mouse = None
+        setattr(host, "_mouse_capture_blocked", True)
+        return
+    if not _window_allows_pointer_capture(host):
+        host._last_mouse = None
+        host._mouse_dx_accum = 0.0
+        host._mouse_dy_accum = 0.0
+        setattr(host, "_mouse_capture_blocked", True)
         return
 
     # Center-snap approach: read cursor pixel offset from window center, accumulate,
@@ -127,6 +164,10 @@ def poll_mouse_look_delta(host) -> None:
     # drifting to the window edge and escaping.
     cx = host.win.getXSize() // 2
     cy = host.win.getYSize() // 2
+    if bool(getattr(host, "_mouse_capture_blocked", False)):
+        setattr(host, "_mouse_capture_blocked", False)
+        host.win.movePointer(0, cx, cy)
+        return
     pointer = host.win.getPointer(0)
     dx = float(pointer.getX() - cx)
     dy = float(pointer.getY() - cy)
@@ -189,8 +230,8 @@ def sample_live_input_command(host, *, menu_open: bool) -> _InputCommand:
     move_right = 0
     jump_held = False
     slide_down = False
+    fire_down = False
     grapple_down = False
-    mouse_right_down = False
     noclip_toggle_down = False
     demo_save_down = False
     key_w_held = False
@@ -201,6 +242,7 @@ def sample_live_input_command(host, *, menu_open: bool) -> _InputCommand:
     arrow_down_held = False
     arrow_left_held = False
     arrow_right_held = False
+    weapon_slot_select = 0
     if not menu_open:
         move_forward, move_right = move_axes_from_keyboard(host)
         key_w_held = is_key_down(host, "w") or is_key_down(host, "ц")
@@ -213,10 +255,21 @@ def sample_live_input_command(host, *, menu_open: bool) -> _InputCommand:
         arrow_right_held = bool(host.mouseWatcherNode and host.mouseWatcherNode.isButtonDown(KeyboardButton.right()))
         jump_held = is_key_down(host, "space")
         slide_down = is_key_down(host, "shift")
-        grapple_down = is_key_down(host, "mouse1")
-        mouse_right_down = is_key_down(host, "mouse3")
+        # Combat fire is bound to LMB; grapple is bound to RMB.
+        fire_down = is_key_down(host, "mouse1")
+        grapple_down = is_key_down(host, "mouse3")
         noclip_toggle_down = is_key_down(host, host._noclip_toggle_key)
         demo_save_down = is_key_down(host, host._demo_save_key)
+    slot_prev_raw = getattr(host, "_prev_weapon_slot_down", None)
+    slot_prev = list(slot_prev_raw) if isinstance(slot_prev_raw, list) else [False, False, False, False]
+    if len(slot_prev) != 4:
+        slot_prev = [False, False, False, False]
+    for idx, key in enumerate(("1", "2", "3", "4")):
+        down = (not menu_open) and is_key_down(host, key)
+        if down and not bool(slot_prev[idx]):
+            weapon_slot_select = idx + 1
+        slot_prev[idx] = bool(down)
+    host._prev_weapon_slot_down = slot_prev
 
     cmd = _InputCommand(
         look_dx=look_dx,
@@ -230,6 +283,7 @@ def sample_live_input_command(host, *, menu_open: bool) -> _InputCommand:
         slide_pressed=(not menu_open) and slide_down,
         grapple_pressed=(not menu_open) and grapple_down and (not host._prev_grapple_down),
         noclip_toggle_pressed=(not menu_open) and noclip_toggle_down and (not host._prev_noclip_toggle_down),
+        weapon_slot_select=int(weapon_slot_select),
         key_w_held=(not menu_open) and key_w_held,
         key_a_held=(not menu_open) and key_a_held,
         key_s_held=(not menu_open) and key_s_held,
@@ -238,8 +292,8 @@ def sample_live_input_command(host, *, menu_open: bool) -> _InputCommand:
         arrow_down_held=(not menu_open) and arrow_down_held,
         arrow_left_held=(not menu_open) and arrow_left_held,
         arrow_right_held=(not menu_open) and arrow_right_held,
-        mouse_left_held=(not menu_open) and grapple_down,
-        mouse_right_held=(not menu_open) and mouse_right_down,
+        mouse_left_held=(not menu_open) and fire_down,
+        mouse_right_held=(not menu_open) and grapple_down,
         raw_wasd_available=(not menu_open),
         raw_arrows_available=(not menu_open),
         raw_mouse_buttons_available=(not menu_open),
