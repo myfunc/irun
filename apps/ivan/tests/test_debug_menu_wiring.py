@@ -117,6 +117,60 @@ class _DownStepProbeCollision:
         return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
 
 
+class _CenterSurfOffsetGroundCollision:
+    def update_player_sweep_shape(self, *, player_radius: float, player_half_height: float) -> None:
+        _ = player_radius, player_half_height
+
+    def sweep_closest(self, from_pos: LVector3f, to_pos: LVector3f):
+        d = LVector3f(to_pos - from_pos)
+        if float(d.z) >= -1e-6:
+            return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
+        if abs(float(from_pos.x)) < 0.03 and abs(float(from_pos.y)) < 0.03:
+            # Center probe catches an oblique riser edge (surf-like normal).
+            return _FakeHit(True, LVector3f(0.995, 0.0, 0.10), hit_fraction=0.06)
+        if abs(float(from_pos.x)) > 0.14 or abs(float(from_pos.y)) > 0.14:
+            # Nearby footprint offset still has valid walkable support.
+            return _FakeHit(True, LVector3f(0.0, 0.0, 1.0), hit_fraction=0.32)
+        return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
+
+
+class _LiftedOnlyGroundProbeCollision:
+    def __init__(self, *, base_z: float) -> None:
+        self._base_z = float(base_z)
+
+    def update_player_sweep_shape(self, *, player_radius: float, player_half_height: float) -> None:
+        _ = player_radius, player_half_height
+
+    def sweep_closest(self, from_pos: LVector3f, to_pos: LVector3f):
+        d = LVector3f(to_pos - from_pos)
+        if float(d.z) >= -1e-6:
+            return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
+        if float(from_pos.z) <= (self._base_z + 0.02):
+            # Direct down sweeps are blocked by a step face near the feet.
+            return _FakeHit(True, LVector3f(1.0, 0.0, 0.0), hit_fraction=0.04)
+        # Slightly lifted probe can see the walkable top behind that face.
+        return _FakeHit(True, LVector3f(0.0, 0.0, 1.0), hit_fraction=0.60)
+
+
+class _OffCenterLedgeCollision:
+    def update_player_sweep_shape(self, *, player_radius: float, player_half_height: float) -> None:
+        _ = player_radius, player_half_height
+
+    def sweep_closest(self, from_pos: LVector3f, to_pos: LVector3f):
+        d = LVector3f(to_pos - from_pos)
+        if float(d.z) >= -1e-6:
+            return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
+        if abs(float(from_pos.x)) > 0.14 or abs(float(from_pos.y)) > 0.14:
+            # Decorative seam/ledge far from center support footprint.
+            return _FakeHit(
+                True,
+                LVector3f(0.0, 0.0, 1.0),
+                hit_pos=LVector3f(0.33, 0.0, float(from_pos.z) - 0.015),
+                hit_fraction=0.30,
+            )
+        return _FakeHit(False, LVector3f(0.0, 0.0, 1.0))
+
+
 def test_all_numeric_debug_controls_exist_have_tooltips_and_are_wired() -> None:
     numeric_fields = [name for name, _lo, _hi in DebugUI.NUMERIC_CONTROLS]
     assert len(numeric_fields) == len(set(numeric_fields))
@@ -270,7 +324,7 @@ def test_wallrun_does_not_cancel_upward_jump_velocity() -> None:
     tuning = PhysicsTuning(wallrun_enabled=True)
     ctrl = _make_controller(tuning)
     ctrl.grounded = False
-    ctrl.vel = LVector3f(3.0, 0.0, 7.0)
+    ctrl.vel = LVector3f(1.0, 4.0, 7.0)
     ctrl._wall_contact_timer = 0.0
     ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
 
@@ -282,7 +336,7 @@ def test_wallrun_sets_active_state_and_camera_roll_indicator() -> None:
     tuning = PhysicsTuning(wallrun_enabled=True)
     ctrl = _make_controller(tuning)
     ctrl.grounded = False
-    ctrl.vel = LVector3f(4.0, 0.0, 0.0)
+    ctrl.vel = LVector3f(1.2, 4.0, 0.0)
     ctrl._wall_contact_timer = 0.0
     ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
 
@@ -290,6 +344,48 @@ def test_wallrun_sets_active_state_and_camera_roll_indicator() -> None:
 
     assert ctrl.is_wallrunning()
     assert ctrl.wallrun_camera_roll_deg(yaw_deg=0.0) < -0.1
+
+
+def test_wallrun_entry_speed_gate_is_capped_for_high_vmax_profiles() -> None:
+    ctrl = _make_controller(
+        PhysicsTuning(
+            wallrun_enabled=True,
+            max_ground_speed=12.0,
+            wallrun_min_entry_speed_mult=0.45,
+        )
+    )
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(1.6, 3.2, -0.8)
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
+
+    ctrl.step(dt=0.016, wish_dir=LVector3f(1.0, 1.0, 0.0), yaw_deg=0.0, crouching=False)
+
+    assert ctrl.is_wallrunning() is True
+
+
+def test_wallrun_does_not_engage_on_head_on_wall_impact() -> None:
+    ctrl = _make_controller(PhysicsTuning(wallrun_enabled=True))
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(5.0, 0.0, -1.0)
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
+
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 0, 0), yaw_deg=0.0, crouching=False)
+
+    assert ctrl.is_wallrunning() is False
+
+
+def test_wallrun_does_not_engage_on_pure_parallel_brush() -> None:
+    ctrl = _make_controller(PhysicsTuning(wallrun_enabled=True))
+    ctrl.grounded = False
+    ctrl.vel = LVector3f(0.0, 6.0, -1.0)
+    ctrl._wall_contact_timer = 0.0
+    ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
+
+    ctrl.step(dt=0.016, wish_dir=LVector3f(0, 1, 0), yaw_deg=0.0, crouching=False)
+
+    assert ctrl.is_wallrunning() is False
 
 
 def test_wallrun_camera_roll_clears_soon_after_contact_loss() -> None:
@@ -322,7 +418,7 @@ def test_wallrun_jump_biases_to_camera_forward_direction() -> None:
     )
     ctrl = _make_controller(tuning)
     ctrl.grounded = False
-    ctrl.vel = LVector3f(5.0, 0.0, -1.0)
+    ctrl.vel = LVector3f(-1.5, 5.0, -1.0)
     ctrl._wall_contact_timer = 0.0
     ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)  # wall peel-away points +X
     ctrl.queue_jump()
@@ -347,7 +443,7 @@ def test_wallrun_jump_clears_wallrun_state_and_contact_immediately() -> None:
     )
     ctrl = _make_controller(tuning)
     ctrl.grounded = False
-    ctrl.vel = LVector3f(5.0, 0.0, -1.0)
+    ctrl.vel = LVector3f(-1.5, 5.0, -1.0)
     ctrl._wall_contact_timer = 0.0
     ctrl._wall_normal = LVector3f(1.0, 0.0, 0.0)
     ctrl.queue_jump()
@@ -364,7 +460,7 @@ def test_wallrun_sink_t90_controls_descent_response() -> None:
     slow = _make_controller(PhysicsTuning(wallrun_enabled=True, wallrun_sink_t90=0.60))
     for ctrl in (fast, slow):
         ctrl.grounded = False
-        ctrl.vel = LVector3f(4.0, 0.0, -6.0)
+        ctrl.vel = LVector3f(1.2, 4.0, -6.0)
         ctrl._wall_contact_timer = 0.0
         ctrl._wall_normal = LVector3f(-1.0, 0.0, 0.0)
 
@@ -813,6 +909,58 @@ def test_ground_snap_distance_scales_with_step_height_for_descent() -> None:
     assert high.grounded is True
     # Larger step height should allow deeper stair-drop snap in one tick.
     assert float(high.pos.z) < float(low.pos.z)
+
+
+def test_ground_trace_prefers_nearby_walkable_over_center_surf_contact() -> None:
+    ctrl = _make_controller(PhysicsTuning(surf_enabled=True, surf_min_normal_z=0.05, surf_max_normal_z=0.72))
+    ctrl.collision = _CenterSurfOffsetGroundCollision()
+    ctrl.grounded = True
+    ctrl.pos = LVector3f(0.0, 0.0, 1.0)
+    ctrl.vel = LVector3f(0.0, 2.0, -0.05)
+
+    ctrl._bullet_ground_trace()
+
+    assert ctrl.grounded is True
+    assert float(ctrl.ground_normal().z) > 0.95
+
+
+def test_ground_trace_uses_lifted_probe_when_direct_sweeps_hit_step_face() -> None:
+    ctrl = _make_controller(PhysicsTuning(step_height=0.55))
+    ctrl.pos = LVector3f(0.0, 0.0, 1.0)
+    ctrl.collision = _LiftedOnlyGroundProbeCollision(base_z=float(ctrl.pos.z))
+    ctrl.grounded = True
+    ctrl.vel = LVector3f(0.0, 1.0, -0.05)
+
+    ctrl._bullet_ground_trace()
+
+    assert ctrl.grounded is True
+    assert float(ctrl.ground_normal().z) > 0.95
+
+
+def test_ground_snap_uses_lifted_probe_when_direct_sweep_is_blocked() -> None:
+    ctrl = _make_controller(PhysicsTuning(step_height=0.55, ground_snap_dist=0.02))
+    ctrl.pos = LVector3f(0.0, 0.0, 1.0)
+    ctrl.collision = _LiftedOnlyGroundProbeCollision(base_z=float(ctrl.pos.z))
+    ctrl.grounded = True
+    ctrl.vel = LVector3f(0.0, 1.0, -0.25)
+    pre_z = float(ctrl.pos.z)
+
+    ctrl._bullet_ground_snap()
+
+    assert ctrl.grounded is True
+    assert float(ctrl.pos.z) < pre_z
+
+
+def test_ground_trace_rejects_offcenter_false_ledge_support() -> None:
+    ctrl = _make_controller(PhysicsTuning(step_height=0.55, ground_snap_dist=0.056))
+    ctrl.collision = _OffCenterLedgeCollision()
+    ctrl.grounded = True
+    ctrl.pos = LVector3f(0.0, 0.0, 1.0)
+    ctrl.vel = LVector3f(0.0, 2.0, -0.05)
+
+    ctrl._bullet_ground_trace()
+
+    assert ctrl.grounded is False
 
 
 def test_slide_ignores_keyboard_strafe_and_uses_camera_yaw() -> None:

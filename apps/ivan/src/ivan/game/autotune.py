@@ -18,6 +18,9 @@ _INVARIANT_BOUNDS: dict[str, tuple[float, float]] = {
     "air_speed_mult": (0.50, 4.00),
     "air_gain_t90": (0.03, 1.20),
     "wallrun_sink_t90": (0.03, 1.20),
+    "wallrun_min_entry_speed_mult": (0.0, 1.50),
+    "wallrun_min_approach_dot": (0.0, 0.80),
+    "wallrun_min_parallel_dot": (0.0, 1.00),
     "jump_height": (0.20, 4.00),
     "jump_apex_time": (0.08, 1.20),
     "grace_period": (0.0, 0.35),
@@ -38,6 +41,11 @@ _TIMING_FIELDS: set[str] = {
     "grace_period",
 }
 _CAMERA_GAIN_FIELDS: set[str] = {"camera_tilt_gain", "camera_event_gain"}
+_WALLRUN_GATE_FIELDS: set[str] = {
+    "wallrun_min_entry_speed_mult",
+    "wallrun_min_approach_dot",
+    "wallrun_min_parallel_dot",
+}
 _ALLOWED_FIELDS: set[str] = set(_INVARIANT_BOUNDS.keys())
 _ROUTE_TAGS: set[str] = {"A", "B", "C"}
 
@@ -115,6 +123,8 @@ def _step_limit(field: str, base: float) -> float:
         return max(0.001, min(0.02, b * 0.08))
     if field in _CAMERA_GAIN_FIELDS:
         return 0.08
+    if field in _WALLRUN_GATE_FIELDS:
+        return 0.05
     if field == "camera_speed_fov_max_add":
         return max(0.20, b * 0.05)
     if field == "camera_base_fov":
@@ -228,7 +238,6 @@ def suggest_invariant_adjustments(
         return []
 
     metrics = dict(latest_summary.get("metrics") or {}) if isinstance(latest_summary, dict) else {}
-    history_metrics = dict(history_payload.get("metrics") or {}) if isinstance(history_payload, dict) else {}
     base_vals = {f: float(getattr(tuning, f)) for f in _ALLOWED_FIELDS}
     next_vals = dict(base_vals)
     reasons: dict[str, list[str]] = {f: [] for f in _ALLOWED_FIELDS}
@@ -258,6 +267,47 @@ def suggest_invariant_adjustments(
     intent_leniency_down = _has_any(text, ("too forgiving", "too much grace", "grace too high"))
     intent_wallrun_weak = _has_any(text, ("wallrun too short", "sink too fast", "can't wallrun far"))
     intent_wallrun_strong = _has_any(text, ("wallrun too strong", "wallrun too floaty", "sink too slow"))
+    intent_wallrun_aggressive = _has_any(
+        text,
+        (
+            "wallrun too aggressive",
+            "wallrun engages too easily",
+            "wallrun triggers too easily",
+            "accidental wallrun",
+            "unexpected wallrun",
+        ),
+    )
+    intent_wallrun_curved = _has_any(
+        text,
+        (
+            "curved wallrun",
+            "curve wallrun",
+            "wallrun curved",
+            "cant wallrun curved",
+            "can't wallrun curved",
+        ),
+    )
+    intent_wallrun_weak_general = _has_any(
+        text,
+        (
+            "wallrun doesnt work",
+            "wallrun doesn't work",
+            "cant wallrun",
+            "can't wallrun",
+            "wallrun not working",
+            "wallrun is not engaging",
+            "wallrun not engaging",
+            "wallrun isn't engaging",
+            "wallrun wont engage",
+            "wallrun won't engage",
+            "fall off the wall",
+            "fall of the wall",
+            "fall off wall",
+            "falling off the wall",
+            "slide off the wall",
+            "drop off the wall",
+        ),
+    )
     intent_slide_long = _has_any(text, ("slide too long", "slide keeps speed too much", "slide overpowered"))
     intent_slide_short = _has_any(text, ("slide too short", "slide loses speed too fast", "slide weak"))
 
@@ -300,8 +350,28 @@ def suggest_invariant_adjustments(
 
     if intent_wallrun_weak:
         set_mul("wallrun_sink_t90", 1.08, "intent: stronger wallrun hold")
+        set_mul("wallrun_min_entry_speed_mult", 0.95, "intent: easier wallrun entry speed")
+        set_add("wallrun_min_approach_dot", -0.015, "intent: easier wallrun approach")
+        set_add("wallrun_min_parallel_dot", -0.03, "intent: easier tangent carry")
     if intent_wallrun_strong:
         set_mul("wallrun_sink_t90", 0.92, "intent: weaker wallrun hold")
+        set_mul("wallrun_min_entry_speed_mult", 1.05, "intent: stricter wallrun entry speed")
+        set_add("wallrun_min_approach_dot", +0.015, "intent: stricter wallrun approach")
+        set_add("wallrun_min_parallel_dot", +0.03, "intent: stricter tangent requirement")
+    if intent_wallrun_aggressive:
+        set_mul("wallrun_min_entry_speed_mult", 1.08, "intent: reduce accidental wallrun engage")
+        set_add("wallrun_min_approach_dot", +0.020, "intent: require clearer wall approach")
+        set_add("wallrun_min_parallel_dot", +0.040, "intent: require stronger along-wall travel")
+    if intent_wallrun_curved:
+        set_mul("wallrun_sink_t90", 1.04, "intent: sustain curved wallrun")
+        set_mul("wallrun_min_entry_speed_mult", 0.96, "intent: easier curved wallrun speed gate")
+        set_add("wallrun_min_approach_dot", -0.015, "intent: tolerate shallow curved approach")
+        set_add("wallrun_min_parallel_dot", -0.040, "intent: tolerate curved tangent shifts")
+    if intent_wallrun_weak_general:
+        set_mul("wallrun_sink_t90", 1.06, "intent: improve wallrun sustain")
+        set_mul("wallrun_min_entry_speed_mult", 0.92, "intent: easier wallrun speed gate")
+        set_add("wallrun_min_approach_dot", -0.020, "intent: easier wallrun approach")
+        set_add("wallrun_min_parallel_dot", -0.040, "intent: easier wall tangent carry")
 
     if intent_slide_long:
         set_mul("slide_stop_t90", 0.92, "intent: shorten slide carry")

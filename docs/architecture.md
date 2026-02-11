@@ -136,6 +136,9 @@ See: `docs/ui-kit.md`.
   - character group also exposes `step_height` for live step-up/ground-contact tuning without reopening broader legacy slider surface
   - slide lane includes short ground-loss grace so transient slope contact jitter does not flap slide hull state (crouch/stand spam)
   - step-slide resolver now compares path progress along intended horizontal move direction and preserves grounded state from the selected path, matching Quake-style step intent under oblique stair contact
+  - ground trace/snap use footprint multi-probe fallback (plus a small lifted re-probe) when center downward sweeps are blocked by step faces, keeping grounded classification stable on angled stair edges
+  - ground contact filtering rejects near-level off-center side grazes from downward probes, preventing false grounded states along wall/ledge seams
+  - wallrun gating splits acquire vs sustain: stricter entry heuristics (intent/speed/approach/parallel) and softer sustain thresholds for curved wall continuity, with tunable gate fields
   - legacy direct run/gravity tuning fields are migrated to invariants and no longer part of active tuning schema
   - legacy air gain scalars are migrated (`max_air_speed`, `jump_accel`, `air_control`, `air_counter_strafe_brake`) and removed from active tuning schema
 - Feel diagnostics:
@@ -207,11 +210,15 @@ See: `docs/ui-kit.md`.
   - `Esc` opens gameplay menu and unlocks cursor.
   - `` ` `` opens debug/admin tuning menu and unlocks cursor.
   - `G` opens quick feel-capture popup during active gameplay (route/name/notes/feedback + save/export/apply + `Revert Last` buttons).
+  - entering quick feel-capture (`G`) snapshots/cuts the active replay recording immediately; export actions operate on that frozen run to avoid post-finish input contamination.
+  - while quick feel-capture is open, respawn hotkey handling is blocked so text-entry keys do not trigger gameplay restarts.
   - mouse center-snap look capture is automatically suspended when the window is unfocused/minimized and resumes with a one-frame recenter guard on focus return.
   - While either menu is open, gameplay input is blocked but simulation continues.
   - `Esc` menu can open a replay browser (`Replays`) to load saved input demos.
   - `Esc` menu Feel Session tab can export current run telemetry and apply feedback-based tuning changes.
   - Any feedback-driven apply path creates a pre-apply tuning backup snapshot for rollback safety.
+  - quick capture `Export + Apply` treats `run note` as fallback feedback text when feedback field is empty, then tries feel-feedback intents first and invariant-autotune suggestions as fallback.
+  - feedback intent parser includes explicit wallrun/false-ground phrase handling (including "wallrun is not engaging" / "fall off wall" variants) so in-game `Export + Apply` does not silently no-op on common phrasing variants.
   - Apply-feedback flow auto-runs route-scoped compare (latest route run vs prior route run) and reports deltas.
   - Route compare can also emit baseline + route-history context files for longer tuning sessions.
   - Replay playback shows a dedicated replay input HUD and keeps gameplay/menu inputs locked until exit (`R`).
