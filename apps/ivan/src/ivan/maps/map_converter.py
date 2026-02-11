@@ -494,6 +494,37 @@ def _clear_texture_cache_dir(cache_dir: Path) -> None:
         pass
 
 
+def _load_loose_textures(
+    *,
+    texture_dirs: list[Path],
+    referenced_names: set[str],
+) -> tuple[dict[str, Path], dict[str, tuple[int, int]]]:
+    """Load loose image textures from directories as fallback albedo sources."""
+    if not referenced_names:
+        return {}, {}
+    allowed_ext = {".png", ".jpg", ".jpeg", ".tga", ".bmp"}
+    ref_cf = {name.casefold() for name in referenced_names}
+    materials: dict[str, Path] = {}
+    texture_sizes: dict[str, tuple[int, int]] = {}
+    for base in texture_dirs:
+        if not base.exists() or not base.is_dir():
+            continue
+        for p in base.rglob("*"):
+            if not p.is_file() or p.suffix.lower() not in allowed_ext:
+                continue
+            key = p.stem.casefold()
+            if key not in ref_cf or key in materials:
+                continue
+            materials[key] = p
+            try:
+                with Image.open(p) as img:
+                    texture_sizes[key] = (int(img.width), int(img.height))
+            except Exception:
+                # Keep albedo path even when metadata read fails.
+                pass
+    return materials, texture_sizes
+
+
 # ---------------------------------------------------------------------------
 # Triangle dict helpers
 # ---------------------------------------------------------------------------
@@ -723,16 +754,42 @@ def convert_map_file(
         )
     _mark_stage("extract_textures", t0)
 
-    # ── 6. Check for missing texture sizes ─────────────────────────────
-    #    If a face references a texture not in texture_sizes, UVs default
-    #    to (1,1) producing pixel-space coordinates (wrong tiling).
+    # ── 6. Discover referenced texture names ───────────────────────────
     t0 = time.perf_counter()
     all_tex_names: set[str] = set()
     for ent in entities:
         for brush in ent.brushes:
             for face in brush.faces:
                 if face.texture:
-                    all_tex_names.add(face.texture.lower())
+                    all_tex_names.add(face.texture.casefold())
+    _mark_stage("scan_texture_references", t0)
+
+    # ── 6a. Fallback to loose textures (editor texture folders) ───────
+    t0 = time.perf_counter()
+    loose_dirs = [
+        map_dir / "textures",
+        ivan_app_root() / "assets" / "textures_tb",
+    ]
+    loose_materials, loose_sizes = _load_loose_textures(
+        texture_dirs=loose_dirs,
+        referenced_names=all_tex_names,
+    )
+    added = 0
+    for key, tex_path in loose_materials.items():
+        if key not in tex_materials:
+            tex_materials[key] = tex_path
+            added += 1
+    for key, size in loose_sizes.items():
+        if key not in texture_sizes:
+            texture_sizes[key] = size
+    if added:
+        logger.info("Resolved %d referenced textures from loose image folders", added)
+    _mark_stage("resolve_loose_textures", t0)
+
+    # ── 6b. Check for missing texture sizes ────────────────────────────
+    #    If a face references a texture not in texture_sizes, UVs default
+    #    to (1,1) producing pixel-space coordinates (wrong tiling).
+    t0 = time.perf_counter()
     missing = all_tex_names - set(texture_sizes.keys())
     if missing:
         logger.warning(
@@ -741,7 +798,7 @@ def convert_map_file(
         )
     else:
         logger.info("All %d texture sizes resolved OK", len(all_tex_names))
-    _mark_stage("scan_texture_references", t0)
+    _mark_stage("scan_texture_size_gaps", t0)
 
     # ── 6b. Convert worldspawn brushes ─────────────────────────────────
     all_tri_dicts: list[dict] = []

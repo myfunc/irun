@@ -38,11 +38,20 @@ def sanitize_pack_profile(raw: str, *, default: str = "dev-fast") -> str:
 def resolve_launch_plan(
     *,
     selected_map: Path | None,
+    assigned_pack: Path | None = None,
     use_advanced: bool = True,
     advanced: AdvancedOverrides | None = None,
 ) -> ResolvedLaunchPlan:
+    """Resolve launch plan from selected map and optional assigned pack.
+
+    When assigned_pack is set and valid, launch uses the pack (.irunmap) path.
+    Otherwise launch uses the source .map path.
+    """
     if selected_map is None:
         raise ValueError("Select a .map file before launching.")
+
+    # Prefer pack when assigned and exists
+    launch_path = assigned_pack if (assigned_pack and assigned_pack.is_file()) else selected_map
 
     watch = DEFAULT_WATCH
     runtime_lighting = DEFAULT_RUNTIME_LIGHTING
@@ -52,7 +61,7 @@ def resolve_launch_plan(
         runtime_lighting = bool(advanced.runtime_lighting)
 
     return ResolvedLaunchPlan(
-        map_path=str(selected_map),
+        map_path=str(launch_path),
         map_profile=DEFAULT_MAP_PROFILE,
         watch=watch,
         runtime_lighting=runtime_lighting,

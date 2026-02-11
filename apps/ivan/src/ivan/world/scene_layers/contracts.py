@@ -36,6 +36,7 @@ class SceneLayerContract(Protocol):
     _vis_deferred_lightmaps: dict[int, dict]
     _vis_initial_world_face_flags: bytearray | None
     _runtime_only_lighting: bool
+    _pixelated_textures: bool
     _runtime_path_label: str
     _runtime_path_source: str
     _runtime_entry_kind: str

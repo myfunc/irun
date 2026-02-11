@@ -33,6 +33,11 @@ coverage.xml
 apps/ivan/assets/imported/
 apps/ivan/assets/imported/halflife/valve/pool_party/
 
+# TrenchBroom generated outputs (run sync_trenchbroom_profile.py)
+apps/ivan/trenchbroom/generated/manifest.json
+apps/ivan/trenchbroom/generated/editor_paths.json
+apps/ivan/trenchbroom/generated/textures/
+
 # Local TrenchBroom/compile scratch outputs (do not commit)
 apps/ivan/assets/maps/*.bsp
 apps/ivan/assets/maps/*.log

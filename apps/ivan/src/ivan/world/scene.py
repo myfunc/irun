@@ -113,6 +113,7 @@ class WorldScene:
         self._vis_deferred_lightmaps: dict[int, dict] = {}
         self._vis_initial_world_face_flags: bytearray | None = None
         self._runtime_only_lighting: bool = False
+        self._pixelated_textures: bool = True
         self._runtime_path_label: str = "uninitialized"
         self._runtime_path_source: str = "boot"
         self._runtime_entry_kind: str = "none"
@@ -153,6 +154,7 @@ class WorldScene:
 
     def build(self, *, cfg, loader, render, camera) -> None:
         self._begin_load_report(cfg=cfg)
+        self._pixelated_textures = bool(getattr(cfg, "pixelated_textures", True))
         self._world_root_np = render
         self._camera_np = camera
         self._build_lighting(render)
