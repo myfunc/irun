@@ -45,6 +45,10 @@ class ReplayBrowserUI:
     def is_visible(self) -> bool:
         return self._visible
 
+    @property
+    def root(self):
+        return self._menu.root
+
     def tick(self, now: float) -> None:
         if self._visible:
             self._menu.tick(now)

@@ -170,6 +170,10 @@ class ListMenu:
     def hide(self) -> None:
         self._root.hide()
 
+    @property
+    def root(self):
+        return self._root
+
     def set_title(self, title: str) -> None:
         try:
             if getattr(self._panel, "title", None) is not None:
