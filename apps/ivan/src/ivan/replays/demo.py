@@ -23,6 +23,7 @@ class DemoFrame:
     slide_pressed: bool
     grapple_pressed: bool
     noclip_toggle_pressed: bool
+    weapon_slot_select: int = 0
     key_w_held: bool = False
     key_a_held: bool = False
     key_s_held: bool = False
@@ -128,6 +129,7 @@ def save_recording(rec: DemoRecording) -> Path:
                 "dp": bool(f.slide_pressed),
                 "gp": bool(f.grapple_pressed),
                 "nt": bool(f.noclip_toggle_pressed),
+                "ws": int(max(0, min(4, int(f.weapon_slot_select)))),
                 "kw": bool(f.key_w_held),
                 "ka": bool(f.key_a_held),
                 "ks": bool(f.key_s_held),
@@ -193,6 +195,7 @@ def load_replay(path: Path) -> DemoRecording:
                 slide_pressed=bool(row.get("sp")) or bool(row.get("dp")),
                 grapple_pressed=bool(row.get("gp")),
                 noclip_toggle_pressed=bool(row.get("nt")),
+                weapon_slot_select=max(0, min(4, int(row.get("ws") or 0))),
                 # v3+ explicit held states for accurate replay HUD.
                 # Fallbacks preserve readable behavior for older demos.
                 key_w_held=bool(row.get("kw")) if "kw" in row else int(row.get("mf") or 0) > 0,

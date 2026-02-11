@@ -68,4 +68,9 @@ Items temporarily on hold pending further analysis:
 - 11) Momentum-policy architecture hardening (for feature scalability: grapple variants, rocket jumps, trap impulses, etc.): **in progress**
   - landed: targeted momentum transition policy (removed broad per-tick speed floors; reduced high-speed ricochet artifacts)
   - landed: slope-aware slide dynamics (downhill gains speed, uphill loses speed)
+  - landed: combat sandbox prototype with slot-based impulse actions (`1-4`) including rocket-jump burst (slot `3`) and pulse dash (slot `4`), wired into deterministic replay input (`ws`)
+  - landed: control remap for combat flow (`LMB` fire, `RMB` grapple) plus slot `1/2` redesign (`blink` teleport-to-aim and `slam`) and short combo-chain sustain/burst behavior
+  - landed: per-slot combat presentation layer (weapon kick animation + procedural particle bursts + visible projectile tracers + improved procedural textures)
+  - landed: synthesized runtime SFX layer (weapon, grapple, footsteps) with pause-menu settings sliders (`Master` and `SFX`)
+  - landed: combat juice pass for impact readability/feel (heavier rocket explosions, shockwave rings, impact-scaled view punch, and layered rocket/pulse impact audio)
   - next: move more collision/constraint edge-cases to policy-driven impulse budget hooks

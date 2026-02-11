@@ -7,9 +7,9 @@
 - Ivan: debug-tuned parameters persist to local state and load as next-run defaults
 - Ivan: debug panel upgraded to grouped, collapsible, scrollable CS-style boxed layout with real-unit sliders/entries
 - Ivan: debug profile manager with default presets (`surf_bhop_c2`, `surf_bhop`, `bhop`, `surf`, `surf_sky2_server`), immediate per-profile setting restore on switch, and persistent custom profile saves
-- Ivan: in-game menu on `Esc` (Resume, Map Selector, Key Bindings, Back to Main Menu, Quit)
+- Ivan: in-game menu on `Esc` (Resume, Map Selector, Settings, Back to Main Menu, Quit)
 - Ivan: debug/admin panel moved to `` ` `` (tilde/backtick)
-- Ivan: rebindable noclip toggle (default `V`) via in-game Key Bindings
+- Ivan: rebindable noclip toggle (default `V`) via in-game Settings tab
 - Ivan: in-game menu/debug UI block gameplay input but keep simulation running (no pause)
 - Ivan: classic center crosshair (Half-Life/CS style) visible during active gameplay
 - Ivan: input debug overlay (`F2`) for keyboard/mouse troubleshooting
@@ -236,7 +236,25 @@
   - server-side lag compensation for grapple hit checks (rewind by client tick hint)
   - health system with grapple damage (`20` per hit) and corner HP HUD
 - Ivan: autojump toggle (hold jump to continue hopping)
-- Ivan: grapple hook traversal (attach/detach on LMB, one-shot attach boost, rope swing constraint)
+- Ivan: grapple hook traversal (attach/detach on RMB, one-shot attach boost, rope swing constraint)
+- Ivan: combat sandbox prototype (movement-first)
+  - weapon slots `1-4` with fixed per-slot cooldowns
+  - controls: fire on `LMB` (`mouse1`), grapple on `RMB` (`mouse3`)
+  - slot `1` is now `blink`: line-of-sight teleport to aimed point (with collision-safe landing offset)
+  - slot `2` is now `slam`: aim-driven boost shot for aggressive launch lines (down-aim boosts upward launch strength)
+  - slot `3` rocket burst supports consistent self-boost/rocket-jump near impact surfaces
+  - slot `4` pulse dash adds a forward-up burst for fast route re-direction
+  - rocket and pulse cooldowns/impulses were tightened for faster chaining and punchier route correction
+  - combo chain system: repeated weapon use in a short window grants temporary sustain boost and burst pop at higher stacks
+  - visible projectile tracers are now rendered for combat shots (slot-styled travel visuals to impact)
+  - combat visuals now use richer procedural textures for weapon mesh, projectile tracers, and particles
+  - each slot now has dedicated first-person weapon kick animation (per-slot recoil timing/shape)
+  - each slot now has distinct particle VFX (muzzle burst and impact-style particles; rocket now adds heavier multi-layer explosion bursts with embers/smoke/shockwave rings)
+  - combat view-punch feedback now reacts to weapon fire and scales up on nearby heavy impacts
+  - synthesized weapon and movement SFX are now present (per-slot weapon sounds, grapple attach/detach, walk/run footsteps) with extra impact-layer sounds for rocket/pulse hits
+  - in-game Settings tab (ESC menu) now includes audio controls (`Master Volume`, `SFX Volume`) and keybinding controls
+  - replay input format now records weapon slot switches (`ws`) for deterministic playback of combat-assisted movement lines
+  - multiplayer note: combat actions are currently local/offline-only; networked sessions keep server-authoritative movement without local combat impulses
 - Ivan: vault is enabled by default (runtime toggle in debug menu)
 - Ivan: surf prototype on slanted surfaces (strafe-held surf with live tuning controls)
 - Ivan: legacy-style surf preset (`surf_sky2_server`) approximating public surf_ski_2/surf_sky_2 server cvars
