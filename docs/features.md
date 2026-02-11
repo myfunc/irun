@@ -54,6 +54,8 @@
 - Ivan: slide grounding stability pass
   - short slide ground-loss grace prevents one-tick grounded/airborne flicker from forcing repeated crouch/stand transitions on sloped descents
   - ground probing now incorporates step-aware distance/hysteresis to reduce slope contact jitter
+  - ground trace/snap now re-check nearby footprint offsets (including a small lifted re-probe) when center sweep hits step faces/surf-like edges, reducing angled-step grounded flicker and jitter
+  - downward probe validation now rejects near-level side grazes away from capsule center, reducing false "ledge ground" cases where players could walk on wall seams
   - step-slide path choice now prefers progress along intended move direction (not only raw distance), reducing diagonal "push along step face" behavior
   - step-slide now preserves grounded state from the selected path result (fixes false airborne flags on stair descent path comparisons)
 - Ivan: pointer-capture focus safety
@@ -61,6 +63,9 @@
   - on focus return, one recenter frame is swallowed to avoid a large first-frame look spike
 - Ivan: wallrun feedback polish
   - wallrun is now enabled by default in the base tuning profile (`wallrun_enabled=True`)
+  - wallrun engagement now requires intent-like motion gates (minimum entry speed, minimum into-wall approach, and minimum along-wall travel), reducing accidental activation from incidental wall brushes
+  - wallrun now uses stricter acquire gates but softer sustain gates once active, improving curved-wall continuity without restoring accidental first-contact engages
+  - new wallrun engagement gates are runtime-tunable in debug UI (`wallrun_min_entry_speed_mult`, `wallrun_min_approach_dot`, `wallrun_min_parallel_dot`)
   - while wallrunning, camera now applies slight roll tilt away from the wall as an engagement indicator
   - wallrun jump now biases horizontal launch direction toward camera forward heading (while still peeling off wall)
   - wallrun jump now enforces a minimum peel-away horizontal component opposite the wall so jump-off gains reliable wall-exit distance
@@ -177,8 +182,12 @@
   - export/apply flow stores route/comment metadata into replay summary export history, clears feedback input, and confirms save in-panel
 - Ivan: quick feel capture popup (`G` while playing)
   - route selector (`A/B/C`) + free text fields (`route name`, `run notes`, `feedback`)
+  - opening the popup now immediately freezes the current run recording (saves and stages that replay) so notes/editing do not append extra post-finish ticks
+  - while popup is open, gameplay respawn hotkey (`R`) is blocked to prevent accidental run restarts while typing notes
   - one-click `Save + Export` writes current run telemetry and route-scoped comparisons
   - optional `Export + Apply` runs the same export path, snapshots current tuning backup, and then applies feedback-driven tuning suggestions
+  - `Export + Apply` now falls back to `run notes` text when `feedback` field is empty, preventing accidental no-op applies from writing notes in the wrong field
+  - feedback intent parsing now recognizes curved-wallrun, non-engaging wallrun, and false-ground phrasing (for example "wallrun is not engaging, i fall of the wall", "curved wallruns dont work", and "walk along bottom ledge where there is no ground"), reducing false `no tuning changes` results
   - added `Revert Last` button to restore the latest tuning backup directly from popup UI (no console command needed)
   - route compare history now includes:
     - latest vs preferred prior run (prefers prior runs with notes/feedback)

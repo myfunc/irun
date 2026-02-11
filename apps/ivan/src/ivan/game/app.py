@@ -129,6 +129,7 @@ class RunnerDemo(ShowBase):
         self._replay_browser_open = False
         self._console_open = False
         self._feel_capture_open = False
+        self._feel_capture_staged_demo_path: Path | None = None
         self._mode: str = "boot"  # boot | menu | game
         self._last_mouse: tuple[float, float] | None = None
         self._input_debug_until: float = 0.0
@@ -565,6 +566,7 @@ class RunnerDemo(ShowBase):
         self._replay_browser_open = False
         self._console_open = False
         self._feel_capture_open = False
+        self._feel_capture_staged_demo_path = None
         self._awaiting_noclip_rebind = False
         self.pause_ui.hide()
         try:
@@ -590,6 +592,7 @@ class RunnerDemo(ShowBase):
         self._replay_browser_open = False
         self._console_open = False
         self._feel_capture_open = False
+        self._feel_capture_staged_demo_path = None
         self._awaiting_noclip_rebind = False
         try:
             self.feel_capture_ui.hide()
@@ -812,6 +815,7 @@ class RunnerDemo(ShowBase):
             return
         self._console_open = False
         self._feel_capture_open = False
+        self._feel_capture_staged_demo_path = None
         try:
             self.feel_capture_ui.hide()
         except Exception:
@@ -987,6 +991,7 @@ class RunnerDemo(ShowBase):
             self._replay_browser_open = False
             self._console_open = False
             self._feel_capture_open = False
+            self._feel_capture_staged_demo_path = None
             self._awaiting_noclip_rebind = False
             self._pointer_locked = True
             self._last_mouse = None
@@ -1984,6 +1989,9 @@ class RunnerDemo(ShowBase):
             self._start_new_demo_recording()
 
     def _on_respawn_pressed(self) -> None:
+        if bool(getattr(self, "_feel_capture_open", False)):
+            self.ui.set_status("Feel capture is open. Close it before respawn.")
+            return
         if bool(getattr(self, "_playback_active", False)):
             self._stop_replay_playback(reason="Exited replay.")
             self._do_respawn(from_mode=True)

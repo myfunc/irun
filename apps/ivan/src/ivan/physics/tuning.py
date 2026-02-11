@@ -40,6 +40,10 @@ class PhysicsTuning:
     slide_eye_height_mult: float = 0.78
     wall_jump_boost: float = 5.534
     wall_jump_cooldown: float = 1.0
+    # Wallrun entry gates: reduce accidental auto-engage from incidental wall touches.
+    wallrun_min_entry_speed_mult: float = 0.45
+    wallrun_min_approach_dot: float = 0.08
+    wallrun_min_parallel_dot: float = 0.30
     surf_accel: float = 55.0
     surf_gravity_scale: float = 1.0
     surf_min_normal_z: float = 0.05

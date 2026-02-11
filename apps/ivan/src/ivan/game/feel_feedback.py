@@ -21,6 +21,9 @@ _BOUNDS: dict[str, tuple[float, float]] = {
     "air_speed_mult": (0.5, 4.0),
     "air_gain_t90": (0.03, 1.2),
     "wallrun_sink_t90": (0.03, 1.2),
+    "wallrun_min_entry_speed_mult": (0.0, 1.5),
+    "wallrun_min_approach_dot": (0.0, 0.8),
+    "wallrun_min_parallel_dot": (0.0, 1.0),
     "surf_accel": (0.0, 120.0),
     "step_height": (0.0, 1.2),
     "ground_snap_dist": (0.0, 0.6),
@@ -101,6 +104,62 @@ def suggest_adjustments(
     )
     intent_mouse_fast = _has_any(text, ("mouse too fast", "look too fast", "camera too sensitive", "too twitchy"))
     intent_mouse_slow = _has_any(text, ("mouse too slow", "look too slow", "camera too sluggish"))
+    intent_wallrun_aggressive = _has_any(
+        text,
+        (
+            "wallrun too aggressive",
+            "accidental wallrun",
+            "unexpected wallrun",
+            "wallrun engages too easily",
+            "wallrun triggers too easily",
+            "auto wallrun",
+        ),
+    )
+    intent_wallrun_curved_weak = _has_any(
+        text,
+        (
+            "curved wallrun",
+            "curve wallrun",
+            "wallrun curved",
+            "curved wallruns dont work",
+            "curved wallruns don't work",
+            "cant wallrun curved",
+            "can't wallrun curved",
+        ),
+    )
+    intent_wallrun_weak_general = _has_any(
+        text,
+        (
+            "wallrun doesnt work",
+            "wallrun doesn't work",
+            "cant wallrun",
+            "can't wallrun",
+            "wallrun not working",
+            "wallrun is not engaging",
+            "wallrun not engaging",
+            "wallrun isn't engaging",
+            "wallrun wont engage",
+            "wallrun won't engage",
+            "fall off the wall",
+            "fall of the wall",
+            "fall off wall",
+            "falling off the wall",
+            "slide off the wall",
+            "drop off the wall",
+        ),
+    )
+    intent_false_ground_ledge = _has_any(
+        text,
+        (
+            "walk along bottom ledge",
+            "walk along bottom ledge of the wallrun",
+            "can walk along bottom ledge",
+            "no ground",
+            "ledge with no ground",
+            "ghost ground",
+            "ground where there is no floor",
+        ),
+    )
 
     if not any(
         (
@@ -114,6 +173,10 @@ def suggest_adjustments(
             intent_air_steer_strong,
             intent_mouse_fast,
             intent_mouse_slow,
+            intent_wallrun_aggressive,
+            intent_wallrun_curved_weak,
+            intent_wallrun_weak_general,
+            intent_false_ground_ledge,
         )
     ):
         return []
@@ -159,6 +222,23 @@ def suggest_adjustments(
         set_mul("mouse_sensitivity", 0.95, "feedback: look too fast")
     if intent_mouse_slow:
         set_mul("mouse_sensitivity", 1.05, "feedback: look too slow")
+    if intent_wallrun_aggressive:
+        set_mul("wallrun_min_entry_speed_mult", 1.10, "feedback: reduce accidental wallrun engage")
+        set_add("wallrun_min_approach_dot", +0.03, "feedback: require clearer wallrun approach")
+        set_add("wallrun_min_parallel_dot", +0.05, "feedback: require stronger along-wall intent")
+    if intent_wallrun_curved_weak:
+        set_mul("wallrun_sink_t90", 1.04, "feedback: hold wallrun longer on curves")
+        set_mul("wallrun_min_entry_speed_mult", 0.93, "feedback: easier curved wallrun entry speed")
+        set_add("wallrun_min_approach_dot", -0.02, "feedback: allow shallow approach for curved walls")
+        set_add("wallrun_min_parallel_dot", -0.06, "feedback: allow curved wall tangent transitions")
+    if intent_wallrun_weak_general:
+        set_mul("wallrun_sink_t90", 1.06, "feedback: wallrun sustain feels weak")
+        set_mul("wallrun_min_entry_speed_mult", 0.90, "feedback: easier wallrun entry speed")
+        set_add("wallrun_min_approach_dot", -0.02, "feedback: easier wallrun approach")
+        set_add("wallrun_min_parallel_dot", -0.05, "feedback: easier along-wall carry")
+    if intent_false_ground_ledge:
+        set_add("ground_snap_dist", -0.010, "feedback: reduce ledge ghost-ground snap")
+        set_add("step_height", -0.020, "feedback: reduce low-ledge stickiness")
 
     out: list[TuningAdjustment] = []
     for field in sorted(next_values.keys()):

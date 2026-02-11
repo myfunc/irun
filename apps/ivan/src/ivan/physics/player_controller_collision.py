@@ -29,6 +29,108 @@ class PlayerControllerCollisionMixin:
         # Equivalent to Quake3 MIN_WALK_NORMAL (0.7) when max_slope_deg ~= 45.57.
         return float(math.cos(math.radians(max_slope_deg)))
 
+    def _is_walkable_ground_normal(self, normal: LVector3f, *, walkable_z: float) -> bool:
+        n = LVector3f(normal)
+        if n.lengthSquared() <= 1e-12:
+            return False
+        n.normalize()
+        if self._is_surf_normal(n):
+            return False
+        return float(n.z) > float(walkable_z)
+
+    def _is_ground_contact_point_valid(self, *, hit, start_pos: LVector3f) -> bool:
+        if not hasattr(hit, "getHitPos"):
+            return True
+        try:
+            p = LVector3f(hit.getHitPos())
+        except Exception:
+            return True
+        dx = float(p.x - start_pos.x)
+        dy = float(p.y - start_pos.y)
+        # A downward ground probe should not classify far side-of-capsule hits as floor.
+        max_xy = max(0.10, float(self.player_half.x) * 0.62)
+        if (dx * dx + dy * dy) > (max_xy * max_xy):
+            return False
+        drop = float(start_pos.z - p.z)
+        if drop < -1e-4:
+            return False
+        # Reject near-level side grazes (common on ledge/wall seams) while preserving
+        # center-foot contacts that keep grounded state stable.
+        min_drop = max(0.0, min(0.03, float(self.tuning.step_height) * 0.08))
+        if drop < min_drop:
+            center_xy = max(0.04, float(self.player_half.x) * 0.22)
+            if (dx * dx + dy * dy) > (center_xy * center_xy):
+                return False
+        # Require support to remain within a conservative center-foot disk; this blocks
+        # false grounded states on decorative wall base ledges outside true foot support.
+        cdx = float(p.x - self.pos.x)
+        cdy = float(p.y - self.pos.y)
+        support_r = max(0.08, float(self.player_half.x) * 0.52)
+        if (cdx * cdx + cdy * cdy) > (support_r * support_r):
+            return False
+        return True
+
+    def _ground_probe_offsets(self) -> tuple[LVector3f, ...]:
+        r = max(0.02, float(self.player_half.x) * 0.48)
+        d = r * 0.72
+        return (
+            LVector3f(0.0, 0.0, 0.0),
+            LVector3f(r, 0.0, 0.0),
+            LVector3f(-r, 0.0, 0.0),
+            LVector3f(0.0, r, 0.0),
+            LVector3f(0.0, -r, 0.0),
+            LVector3f(d, d, 0.0),
+            LVector3f(d, -d, 0.0),
+            LVector3f(-d, d, 0.0),
+            LVector3f(-d, -d, 0.0),
+        )
+
+    def _ground_probe_lift_distance(self) -> float:
+        # Lifted re-probe avoids immediate step-face hits while preserving original depth budget.
+        step_h = max(0.0, float(self.tuning.step_height))
+        return max(0.02, min(0.16, step_h * 0.33))
+
+    def _find_walkable_ground_contact(
+        self,
+        *,
+        down: LVector3f,
+        walkable_z: float,
+    ) -> tuple[LVector3f, float] | None:
+        if self.collision is None:
+            return None
+        best_normal: LVector3f | None = None
+        best_drop: float | None = None
+        base_drop_limit = max(1e-6, abs(float(down.z)))
+        for lift in (0.0, float(self._ground_probe_lift_distance())):
+            query_down = LVector3f(float(down.x), float(down.y), float(down.z) - float(lift))
+            query_len = abs(float(query_down.z))
+            if query_len <= 1e-8:
+                continue
+            for off in self._ground_probe_offsets():
+                start = LVector3f(self.pos + off)
+                if lift > 0.0:
+                    start.z += float(lift)
+                hit = self._bullet_sweep_closest(start, start + query_down)
+                if not hit.hasHit():
+                    continue
+                n = LVector3f(hit.getHitNormal())
+                if n.lengthSquared() > 1e-12:
+                    n.normalize()
+                if not self._is_walkable_ground_normal(n, walkable_z=walkable_z):
+                    continue
+                if not self._is_ground_contact_point_valid(hit=hit, start_pos=start):
+                    continue
+                frac = max(0.0, min(1.0, float(hit.getHitFraction())))
+                drop = max(0.0, float(query_len) * float(frac) - float(lift))
+                if drop > (base_drop_limit + 1e-5):
+                    continue
+                if best_drop is None or drop < best_drop:
+                    best_drop = float(drop)
+                    best_normal = LVector3f(n)
+        if best_normal is None or best_drop is None:
+            return None
+        return (LVector3f(best_normal), float(best_drop))
+
     def _walkable_ground_threshold(self) -> float:
         threshold = self._walkable_threshold_z(float(self.tuning.max_ground_slope_deg))
         # Add mild hysteresis when already grounded/sliding to reduce one-tick floor flicker
@@ -105,18 +207,36 @@ class PlayerControllerCollisionMixin:
         down = LVector3f(0, 0, -float(self._ground_probe_distance(for_snap=False)))
         hit = self._bullet_sweep_closest(self.pos, self.pos + down)
         if not hit.hasHit():
-            self.grounded = False
+            alt = self._find_walkable_ground_contact(down=down, walkable_z=walkable_z)
+            if alt is None:
+                self.grounded = False
+                return
+            self._ground_normal = LVector3f(alt[0])
+            self.grounded = True
             return
 
         n = LVector3f(hit.getHitNormal())
         if n.lengthSquared() > 1e-12:
             n.normalize()
-        if self._is_surf_normal(n):
+        if self._is_walkable_ground_normal(n, walkable_z=walkable_z) and self._is_ground_contact_point_valid(
+            hit=hit, start_pos=self.pos
+        ):
+            self._ground_normal = n
+            self.grounded = True
+            return
+        surf_contact = self._is_surf_normal(n)
+        if surf_contact:
             self._set_surf_contact(n)
+        alt = self._find_walkable_ground_contact(down=down, walkable_z=walkable_z)
+        if alt is not None:
+            self._ground_normal = LVector3f(alt[0])
+            self.grounded = True
+            return
+        if surf_contact:
             self.grounded = False
             return
         self._ground_normal = n
-        self.grounded = n.z > walkable_z
+        self.grounded = False
 
     def _bullet_slide_move(self, delta: LVector3f) -> None:
         # Iterative slide move (Quake-style): sweep -> move -> clip velocity -> repeat.
@@ -134,9 +254,10 @@ class PlayerControllerCollisionMixin:
             if remaining.lengthSquared() <= 1e-10:
                 break
 
+            sweep_from = LVector3f(pos)
             move = LVector3f(remaining)
             target = pos + move
-            hit = self._bullet_sweep_closest(pos, target)
+            hit = self._bullet_sweep_closest(sweep_from, target)
             if not hit.hasHit():
                 pos = target
                 break
@@ -155,7 +276,7 @@ class PlayerControllerCollisionMixin:
             # Contact classification.
             if self._is_surf_normal(n):
                 self._set_surf_contact(n)
-            elif n.z > walkable_z:
+            elif n.z > walkable_z and self._is_ground_contact_point_valid(hit=hit, start_pos=sweep_from):
                 self.grounded = True
                 self._ground_normal = LVector3f(n)
                 if self.vel.z < 0.0:
@@ -297,20 +418,30 @@ class PlayerControllerCollisionMixin:
             return
         down = LVector3f(0, 0, -down_dist)
         hit = self._bullet_sweep_closest(self.pos, self.pos + down)
-        if not hit.hasHit():
-            return
-        n = LVector3f(hit.getHitNormal())
-        if n.lengthSquared() > 1e-12:
-            n.normalize()
-        if self._is_surf_normal(n):
-            return
-        if n.z <= walkable_z:
+        chosen_normal: LVector3f | None = None
+        chosen_drop: float | None = None
+        if hit.hasHit():
+            n = LVector3f(hit.getHitNormal())
+            if n.lengthSquared() > 1e-12:
+                n.normalize()
+            if self._is_walkable_ground_normal(n, walkable_z=walkable_z) and self._is_ground_contact_point_valid(
+                hit=hit, start_pos=self.pos
+            ):
+                chosen_normal = LVector3f(n)
+                frac = max(0.0, min(1.0, float(hit.getHitFraction())))
+                chosen_drop = max(0.0, float(down_dist) * float(frac))
+        if chosen_normal is None or chosen_drop is None:
+            alt = self._find_walkable_ground_contact(down=down, walkable_z=walkable_z)
+            if alt is not None:
+                chosen_normal, chosen_drop = alt
+        if chosen_normal is None or chosen_drop is None:
             return
 
-        frac = max(0.0, float(hit.getHitFraction()) - 1e-4)
+        move_drop = max(0.0, min(float(down_dist), float(chosen_drop)) - 1e-4)
+        frac = float(move_drop) / max(1e-6, float(down_dist))
         self.pos = self.pos + down * frac
         self.grounded = True
-        self._ground_normal = LVector3f(n)
+        self._ground_normal = LVector3f(chosen_normal)
         if self.vel.z < 0.0:
             self._set_vertical_velocity(0.0, source=MotionWriteSource.COLLISION, reason="ground_snap")
 
