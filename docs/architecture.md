@@ -34,6 +34,9 @@ See: `docs/ui-kit.md`.
   - `apps/ivan/src/ivan/game/netcode.py`: client prediction/reconciliation + remote interpolation helpers
   - `apps/ivan/src/ivan/game/tuning_profiles.py`: tuning profile defaults + persistence helpers
   - `apps/ivan/src/ivan/game/input_system.py`: mouse/keyboard sampling + input command helpers
+  - `apps/ivan/src/ivan/game/combat_system.py`: offline combat sandbox orchestration (weapon slot state, per-slot cooldowns, and impulse-style firing actions)
+  - `apps/ivan/src/ivan/game/combat_fx.py`: weapon presentation layer (first-person weapon kick animation, per-slot particles/tracers, impact shockwaves, and fire/impact view-punch feedback)
+  - `apps/ivan/src/ivan/game/audio_system.py`: synthesized SFX runtime (weapon/grapple/footstep audio + impact layers, volume controls, local audio asset cache)
   - `apps/ivan/src/ivan/game/feel_diagnostics.py`: rolling frame/tick diagnostics buffer and JSON dump utility for movement feel analysis
   - `apps/ivan/src/ivan/game/determinism.py`: per-tick quantized state hashing + rolling determinism trace buffer
 - `apps/ivan/src/ivan/game/camera_observer.py`: read-only camera smoothing observer over solved simulation state
@@ -72,9 +75,11 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/physics/collision_world.py`: Bullet collision query world (convex sweeps against static geometry)
 - `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (CS-style grouped boxes, collapsible sections, scrollable content, real-unit sliders/entries, profile dropdown/save)
 - `apps/ivan/src/ivan/ui/main_menu.py`: main menu controller (bundle list + import flow + video settings)
-- `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game ESC menu (Resume/Map Selector/Key Bindings/Back/Quit) and keybinding controls
+- `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game ESC menu (Resume/Map Selector/Settings/Back/Quit) with settings, multiplayer, and feel-session tabs
   - Menu page uses a two-column action layout to keep all actions visible at gameplay resolutions.
+  - Settings page includes audio sliders (master/sfx) and keybinding controls.
   - Includes a Feel Session tab with route radio options (`A/B/C`), replay export, and feedback-driven tuning tweaks.
+- `apps/ivan/src/ivan/ui/pause_menu_settings_section.py`: focused settings subsection widget for pause menu settings tab (audio + keybind controls)
 - `apps/ivan/src/ivan/ui/feel_capture_ui.py`: in-game quick capture popup (`G`) for route-tagged save/export/apply flow, including one-click `Revert Last` rollback
 - `apps/ivan/src/ivan/ui/replay_browser_ui.py`: in-game replay browser overlay (UI kit list menu)
 - `apps/ivan/src/ivan/ui/replay_input_ui.py`: in-game replay input HUD (UI kit panel) for recorded command visualization
@@ -213,6 +218,18 @@ See: `docs/ui-kit.md`.
   - entering quick feel-capture (`G`) snapshots/cuts the active replay recording immediately; export actions operate on that frozen run to avoid post-finish input contamination.
   - while quick feel-capture is open, respawn hotkey handling is blocked so text-entry keys do not trigger gameplay restarts.
   - mouse center-snap look capture is automatically suspended when the window is unfocused/minimized and resumes with a one-frame recenter guard on focus return.
+  - combat sandbox controls:
+    - weapon slot select: `1`, `2`, `3`, `4`
+    - fire current slot: `LMB` / `mouse1`
+    - grapple action: `RMB` / `mouse3` (edge-triggered attach/detach)
+    - slot `1`: blink teleport to aimed line-of-sight point
+    - slot `2`: slam boost shot
+    - slot `3`: rocket burst (self-boost near impact for rocket-jump routing)
+    - slot `4`: pulse dash burst (forward/up impulse)
+    - short combo window adds temporary movement sustain/burst during rapid chains
+    - per-slot visuals: first-person kick animation + procedural particle bursts + visible projectile tracers; heavy impacts add shockwave rings and stronger explosion debris layering
+  - pause Settings tab includes keybind controls and volume sliders (`Master`, `SFX`).
+  - runtime audio uses synthesized local SFX with configurable volumes for footsteps, grapple, and weapon actions.
   - While either menu is open, gameplay input is blocked but simulation continues.
   - `Esc` menu can open a replay browser (`Replays`) to load saved input demos.
   - `Esc` menu Feel Session tab can export current run telemetry and apply feedback-based tuning changes.
@@ -223,9 +240,11 @@ See: `docs/ui-kit.md`.
   - Route compare can also emit baseline + route-history context files for longer tuning sessions.
   - Replay playback shows a dedicated replay input HUD and keeps gameplay/menu inputs locked until exit (`R`).
   - Replay input HUD prefers explicitly recorded held states (`WASD`, arrows, mouse buttons) over derived movement axes.
+  - Replay input frames now also store weapon-slot switch events (`ws`) so slot-based movement behavior replays deterministically.
   - `F2` input debug overlay includes rolling gameplay-feel telemetry (for movement/camera tuning passes).
   - Gameplay movement step supports optional noclip mode, optional autojump queueing, surf behavior on configured slanted surfaces, and grapple-rope constraint movement.
   - Grapple targeting uses collision-world ray queries (`ray_closest`) from camera center.
+  - Combat sandbox impulses are applied only in offline/replay simulation; connected multiplayer remains server-authoritative for gameplay actions.
   - Camera feedback effects are read-only and isolated behind compact camera invariants (`camera_feedback_enabled`, `camera_base_fov`, `camera_speed_fov_max_add`, `camera_tilt_gain`, `camera_event_gain`).
   - Wallrun behavior is enabled by default in base tuning (`wallrun_enabled=True`), with per-profile overrides still supported (for example `surf_sky2_server` keeps wallrun disabled).
 
