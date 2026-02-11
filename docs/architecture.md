@@ -97,6 +97,7 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/ui/feel_capture_ui.py`: in-game quick capture popup (`G`) for route-tagged save/export/apply flow, including one-click `Revert Last` rollback
 - `apps/ivan/src/ivan/ui/replay_browser_ui.py`: in-game replay browser overlay (UI kit list menu)
 - `apps/ivan/src/ivan/ui/replay_input_ui.py`: in-game replay input HUD (UI kit panel) for recorded command visualization
+- `apps/ivan/src/ivan/ui/ui_layout.py`: shared gameplay UI safe-area anchors and render-layer order tokens (`UILayers`)
 - `apps/ivan/src/ivan/console/command_bus.py`: typed console command contracts, argument schema validation, and structured execution results
 - `apps/ivan/src/ivan/console/scene_runtime.py`: scene/runtime command helpers for object introspection/manipulation + world controls
 - `apps/ivan/src/ivan/console/autotune_bindings.py`: console command wiring for route-scoped autotune V1 (`autotune_suggest/apply/eval/rollback`)
@@ -288,6 +289,7 @@ See: `docs/ui-kit.md`.
   - Replay input HUD prefers explicitly recorded held states (`WASD`, `Q/E`, arrows, mouse buttons) over derived movement axes.
   - Replay input frames now also store slot switch events (`ws`, range `1-6`) and explicit `Q/E` held flags (`kq`, `ke`) so slot/transport-assisted movement behavior replays deterministically.
   - `F2` input debug overlay includes rolling gameplay-feel telemetry (for movement/camera tuning passes).
+  - Gameplay UI roots use explicit layer ordering (HUD < overlays < menus < console) configured in `RunnerDemo._configure_ui_layers()`; this avoids creation-order-dependent overlap.
   - Gameplay movement step supports optional noclip mode, optional autojump queueing, surf behavior on configured slanted surfaces, and grapple-rope constraint movement.
   - Grapple targeting uses collision-world ray queries (`ray_closest`) from camera center.
   - Combat sandbox impulses are applied only in offline/replay simulation; connected multiplayer remains server-authoritative for gameplay actions.

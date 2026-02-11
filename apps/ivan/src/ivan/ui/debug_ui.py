@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from direct.gui import DirectGuiGlobals as DGG
 from direct.gui.DirectGui import DirectFrame, DirectLabel
-from direct.showbase import ShowBaseGlobal
 from panda3d.core import TextNode, TransparencyAttrib
 
 from irun_ui_kit.theme import Theme
@@ -18,6 +17,7 @@ from irun_ui_kit.widgets.tooltip import Tooltip
 from irun_ui_kit.widgets.window import Window
 
 from ivan.physics.tuning import PhysicsTuning
+from ivan.ui.ui_layout import PANEL_BOTTOM, PANEL_TOP, SCREEN_PAD_X, STATUS_BAR_Y, TOP_CHIP_Y, aspect_ratio
 from ivan.ui.debug_ui_schema import (
     FIELD_HELP as UI_FIELD_HELP,
     FIELD_LABELS as UI_FIELD_LABELS,
@@ -54,27 +54,25 @@ class DebugUI:
         on_tuning_change,
         on_profile_select,
         on_profile_save,
+        pixelated_textures: bool = True,
+        on_pixelated_textures_change=None,
     ) -> None:
         self._theme = theme
         self._tuning = tuning
         self._on_tuning_change = on_tuning_change
         self._on_profile_select = on_profile_select
         self._on_profile_save = on_profile_save
+        self._on_pixelated_textures_change = on_pixelated_textures_change
 
         self._profiles: list[str] = []
         self._active_profile: str = ""
 
-        aspect_ratio = 16.0 / 9.0
-        if getattr(ShowBaseGlobal, "base", None) is not None:
-            try:
-                aspect_ratio = float(ShowBaseGlobal.base.getAspectRatio())
-            except Exception:
-                pass
+        screen_ar = aspect_ratio()
 
-        panel_left = -aspect_ratio + 0.05
-        panel_right = min(panel_left + 2.22, aspect_ratio - 0.04)
-        panel_top = 0.95
-        panel_bottom = -0.86
+        panel_left = -screen_ar + (SCREEN_PAD_X - 0.01)
+        panel_right = min(panel_left + 2.22, screen_ar - 0.04)
+        panel_top = PANEL_TOP
+        panel_bottom = PANEL_BOTTOM
 
         w = panel_right - panel_left
         h = panel_top - panel_bottom
@@ -94,8 +92,8 @@ class DebugUI:
         # Speed chip: keep it out of the way of menus (top-right corner).
         chip_w = 0.46
         chip_h = 0.10
-        chip_x = aspect_ratio - 0.06 - chip_w
-        chip_y = 0.90
+        chip_x = screen_ar - SCREEN_PAD_X - chip_w
+        chip_y = TOP_CHIP_Y
         self.speed_hud_root = DirectFrame(
             parent=aspect2d,
             frameColor=theme.outline,
@@ -122,8 +120,8 @@ class DebugUI:
         # Health chip: top-left corner.
         hp_w = 0.42
         hp_h = 0.10
-        hp_x = -aspect_ratio + 0.06
-        hp_y = 0.90
+        hp_x = -screen_ar + SCREEN_PAD_X
+        hp_y = TOP_CHIP_Y
         self.health_hud_root = DirectFrame(
             parent=aspect2d,
             frameColor=theme.outline,
@@ -154,7 +152,7 @@ class DebugUI:
             text_align=TextNode.ARight,
             text_fg=(0.94, 0.94, 0.94, 0.95),
             frameColor=(0, 0, 0, 0),
-            pos=(aspect_ratio - 0.06, 0, 0.90),
+            pos=(screen_ar - SCREEN_PAD_X, 0, TOP_CHIP_Y),
         )
         self.time_trial_hud_label.hide()
 
@@ -182,10 +180,10 @@ class DebugUI:
 
         # Bottom status bar (movement state summary). Kept visible during gameplay and hidden while debug menu is open.
         bar_pad = 0.06
-        bar_w = max(0.60, (aspect_ratio * 2.0) - (bar_pad * 2.0))
+        bar_w = max(0.60, (screen_ar * 2.0) - (bar_pad * 2.0))
         bar_h = 0.09
-        bar_x = -aspect_ratio + bar_pad
-        bar_y = -0.94
+        bar_x = -screen_ar + bar_pad
+        bar_y = STATUS_BAR_Y
         self.status_root = DirectFrame(
             parent=aspect2d,
             frameColor=theme.outline,
@@ -214,7 +212,7 @@ class DebugUI:
 
         # Layout inside the window (local coordinates 0..w/0..h).
         header_total_h = theme.header_h + (theme.outline_w * 2)
-        top_controls_h = 0.13
+        top_controls_h = 0.24
         tooltip_h = 0.10
 
         # Profile dropdown + save.
@@ -245,6 +243,21 @@ class DebugUI:
             label="save",
             on_click=self._on_profile_save_click,
         )
+        render_toggle_w = min(0.92, w - (theme.pad * 2.0))
+        render_toggle_h = 0.076
+        render_toggle_x = theme.pad + render_toggle_w / 2.0
+        render_toggle_y = dd_y - theme.gap - (render_toggle_h * 0.5)
+        self._pixelated_checkbox = Checkbox.build(
+            parent=self.debug_root,
+            theme=theme,
+            x=render_toggle_x,
+            y=render_toggle_y,
+            w=render_toggle_w,
+            h=render_toggle_h,
+            label="pixelated textures (nearest filtering)",
+            checked=bool(pixelated_textures),
+            on_change=lambda checked: self._toggle_pixelated_textures(bool(checked)),
+        )
 
         # Tooltip label anchored at the bottom of the window.
         self._tooltip = Tooltip.build(
@@ -254,6 +267,10 @@ class DebugUI:
             y=theme.pad,
             w=w - theme.pad * 2,
             wordwrap=54,
+        )
+        self._tooltip.bind(
+            self._pixelated_checkbox.button,
+            "Lower (OFF): smooth filtering for textures. Higher (ON): crisp nearest/point filtering.",
         )
 
         # Scrollable groups area.
@@ -489,3 +506,11 @@ class DebugUI:
 
     def _on_profile_save_click(self) -> None:
         self._on_profile_save()
+
+    def set_pixelated_textures_enabled(self, enabled: bool) -> None:
+        self._pixelated_checkbox.set_checked(bool(enabled))
+
+    def _toggle_pixelated_textures(self, checked: bool) -> None:
+        cb = self._on_pixelated_textures_change
+        if callable(cb):
+            cb(bool(checked))
