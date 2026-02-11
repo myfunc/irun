@@ -27,6 +27,10 @@ class RunConfig:
     # When True, force runtime lighting (setShaderAuto) and ignore baked lightmaps.
     # When None, use profile-based logic (dev-fast + no lightmaps -> runtime).
     runtime_lighting: bool | None = None
+    # Base texture sampling mode:
+    # - True (default): nearest/point filtering for a crisp pixel look.
+    # - False: linear + mipmaps + anisotropic filtering.
+    pixelated_textures: bool = True
     # Optional Half-Life install root. If set and --map is not provided, IVAN can show an in-game map picker.
     hl_root: str | None = None
     # Mod folder under hl_root to browse for maps (e.g. "valve", "cstrike").

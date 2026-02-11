@@ -73,6 +73,13 @@ def main(argv: list[str] | None = None) -> None:
         help="Force runtime lighting (setShaderAuto) and ignore baked lightmaps.",
     )
     parser.add_argument(
+        "--smooth-textures",
+        dest="pixelated_textures",
+        action="store_false",
+        default=True,
+        help="Disable pixelated texture mode and use smooth texture filtering.",
+    )
+    parser.add_argument(
         "--server",
         action="store_true",
         help="Run as dedicated multiplayer server.",
@@ -199,6 +206,7 @@ def main(argv: list[str] | None = None) -> None:
         map_json=map_json,
         map_profile=args.map_profile,
         runtime_lighting=args.runtime_lighting,
+        pixelated_textures=bool(args.pixelated_textures),
         hl_root=args.hl_root,
         hl_mod=args.hl_mod,
         net_host=args.connect,
