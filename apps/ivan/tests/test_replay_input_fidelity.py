@@ -21,6 +21,8 @@ def test_input_command_roundtrip_preserves_raw_held_states() -> None:
         key_a_held=True,
         key_s_held=False,
         key_d_held=False,
+        key_q_held=True,
+        key_e_held=False,
         arrow_up_held=False,
         arrow_down_held=True,
         arrow_left_held=False,
@@ -42,6 +44,8 @@ def test_input_command_roundtrip_preserves_raw_held_states() -> None:
     assert replay_cmd.key_a_held is True
     assert replay_cmd.key_s_held is False
     assert replay_cmd.key_d_held is False
+    assert replay_cmd.key_q_held is True
+    assert replay_cmd.key_e_held is False
     assert replay_cmd.arrow_down_held is True
     assert replay_cmd.arrow_right_held is True
     assert replay_cmd.mouse_left_held is True

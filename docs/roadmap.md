@@ -75,4 +75,7 @@ Items temporarily on hold pending further analysis:
   - landed: per-slot combat presentation layer (weapon kick animation + procedural particle bursts + visible projectile tracers + improved procedural textures)
   - landed: synthesized runtime SFX layer (weapon, grapple, footsteps) with pause-menu settings sliders (`Master` and `SFX`)
   - landed: combat juice pass for impact readability/feel (heavier rocket explosions, shockwave rings, impact-scaled view punch, and layered rocket/pulse impact audio)
+  - landed: slot `1/2` readability/fun pass (blink travel-scaled exit carry, slam close-impact rebound, explicit blink/slam world-hit confirms in VFX, and dedicated impact SFX layers for slots `1/2`)
+  - landed: first-person weapon silhouette pass for slot `3` (dedicated RPG-style launcher view model replacing shared generic block mesh)
+  - landed: transport sandbox extension with slot `5` (`planer`) and slot `6` (`skateboard`), plus replay/input plumbing for slot range `1-6` and explicit `Q/E` held-state capture
   - next: move more collision/constraint edge-cases to policy-driven impulse budget hooks
