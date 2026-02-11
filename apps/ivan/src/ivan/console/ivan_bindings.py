@@ -402,7 +402,19 @@ def build_client_console(runner: Any) -> Console:
                 payload = fn()
             except Exception as e:
                 return [json.dumps({"error": str(e)}, ensure_ascii=True)]
-            return [json.dumps(payload, ensure_ascii=True)]
+            if not isinstance(payload, dict):
+                return [json.dumps(payload, ensure_ascii=True)]
+            lines: list[str] = ["world_runtime:"]
+            for key in sorted(payload.keys()):
+                val = payload.get(key)
+                if isinstance(val, dict):
+                    lines.append(f"  {key}:")
+                    for sub_key in sorted(val.keys()):
+                        sub_val = val.get(sub_key)
+                        lines.append(f"    - {sub_key}: {json.dumps(sub_val, ensure_ascii=True)}")
+                    continue
+                lines.append(f"  {key}: {json.dumps(val, ensure_ascii=True)}")
+            return lines
         return [json.dumps({"error": "diagnostics-unavailable"}, ensure_ascii=True)]
 
     def _bus_help(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
@@ -540,7 +552,7 @@ def build_client_console(runner: Any) -> Console:
     def _bus_world_fog_set(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
         try:
             payload = scene_runtime.set_world_fog(
-                mode=str(args.get("mode") or "linear"),
+                mode=str(args.get("mode") or "exp2"),
                 start=float(args.get("start") or 120.0),
                 end=float(args.get("end") or 360.0),
                 density=float(args.get("density") or 0.02),
@@ -557,6 +569,13 @@ def build_client_console(runner: Any) -> Console:
             payload = scene_runtime.set_world_skybox(skyname=str(args.get("skyname") or ""))
         except Exception as e:
             return CommandResult.failure(str(e), error_code="world-skybox")
+        return CommandResult.success(out=[json.dumps(payload, ensure_ascii=True)], data=payload)
+
+    def _bus_world_map_save(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+        try:
+            payload = scene_runtime.save_world_map(include_fog=bool(args.get("include_fog", True)))
+        except Exception as e:
+            return CommandResult.failure(str(e), error_code="world-map-save")
         return CommandResult.success(out=[json.dumps(payload, ensure_ascii=True)], data=payload)
 
     con.register_bus_command(
@@ -735,7 +754,7 @@ def build_client_console(runner: Any) -> Console:
             route="game-thread",
             tags=("world", "fog", "mcp"),
             args=(
-                CommandArgSpec(name="mode", typ="str", required=False, default="linear", choices=("off", "linear", "exp", "exp2")),
+                CommandArgSpec(name="mode", typ="str", required=False, default="exp2", choices=("off", "linear", "exp", "exp2")),
                 CommandArgSpec(name="start", typ="float", required=False, default=120.0),
                 CommandArgSpec(name="end", typ="float", required=False, default=360.0),
                 CommandArgSpec(name="density", typ="float", required=False, default=0.02, minimum=0.0),
@@ -755,6 +774,24 @@ def build_client_console(runner: Any) -> Console:
             args=(CommandArgSpec(name="skyname", typ="str", required=True, help="Skybox preset name."),),
         ),
         handler=_bus_world_skybox_set,
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="world_map_save",
+            summary="Persist pending world overrides into map.json.",
+            route="game-thread",
+            tags=("world", "map", "save", "mcp"),
+            args=(
+                CommandArgSpec(
+                    name="include_fog",
+                    typ="bool",
+                    required=False,
+                    default=True,
+                    help="When true, writes pending fog override into map.json fog block.",
+                ),
+            ),
+        ),
+        handler=_bus_world_map_save,
     )
 
     # Legacy/compat commands remain available for existing scripts.

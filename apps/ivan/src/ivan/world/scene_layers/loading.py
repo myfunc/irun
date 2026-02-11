@@ -70,6 +70,7 @@ def _apply_skybox_baseline(
 
 def try_load_external_map(scene: SceneLayerContract, *, cfg, map_json: Path, loader, render, camera) -> bool:
     """Load `.map`/`map.json`/`.irunmap` into scene runtime state."""
+    scene._map_convert_report = {}
     map_json = scene._resolve_map_bundle_path(map_json)
     if not map_json:
         return False
@@ -240,6 +241,10 @@ def try_load_map_file(scene: SceneLayerContract, *, map_file: Path, loader, rend
         except Exception as e:
             print(f"[IVAN] Failed to load .map file: {e}")
             return False
+    scene._map_convert_report = {
+        "stages_ms": dict(result.perf_stages_ms) if isinstance(result.perf_stages_ms, dict) else {},
+        "counts": dict(result.perf_counts) if isinstance(result.perf_counts, dict) else {},
+    }
 
     if result.spawn_position:
         scene.spawn_point = LVector3f(*result.spawn_position)

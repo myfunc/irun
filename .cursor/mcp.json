@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "ivan-console": {
+      "command": "apps/ivan/.venv/Scripts/python.exe",
+      "args": [
+        "-m",
+        "ivan.mcp_server",
+        "--control-host",
+        "127.0.0.1",
+        "--control-port",
+        "7779"
+      ],
+      "env": {
+        "PYTHONPATH": "apps/ivan/src"
+      }
+    }
+  }
+}

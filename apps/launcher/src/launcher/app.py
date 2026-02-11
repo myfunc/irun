@@ -383,13 +383,17 @@ def run_launcher() -> None:
     _command_bus.register(EditMapCommand, _handle_edit_map)
 
     dpg.create_context()
-    dpg.create_viewport(
-        title="IVAN Launcher",
-        width=_cfg.window_width,
-        height=_cfg.window_height,
-        min_width=500,
-        min_height=400,
-    )
+    viewport_kw: dict = {
+        "title": "IVAN Launcher",
+        "width": _cfg.window_width,
+        "height": _cfg.window_height,
+        "min_width": 500,
+        "min_height": 400,
+    }
+    if _cfg.has_valid_window_position():
+        viewport_kw["x_pos"] = _cfg.window_x
+        viewport_kw["y_pos"] = _cfg.window_y
+    dpg.create_viewport(**viewport_kw)
     _build_ui()
     dpg.setup_dearpygui()
     dpg.set_primary_window("primary", True)
@@ -409,10 +413,14 @@ def run_launcher() -> None:
     try:
         width = dpg.get_viewport_width()
         height = dpg.get_viewport_height()
+        pos = dpg.get_viewport_pos()
         if width > 100 and height > 100:
             _cfg.window_width = width
             _cfg.window_height = height
-            save_config(_cfg)
+        if pos and len(pos) >= 2:
+            _cfg.window_x = int(pos[0])
+            _cfg.window_y = int(pos[1])
+        save_config(_cfg)
     except Exception:
         pass
 

@@ -32,6 +32,19 @@ Naming convention:
 - Use `YYYY-MM-DD_short-title.md` for new brainstorm docs when date matters.
 - Otherwise use concise kebab-case filenames.
 
+## Chat Vision Capture (Mandatory)
+- Any session with product vision, scope discussion, rationale, or intent clarification must be captured in a brainstorm doc in the same working session.
+- The agent must either:
+  - update an existing topic doc, or
+  - create a new one under `docs/brainstorm/` (pick the most relevant subfolder; if unclear, use `docs/brainstorm/inbox/`).
+- Every capture/update must explicitly include:
+  - **User Goal**: what outcome the user wants.
+  - **User Motivation**: why the user wants it (problem, constraint, business/design reason).
+  - **Current Direction**: agreed approach/vision at this moment.
+  - **Open Questions / Risks**: unresolved items that affect delivery.
+- While the task remains active across a longer session, the brainstorm doc must be refreshed at least once per hour and whenever a major decision changes scope or direction.
+- Use timestamped notes for incremental updates so the evolution of decisions is auditable.
+
 ## Collaboration (Two Engineers)
 - Prefer small, reviewable changesets.
 - Keep commits coherent; avoid mixing refactors with feature changes.

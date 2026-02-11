@@ -20,7 +20,7 @@ See: `docs/ui-kit.md`.
 - Monorepo: apps are under `apps/`
 - `apps/launcher/src/launcher/__main__.py`: Launcher Toolbox entrypoint (`python -m launcher`) — Dear PyGui desktop app for runtime-first map launch and packing
 - `apps/launcher/src/launcher/app.py`: Dear PyGui window with map browser, single runtime-first runflow (selected source `.map`), primary launch/pack actions, and render loop
-- `apps/launcher/src/launcher/config.py`: Persistent launcher settings (`~/.irun/launcher/config.json`) — WAD dir, Steam/HL root, maps dir, python path, and launch toggles (`watch`, `runtime-lighting`)
+- `apps/launcher/src/launcher/config.py`: Persistent launcher settings (`~/.irun/launcher/config.json`) — WAD dir, Steam/HL root, maps dir, python path, launch toggles (`watch`, `runtime-lighting`), and window geometry (position, size)
 - `apps/launcher/src/launcher/actions.py`: Subprocess spawning for game and `pack_map.py` (output captured to log)
 - `apps/launcher/src/launcher/runflow.py`: Single source of truth for fixed runtime launch plan (`dev-fast`) and resolved launch options
 - `apps/launcher/src/launcher/commands.py`: Typed command bus used by launcher UI actions to avoid duplicated behavior paths
@@ -135,7 +135,7 @@ See: `docs/ui-kit.md`.
   - Supports `--bake` (ericw-tools pipeline), `--convert-only`, and `--no-watch` modes.
   - Attempts hot-reload via the console bridge (`map_reload` command) before falling back to kill + restart.
 - `apps/ivan/tools/loading_benchmark.py`: smoke-run benchmark harness for load instrumentation; captures structured `[IVAN] load report` output for multiple maps/repeats into `.tmp/loading/*.json`.
-- `apps/ivan/tools/scope05_rollout_validation.py`: Scope 05 acceptance runner for `demo.map` rollout; builds a baked demo artifact in `.tmp/scope05/demo/`, runs cross-path smoke checks (runtime source-map path, baked artifact path, imported map path), executes regression test groups, and emits gate verdict JSON in `.tmp/scope05/`.
+- `apps/ivan/tools/scope05_rollout_validation.py`: Scope 05 acceptance runner for `demo.map` rollout; builds a packed demo artifact in `.tmp/scope05/demo/` via `pack_map.py` (no lightmaps), runs cross-path smoke checks (runtime source-map path, packed artifact path, imported map path), executes regression test groups, and emits gate verdict JSON in `.tmp/scope05/`.
 - `apps/ivan/tools/importers/goldsrc/import_trenchbroom_map.py`: TrenchBroom Valve220 `.map` -> GoldSrc BSP compile (`hlcsg`/`hlbsp`/`hlvis`/`hlrad`) -> IVAN bundle helper
   - Supports both classic `hl*` binaries and SDHLT `sdHL*` binaries (auto-handles toolchain CLI differences).
 
@@ -223,6 +223,7 @@ See: `docs/ui-kit.md`.
   - Runtime world controls:
     - `world_fog_set` (`mode`: `off|linear|exp|exp2`, `start/end`, `density`, `color`)
     - `world_skybox_set <skyname>` (validated against available sky presets)
+    - `world_map_save [--include_fog]` (persist staged runtime world overrides into writable `map.json`)
   - Replay telemetry export commands are available in the client console:
     - `replay_export_latest [out_dir]`
     - `replay_export <replay_path> [out_dir]`
@@ -238,13 +239,16 @@ See: `docs/ui-kit.md`.
   - `ivan-mcp` runs an MCP stdio server (Python 3.9, no deps) with tools:
     - `console_exec`
     - `console_commands` (returns typed command metadata)
+  - Full command/cvar/MCP reference: `docs/console-control-and-mcp.md`
 - CLI telemetry export:
   - `python -m ivan --export-latest-replay-telemetry [--replay-telemetry-out <dir>]` exports latest replay metrics and exits.
   - `python -m ivan --compare-latest-replays [--replay-telemetry-out <dir>] [--replay-route-tag A]` auto-exports latest+previous and writes comparison JSON.
   - `python -m ivan --verify-latest-replay-determinism [--determinism-runs N] [--replay-telemetry-out <dir>]` re-simulates latest replay offline multiple times and emits a determinism report JSON.
   - `python -m ivan --verify-replay-determinism <path> [--determinism-runs N] [--replay-telemetry-out <dir>]` runs the same determinism check for a specific replay file.
 - Display/window:
-  - Default: windowed 1280x720 on all platforms (Windows + macOS). Window is user-resizable.
+  - Default target: windowed 1920x1080 on all platforms (Windows + macOS). Window is user-resizable.
+  - Startup/runtime apply path adaptively clamps windowed size to current display bounds when the requested size does not fit.
+  - Window resize events now re-apply runtime render resolution/aspect from current framebuffer size (no restart required).
   - Display settings (fullscreen, resolution) persist in `~/.irun/ivan/state.json` and are applied on startup.
   - Main menu "Video Settings" screen allows switching between windowed presets and fullscreen at runtime.
   - In-game UI/input split:
@@ -291,8 +295,9 @@ See: `docs/ui-kit.md`.
   - Wallrun behavior is enabled by default in base tuning (`wallrun_enabled=True`), with per-profile overrides still supported (for example `surf_sky2_server` keeps wallrun disabled).
 
 ## Rendering Notes
-- Baker (paused) shares Ivan's scene builder (`ivan.world.scene.WorldScene`) to keep map preview WYSIWYG.
+- Baker (paused) is currently viewer-only and shares Ivan's scene builder (`ivan.world.scene.WorldScene`) to keep map preview WYSIWYG.
 - Baker adds a viewer-only post-process view transform (tonemap + gamma) toggled via `1`/`2`/`3`.
+- Production CLI pipelines are documented under tools: baking in `bake_map.py`, packing in `pack_map.py` (not in Baker runtime flow).
 - Texture sizing: IVAN disables Panda3D's default power-of-two rescaling for textures (`textures-power-2 none`).
   - Reason: imported GoldSrc maps commonly reference non-power-of-two textures; automatic rescaling breaks BSP UV mapping.
 - Coordinate system: IVAN uses Panda3D's default world axes (`X` right, `Y` forward, `Z` up). GoldSrc BSP imports keep the same axes and only apply a uniform scale.
@@ -315,7 +320,7 @@ The runtime uses `--map-profile` (`auto` | `dev-fast` | `prod-baked`) to control
 - **dev-fast**: Visibility culling off (permissive for iteration); fog still follows baseline precedence (map > run profile > engine default).
 - **prod-baked**: Visibility can enable via `run.json`; fog follows the same precedence (map > run profile > engine default).
 
-Fog and visibility config live in `run.json` under `fog` and `visibility`; profile selects visibility defaults when not explicitly set. Fog is applied during `WorldScene.build()` and again after map load so map payload (`fog` in map.json) overrides run config. When neither map nor run profile provides fog, runtime now applies a conservative engine horizon fog baseline (`start=120`, `end=360`) to avoid no-horizon scenes.
+Fog and visibility config live in `run.json` under `fog` and `visibility`; profile selects visibility defaults when not explicitly set. Fog is applied during `WorldScene.build()` and again after map load so map payload (`fog` in map.json) overrides run config. When neither map nor run profile provides fog, runtime applies a conservative engine horizon fog baseline (`start=120`, `end=360`) to avoid no-horizon scenes. Fog can optionally drive render culling by clamping camera far plane to fog visibility distance (+ small margin), reducing draw cost for fully fogged geometry.
 
 **Runtime vs baked lighting:** When `map_profile` is `dev-fast` and no baked lightmaps exist, the runtime path uses `setShaderAuto()` so world geometry receives scene lights directly. Batching is by material only (no lightmap IDs). `--runtime-lighting` forces runtime path even when lightmaps exist. The visibility layer skips deferred lightmap loading when `_runtime_only_lighting` is true (runtime path has no per-face lightmap nodes).
 
@@ -336,11 +341,21 @@ Fog and visibility config live in `run.json` under `fog` and `visibility`; profi
 - Report includes:
   - `stage_order`, per-stage timings, `total_ms`, stage budgets (`budgets_ms`), `budget_pass`
   - runtime diagnostics snapshot, plus visibility cache result (`memory-hit` / `disk-hit` / `rebuilt` / etc.)
+  - direct `.map` conversion telemetry in `runtime.map_convert`:
+    - `stages_ms`: fine-grained converter steps (`read_parse_map`, `extract_textures`, brush conversion, etc.)
+    - `counts`: entity/brush/triangle/material/texture cardinality to correlate size vs cost
   - optimization flags (material base-texture cache, visibility memory cache, deferred lightmap strategy)
+  - app startup telemetry in `app_startup`:
+    - `stages_ms`: `pre_scene_reset`, `resolve_run_config`, `scene_build`, `post_scene_setup`, `player_collision_network_init`, `mode_setup`
+    - `total_ms`: end-to-end `_start_game(...)` time up to mode install
 
 **Scope 03 optimizations and tunables:**
 - Base-material texture caching is now reused during geometry attach, avoiding repeated `loader.loadTexture(...)` calls for the same material across lightmap groups.
 - GoldSrc visibility cache now has an in-memory warm cache keyed by cache path/mtime; repeated runs in the same process avoid JSON decode churn.
+- Direct `.map` WAD texture extraction now uses a persistent cache manifest (`.wad_texture_cache_manifest.json`) in the texture cache directory:
+  - every resolved WAD is fingerprinted by SHA-256,
+  - cache is reused when WAD path + checksum set matches,
+  - cache is invalidated and rebuilt automatically when any checksum changes.
 - Existing tunables/knobs that affect load-vs-quality:
   - `--map-profile` (`dev-fast`/`prod-baked`) changes runtime-lighting and visibility defaults.
   - `--runtime-lighting` forces runtime path (skips baked-lightmap setup work).
@@ -348,7 +363,7 @@ Fog and visibility config live in `run.json` under `fog` and `visibility`; profi
 - Trade-off: warm cache improves repeated runs, but first cold run still pays file/build cost.
 
 **Scope 05 rollout validation:**
-- Primary acceptance map is `apps/ivan/assets/maps/demo/demo.map`; baked acceptance path is generated from that source map into `.tmp/scope05/demo/demo-scope05.irunmap`.
+- Primary acceptance map is `apps/ivan/assets/maps/demo/demo.map`; packed acceptance path is generated from that source map into `.tmp/scope05/demo/demo-scope05.irunmap` via `pack_map.py`.
 - Imported acceptance path requires at least one imported map alias (current default pick: `imported/halflife/valve/surf_ski_4_2`).
 - Rollout gates are tracked in `docs/qa/demo-map-rollout-scope05.md` and enforced by `scope05_rollout_validation.py`:
   - runtime world visuals (sky/fog/lights diagnostics),
@@ -452,13 +467,13 @@ Sample payload snippet (lights + fog):
 
 Two profiles control the trade-off between fast iteration and production quality:
 
-| Profile | Purpose | Bake: vis/light | Pack: compression |
-|---------|---------|------------------|--------------------|
+| Profile | Purpose | `bake_map.py`: vis/light | `pack_map.py`: compression |
+|---------|---------|---------------------------|-----------------------------|
 | `dev-fast` | Quick local iteration | Skip (default) | Off (level 0) |
-| `prod-baked` | Full quality for distribution | Run both | On (level 6) |
+| `prod-baked` | Production defaults | Run both | On (level 6) |
 
 - **dev-fast** (default): Skip expensive steps; output runtime-consumable artifacts without mandatory vis/light bake or archive compression.
-- **prod-baked**: Full bake/pack quality flow (vis + light in bake, compressed `.irunmap` archives).
+- **prod-baked**: Production-oriented defaults per tool (`bake_map.py`: vis + light, `pack_map.py`: compressed `.irunmap` archives).
 
 #### Primary Authoring Flow (.map)
 
@@ -467,7 +482,7 @@ Two profiles control the trade-off between fast iteration and production quality
 3. **Bake workflow** (production): `.map` → ericw-tools (qbsp → vis → light) → `.bsp` → GoldSrc importer → `.irunmap` bundle with baked lightmaps. Use `tools/bake_map.py`; `--profile dev-fast` skips vis/light by default, `--profile prod-baked` runs full vis+light.
 4. **Legacy BSP import**: `.bsp` → GoldSrc/Source importer → `.irunmap` bundle (unchanged).
 
-#### Production Baked + Packed Expectations
+#### Production Expectations (Bake vs Pack)
 
 - `bake_map.py --profile prod-baked`: runs qbsp, vis, and light; outputs `.irunmap` with baked lightmaps.
 - `pack_map.py --profile prod-baked`: produces compressed `.irunmap` archives (zip level 6).
@@ -487,7 +502,7 @@ IVAN supports optional `.material.json` sidecar files for PBR properties alongsi
 Format v3 development can proceed now that TrenchBroom integration is complete. The planned extensions are:
 - **Entities**: triggers, spawners, buttons, ladders, movers, lights (engine-agnostic model).
 - **Course logic**: start/finish/checkpoints driven by trigger entities.
-- **Chunking**: baked geometry split into chunks for future streaming (initially still loaded eagerly).
+- **Chunking**: geometry split into chunks for future streaming (initially still loaded eagerly).
 - Optional **render hints** to support a retro look (e.g., nearest-neighbor texture filtering); renderer decides actual behavior.
 
 See: `docs/brainstorm/tech/2026-02-08_map-format-v3-entities-chunking.md`.

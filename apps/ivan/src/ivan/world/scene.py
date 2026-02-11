@@ -124,7 +124,11 @@ class WorldScene:
         self._fog_density: float = 0.02
         self._fog_range: tuple[float, float] = (0.0, 0.0)
         self._fog_color: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self._fog_cull_enabled: bool = False
+        self._fog_cull_far: float = 0.0
+        self._fog_lens_default_far: float = 20000.0
         self._runtime_fog_override: dict | None = None
+        self._pending_map_fog: dict | None = None
         self._map_json_path: Path | None = None
         self._map_payload: dict | None = None
         self._ambient_np = None
@@ -134,6 +138,7 @@ class WorldScene:
         self._load_reporter = LoadReporter()
         self._load_report_emitted = False
         self._visibility_cache_report: dict[str, object] = {}
+        self._map_convert_report: dict[str, object] = {}
 
     @property
     def map_id(self) -> str:
@@ -542,10 +547,15 @@ class WorldScene:
                 float(self._fog_color[1]),
                 float(self._fog_color[2]),
             ],
+            "fog_cull_enabled": bool(self._fog_cull_enabled),
+            "fog_cull_far": float(self._fog_cull_far),
+            "fog_pending_save": bool(isinstance(self._pending_map_fog, dict)),
             "runtime_only_lighting": bool(self._runtime_only_lighting),
         }
         if isinstance(self._visibility_cache_report, dict) and self._visibility_cache_report:
             diag["visibility_cache"] = dict(self._visibility_cache_report)
+        if isinstance(self._map_convert_report, dict) and self._map_convert_report:
+            diag["map_convert"] = dict(self._map_convert_report)
         return diag
 
     def list_available_skyboxes(self) -> list[str]:
