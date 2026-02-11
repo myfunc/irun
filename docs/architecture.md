@@ -34,9 +34,10 @@ See: `docs/ui-kit.md`.
   - `apps/ivan/src/ivan/game/netcode.py`: client prediction/reconciliation + remote interpolation helpers
   - `apps/ivan/src/ivan/game/tuning_profiles.py`: tuning profile defaults + persistence helpers
   - `apps/ivan/src/ivan/game/input_system.py`: mouse/keyboard sampling + input command helpers
-  - `apps/ivan/src/ivan/game/combat_system.py`: offline combat sandbox orchestration (weapon slot state, per-slot cooldowns, and impulse-style firing actions)
-  - `apps/ivan/src/ivan/game/combat_fx.py`: weapon presentation layer (first-person weapon kick animation, per-slot particles/tracers, impact shockwaves, and fire/impact view-punch feedback)
-  - `apps/ivan/src/ivan/game/audio_system.py`: synthesized SFX runtime (weapon/grapple/footstep audio + impact layers, volume controls, local audio asset cache)
+  - `apps/ivan/src/ivan/game/combat_system.py`: offline combat sandbox orchestration (weapon slot state, per-slot cooldowns, and impulse-style firing actions, including travel-scaled blink carry and close-impact slam rebound tuning)
+  - `apps/ivan/src/ivan/game/transport_system.py`: transport mode runtime (`planer` on slot `5`, `skateboard` on slot `6`) and per-tick movement overrides
+  - `apps/ivan/src/ivan/game/combat_fx.py`: weapon presentation layer (first-person weapon kick animation, slot-specific weapon view meshes, per-slot particles/tracers, slot-specific world-hit confirm effects, impact shockwaves, and fire/impact view-punch feedback)
+  - `apps/ivan/src/ivan/game/audio_system.py`: synthesized SFX runtime (weapon/grapple/footstep audio + per-slot impact layers, volume controls, local audio asset cache)
   - `apps/ivan/src/ivan/game/feel_diagnostics.py`: rolling frame/tick diagnostics buffer and JSON dump utility for movement feel analysis
   - `apps/ivan/src/ivan/game/determinism.py`: per-tick quantized state hashing + rolling determinism trace buffer
 - `apps/ivan/src/ivan/game/camera_observer.py`: read-only camera smoothing observer over solved simulation state
@@ -211,7 +212,7 @@ See: `docs/ui-kit.md`.
   - Default: windowed 1280x720 on all platforms (Windows + macOS). Window is user-resizable.
   - Display settings (fullscreen, resolution) persist in `~/.irun/ivan/state.json` and are applied on startup.
   - Main menu "Video Settings" screen allows switching between windowed presets and fullscreen at runtime.
-- In-game UI/input split:
+  - In-game UI/input split:
   - `Esc` opens gameplay menu and unlocks cursor.
   - `` ` `` opens debug/admin tuning menu and unlocks cursor.
   - `G` opens quick feel-capture popup during active gameplay (route/name/notes/feedback + save/export/apply + `Revert Last` buttons).
@@ -220,16 +221,22 @@ See: `docs/ui-kit.md`.
   - mouse center-snap look capture is automatically suspended when the window is unfocused/minimized and resumes with a one-frame recenter guard on focus return.
   - combat sandbox controls:
     - weapon slot select: `1`, `2`, `3`, `4`
+    - transport slot select: `5` (`planer`), `6` (`skateboard`)
     - fire current slot: `LMB` / `mouse1`
     - grapple action: `RMB` / `mouse3` (edge-triggered attach/detach)
     - slot `1`: blink teleport to aimed line-of-sight point
     - slot `2`: slam boost shot
     - slot `3`: rocket burst (self-boost near impact for rocket-jump routing)
     - slot `4`: pulse dash burst (forward/up impulse)
+    - slot `1` blink now scales exit carry from teleport travel distance; slide-held fire can bias a lateral exit line
+    - slot `2` slam now adds close-surface rebound impulse for high-commit launch/redirection lines
     - short combo window adds temporary movement sustain/burst during rapid chains
-    - per-slot visuals: first-person kick animation + procedural particle bursts + visible projectile tracers; heavy impacts add shockwave rings and stronger explosion debris layering
+    - slot `5` `planer`: throttle (`W/S`), turn (`A/D`), arrows for pitch/yaw, roll (`Q/E`)
+    - slot `6` `skateboard`: movement-controller-assisted ground glide/boost mode
+    - per-slot visuals: first-person kick animation + procedural particle bursts + visible projectile tracers; all slots now have explicit world-hit confirm cues, while heavy impacts add shockwave rings and stronger explosion debris layering
   - pause Settings tab includes keybind controls and volume sliders (`Master`, `SFX`).
-  - runtime audio uses synthesized local SFX with configurable volumes for footsteps, grapple, and weapon actions.
+  - movement/input key sampling resolves physical lanes via runtime keyboard-map/raw fallback (including `WASD`, `Q/E`, and slot digits), plus common non-US symbol aliases (for example RU/UA/AZERTY), so controls keep working while typing layout changes.
+  - runtime audio uses synthesized local SFX with configurable volumes for footsteps, grapple, and weapon actions (including per-slot impact layers for slots `1-4`).
   - While either menu is open, gameplay input is blocked but simulation continues.
   - `Esc` menu can open a replay browser (`Replays`) to load saved input demos.
   - `Esc` menu Feel Session tab can export current run telemetry and apply feedback-based tuning changes.
@@ -239,8 +246,8 @@ See: `docs/ui-kit.md`.
   - Apply-feedback flow auto-runs route-scoped compare (latest route run vs prior route run) and reports deltas.
   - Route compare can also emit baseline + route-history context files for longer tuning sessions.
   - Replay playback shows a dedicated replay input HUD and keeps gameplay/menu inputs locked until exit (`R`).
-  - Replay input HUD prefers explicitly recorded held states (`WASD`, arrows, mouse buttons) over derived movement axes.
-  - Replay input frames now also store weapon-slot switch events (`ws`) so slot-based movement behavior replays deterministically.
+  - Replay input HUD prefers explicitly recorded held states (`WASD`, `Q/E`, arrows, mouse buttons) over derived movement axes.
+  - Replay input frames now also store slot switch events (`ws`, range `1-6`) and explicit `Q/E` held flags (`kq`, `ke`) so slot/transport-assisted movement behavior replays deterministically.
   - `F2` input debug overlay includes rolling gameplay-feel telemetry (for movement/camera tuning passes).
   - Gameplay movement step supports optional noclip mode, optional autojump queueing, surf behavior on configured slanted surfaces, and grapple-rope constraint movement.
   - Grapple targeting uses collision-world ray queries (`ray_closest`) from camera center.

@@ -102,3 +102,37 @@ def test_pulse_slot_applies_forward_boost() -> None:
     impulse = host.player.impulses[-1]
     assert impulse.y > 0.0
     assert impulse.z > 0.0
+
+
+def test_blink_slot_long_travel_has_stronger_exit_impulse() -> None:
+    host = _make_host(direction=LVector3f(0.0, 1.0, 0.0), hit_pos=LVector3f(0.0, 30.0, 1.2))
+    ev = combat_system.tick(
+        host,
+        cmd=SimpleNamespace(weapon_slot_select=1, mouse_left_held=True),
+        dt=1.0 / 60.0,
+    )
+    assert ev is not None
+    assert ev.slot == 1
+    assert ev.weapon_name == "blink"
+    assert ev.impact_power > 1.0
+    assert host.player.impulses
+    impulse = host.player.impulses[-1]
+    assert impulse.y > 0.70
+    assert impulse.z > 0.25
+
+
+def test_slam_slot_close_hit_adds_rebound_impulse() -> None:
+    host = _make_host(direction=LVector3f(0.0, 1.0, 0.0), hit_pos=LVector3f(0.0, 2.0, 1.2))
+    ev = combat_system.tick(
+        host,
+        cmd=SimpleNamespace(weapon_slot_select=2, mouse_left_held=True),
+        dt=1.0 / 60.0,
+    )
+    assert ev is not None
+    assert ev.slot == 2
+    assert ev.weapon_name == "slam"
+    # Slam now applies base launch + near-surface rebound when impact is close.
+    assert len(host.player.impulses) >= 2
+    rebound = host.player.impulses[-1]
+    assert rebound.y < 0.0
+    assert rebound.z > 0.0

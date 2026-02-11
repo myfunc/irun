@@ -98,7 +98,9 @@ def _ensure_assets() -> dict[str, Path]:
     root.mkdir(parents=True, exist_ok=True)
     paths = {
         "weapon_blink": root / "weapon_blink.wav",
+        "weapon_blink_impact": root / "weapon_blink_impact.wav",
         "weapon_slam": root / "weapon_slam.wav",
+        "weapon_slam_impact": root / "weapon_slam_impact.wav",
         "weapon_rocket": root / "weapon_rocket.wav",
         "weapon_rocket_impact": root / "weapon_rocket_impact.wav",
         "weapon_pulse": root / "weapon_pulse.wav",
@@ -110,8 +112,18 @@ def _ensure_assets() -> dict[str, Path]:
     }
     if not paths["weapon_blink"].exists():
         _write_wav(paths["weapon_blink"], samples=_tone_sweep(f0=700.0, f1=310.0, duration_s=0.16, amp=0.54, noise_mix=0.10))
+    if not paths["weapon_blink_impact"].exists():
+        _write_wav(
+            paths["weapon_blink_impact"],
+            samples=_tone_sweep(f0=620.0, f1=240.0, duration_s=0.14, amp=0.52, noise_mix=0.16),
+        )
     if not paths["weapon_slam"].exists():
         _write_wav(paths["weapon_slam"], samples=_tone_sweep(f0=280.0, f1=96.0, duration_s=0.24, amp=0.72, noise_mix=0.38))
+    if not paths["weapon_slam_impact"].exists():
+        _write_wav(
+            paths["weapon_slam_impact"],
+            samples=_tone_sweep(f0=220.0, f1=72.0, duration_s=0.22, amp=0.76, noise_mix=0.46),
+        )
     if not paths["weapon_rocket"].exists():
         _write_wav(paths["weapon_rocket"], samples=_tone_sweep(f0=150.0, f1=62.0, duration_s=0.30, amp=0.80, noise_mix=0.47))
     if not paths["weapon_rocket_impact"].exists():
@@ -172,7 +184,9 @@ def init_runtime(host, *, master_volume: float, sfx_volume: float) -> None:
 
     voice_counts = {
         "weapon_blink": 4,
+        "weapon_blink_impact": 3,
         "weapon_slam": 4,
+        "weapon_slam_impact": 3,
         "weapon_rocket": 4,
         "weapon_rocket_impact": 4,
         "weapon_pulse": 4,
@@ -232,9 +246,9 @@ def _play(host, *, key: str, gain: float = 1.0) -> None:
 def on_weapon_fire(host, *, slot: int) -> None:
     s = int(slot)
     if s == 1:
-        _play(host, key="weapon_blink", gain=0.85)
+        _play(host, key="weapon_blink", gain=0.92)
     elif s == 2:
-        _play(host, key="weapon_slam", gain=0.95)
+        _play(host, key="weapon_slam", gain=1.00)
     elif s == 3:
         _play(host, key="weapon_rocket", gain=1.05)
     elif s == 4:
@@ -244,7 +258,13 @@ def on_weapon_fire(host, *, slot: int) -> None:
 def on_weapon_impact(host, *, slot: int, world_hit: bool, impact_power: float = 1.0) -> None:
     s = int(slot)
     power = _clamp01(0.25 + max(0.0, float(impact_power)) * 0.50)
-    if s == 3:
+    if s == 1:
+        gain = (0.58 if bool(world_hit) else 0.20) * power
+        _play(host, key="weapon_blink_impact", gain=gain)
+    elif s == 2:
+        gain = (0.74 if bool(world_hit) else 0.26) * power
+        _play(host, key="weapon_slam_impact", gain=gain)
+    elif s == 3:
         gain = (0.76 if bool(world_hit) else 0.42) * power
         _play(host, key="weapon_rocket_impact", gain=gain)
     elif s == 4:

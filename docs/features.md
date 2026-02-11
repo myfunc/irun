@@ -12,6 +12,7 @@
 - Ivan: rebindable noclip toggle (default `V`) via in-game Settings tab
 - Ivan: in-game menu/debug UI block gameplay input but keep simulation running (no pause)
 - Ivan: classic center crosshair (Half-Life/CS style) visible during active gameplay
+- Ivan: layout-agnostic movement/input lane detection (runtime keyboard-map/raw fallback for physical lanes including `WASD` and `Q/E`, with non-US symbol aliases and arrow fallback)
 - Ivan: input debug overlay (`F2`) for keyboard/mouse troubleshooting
 - Ivan: gameplay feel telemetry in `F2` overlay (rolling jump success, landing speed loss, ground flicker, camera jerk proxies)
 - Ivan: staged invariant-motion refactor foundation
@@ -240,8 +241,8 @@
 - Ivan: combat sandbox prototype (movement-first)
   - weapon slots `1-4` with fixed per-slot cooldowns
   - controls: fire on `LMB` (`mouse1`), grapple on `RMB` (`mouse3`)
-  - slot `1` is now `blink`: line-of-sight teleport to aimed point (with collision-safe landing offset)
-  - slot `2` is now `slam`: aim-driven boost shot for aggressive launch lines (down-aim boosts upward launch strength)
+  - slot `1` is now `blink`: line-of-sight teleport to aimed point (with collision-safe landing offset), now with stronger travel-scaled exit carry and optional slide-held strafe bias for route chaining
+  - slot `2` is now `slam`: aim-driven boost shot for aggressive launch lines (down-aim boosts upward launch strength), now with close-impact rebound impulse for higher-risk launch payoffs
   - slot `3` rocket burst supports consistent self-boost/rocket-jump near impact surfaces
   - slot `4` pulse dash adds a forward-up burst for fast route re-direction
   - rocket and pulse cooldowns/impulses were tightened for faster chaining and punchier route correction
@@ -249,12 +250,19 @@
   - visible projectile tracers are now rendered for combat shots (slot-styled travel visuals to impact)
   - combat visuals now use richer procedural textures for weapon mesh, projectile tracers, and particles
   - each slot now has dedicated first-person weapon kick animation (per-slot recoil timing/shape)
-  - each slot now has distinct particle VFX (muzzle burst and impact-style particles; rocket now adds heavier multi-layer explosion bursts with embers/smoke/shockwave rings)
+  - slot `3` weapon view model now uses a dedicated RPG-style silhouette (long tube + wood furniture) instead of the shared generic block mesh
+  - each slot now has distinct particle VFX (muzzle burst and impact-style particles); slot `1/2` now include explicit world-hit confirm effects, and rocket keeps heavier multi-layer explosion bursts with embers/smoke/shockwave rings
   - combat view-punch feedback now reacts to weapon fire and scales up on nearby heavy impacts
-  - synthesized weapon and movement SFX are now present (per-slot weapon sounds, grapple attach/detach, walk/run footsteps) with extra impact-layer sounds for rocket/pulse hits
+  - synthesized weapon and movement SFX are now present (per-slot weapon sounds, grapple attach/detach, walk/run footsteps) with impact-layer sounds for all combat slots (`1-4`)
   - in-game Settings tab (ESC menu) now includes audio controls (`Master Volume`, `SFX Volume`) and keybinding controls
-  - replay input format now records weapon slot switches (`ws`) for deterministic playback of combat-assisted movement lines
+  - replay input format records weapon/transport slot switch events (`ws`, now `1-6`) for deterministic playback of slot-assisted movement lines
   - multiplayer note: combat actions are currently local/offline-only; networked sessions keep server-authoritative movement without local combat impulses
+- Ivan: transport sandbox add-on (movement-first extensions)
+  - slot `5`: `planer` flight mode
+  - slot `6`: `skateboard` ground mode
+  - `planer` controls: `W/S` throttle, `A/D` turn, arrows for pitch/yaw, `Q/E` roll
+  - `skateboard` keeps normal movement controls but adds higher sustained ground speed/glide
+  - replay input now stores explicit `Q/E` held states (`kq`/`ke`) for transport-aware playback/debugging
 - Ivan: vault is enabled by default (runtime toggle in debug menu)
 - Ivan: surf prototype on slanted surfaces (strafe-held surf with live tuning controls)
 - Ivan: legacy-style surf preset (`surf_sky2_server`) approximating public surf_ski_2/surf_sky_2 server cvars

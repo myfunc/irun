@@ -68,6 +68,7 @@ from . import feel_capture_flow as _feel_capture
 from . import combat_system as _combat
 from . import combat_fx as _combat_fx
 from . import audio_system as _audio
+from . import transport_system as _transport
 from . import grapple_rope as _grapple_rope
 from . import input_system as _input
 from . import menu_flow as _menu
@@ -155,7 +156,7 @@ class RunnerDemo(ShowBase):
         self._prev_grapple_down: bool = False
         self._prev_noclip_toggle_down: bool = False
         self._prev_demo_save_down: bool = False
-        self._prev_weapon_slot_down: list[bool] = [False, False, False, False]
+        self._prev_weapon_slot_down: list[bool] = [False, False, False, False, False, False]
         self._active_recording: DemoRecording | None = None
         self._loaded_replay_path: Path | None = None
         self._playback_frames: list[DemoFrame] | None = None
@@ -244,6 +245,7 @@ class RunnerDemo(ShowBase):
         self._grapple_rope_np.hide()
         _combat.init_runtime(self)
         _combat_fx.init_runtime(self)
+        _transport.init_runtime(self)
 
         self.scene: WorldScene | None = None
         self.collision: CollisionWorld | None = None
@@ -1110,9 +1112,10 @@ class RunnerDemo(ShowBase):
             self._prev_grapple_down = False
             self._prev_noclip_toggle_down = False
             self._prev_demo_save_down = False
-            self._prev_weapon_slot_down = [False, False, False, False]
+            self._prev_weapon_slot_down = [False, False, False, False, False, False]
             _combat.reset_runtime(self, keep_active_slot=True)
             _combat_fx.reset_runtime(self, keep_weapon_slot=True)
+            _transport.reset_runtime(self)
             if not self._playback_active:
                 self._start_new_demo_recording()
             if self._runtime_connect_host or self._open_to_network:
@@ -1674,6 +1677,7 @@ class RunnerDemo(ShowBase):
             self._toggle_noclip()
         if cmd.grapple_pressed:
             self._on_grapple_primary_down()
+        _transport.handle_slot_select(self, slot=int(cmd.weapon_slot_select))
 
         wish = self._wish_direction_from_axes(move_forward=cmd.move_forward, move_right=cmd.move_right)
         jump_requested = bool(cmd.jump_pressed)
@@ -1686,6 +1690,8 @@ class RunnerDemo(ShowBase):
             or bool(cmd.grapple_pressed)
             or bool(cmd.mouse_left_held)
             or bool(cmd.mouse_right_held)
+            or bool(cmd.key_q_held)
+            or bool(cmd.key_e_held)
             or int(cmd.weapon_slot_select) != 0
             or int(cmd.look_dx) != 0
             or int(cmd.look_dy) != 0
@@ -1696,6 +1702,10 @@ class RunnerDemo(ShowBase):
             # Autojump is for chained grounded hops; don't feed airborne wall-jump retries.
             jump_requested = True
 
+        transport_consumed_movement = False
+        if not bool(self.tuning.noclip_enabled):
+            transport_consumed_movement = _transport.tick(self, cmd=cmd, dt=float(self._sim_fixed_dt))
+
         if self.tuning.noclip_enabled:
             self._step_noclip(
                 dt=self._sim_fixed_dt,
@@ -1704,6 +1714,8 @@ class RunnerDemo(ShowBase):
                 jump_held=bool(cmd.jump_held),
                 slide_pressed=bool(cmd.slide_pressed),
             )
+        elif transport_consumed_movement:
+            pass
         else:
             if not bool(self.tuning.grapple_enabled):
                 self.player.detach_grapple()
@@ -1719,7 +1731,9 @@ class RunnerDemo(ShowBase):
             )
 
         self._handle_kill_plane()
-        fire_event = _combat.tick(self, cmd=cmd, dt=float(self._sim_fixed_dt))
+        fire_event = None
+        if not _transport.is_transport_slot(_transport.active_slot(self)):
+            fire_event = _combat.tick(self, cmd=cmd, dt=float(self._sim_fixed_dt))
         if fire_event is not None:
             _combat_fx.on_fire(self, event=fire_event)
             _audio.on_weapon_fire(self, slot=int(fire_event.slot))
@@ -1890,12 +1904,15 @@ class RunnerDemo(ShowBase):
                 "inp_ka": bool(cmd.key_a_held),
                 "inp_ks": bool(cmd.key_s_held),
                 "inp_kd": bool(cmd.key_d_held),
+                "inp_kq": bool(cmd.key_q_held),
+                "inp_ke": bool(cmd.key_e_held),
                 "inp_au": bool(cmd.arrow_up_held),
                 "inp_ad": bool(cmd.arrow_down_held),
                 "inp_al": bool(cmd.arrow_left_held),
                 "inp_ar": bool(cmd.arrow_right_held),
                 "inp_m1": bool(cmd.mouse_left_held),
                 "inp_m2": bool(cmd.mouse_right_held),
+                "transport_slot": int(_transport.active_slot(self)),
             }
 
         pos = self.player.pos
@@ -1951,12 +1968,15 @@ class RunnerDemo(ShowBase):
             "inp_ka": bool(cmd.key_a_held),
             "inp_ks": bool(cmd.key_s_held),
             "inp_kd": bool(cmd.key_d_held),
+            "inp_kq": bool(cmd.key_q_held),
+            "inp_ke": bool(cmd.key_e_held),
             "inp_au": bool(cmd.arrow_up_held),
             "inp_ad": bool(cmd.arrow_down_held),
             "inp_al": bool(cmd.arrow_left_held),
             "inp_ar": bool(cmd.arrow_right_held),
             "inp_m1": bool(cmd.mouse_left_held),
             "inp_m2": bool(cmd.mouse_right_held),
+            "transport_slot": int(_transport.active_slot(self)),
         }
 
     def _fire_grapple(self) -> bool:
@@ -2041,6 +2061,7 @@ class RunnerDemo(ShowBase):
         self._sim_state_ready = False
         _combat.reset_runtime(self, keep_active_slot=True)
         _combat_fx.reset_runtime(self, keep_weapon_slot=True)
+        _transport.reset_runtime(self)
         self._push_sim_snapshot()
         self._render_interpolated_state(alpha=1.0)
         # Recording starts from each spawn/respawn window.
@@ -2275,13 +2296,15 @@ class RunnerDemo(ShowBase):
             hspeed = math.sqrt(self.player.vel.x * self.player.vel.x + self.player.vel.y * self.player.vel.y)
             vault_dbg = self.player.vault_debug_status()
             combat_status = _combat.status_fragment(self)
+            transport_status = _transport.status_fragment(self)
             self.ui.set_speed(hspeed)
             self.ui.set_health(self._local_hp)
             self.ui.set_status(
                 f"speed: {hspeed:.2f} | z-vel: {self.player.vel.z:.2f} | grounded: {self.player.grounded} | "
                 f"wall: {self.player.has_wall_for_jump()} | surf: {self.player.has_surf_surface()} | slide: {self.player.is_sliding()} | "
                 f"grapple: {self.player.is_grapple_attached()} | hp: {self._local_hp} | net: {self._net_connected} | "
-                f"rec: {self._active_recording is not None} | replay: {self._playback_active} | vault: {vault_dbg} | {combat_status}"
+                f"rec: {self._active_recording is not None} | replay: {self._playback_active} | vault: {vault_dbg} | "
+                f"{transport_status} | {combat_status}"
             )
 
             if self._game_mode is not None:

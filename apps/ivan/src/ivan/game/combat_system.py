@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
+import math
 
 from panda3d.core import LVector3f
 
@@ -17,6 +18,18 @@ WEAPON_SPECS: dict[int, WeaponSpec] = {
     3: WeaponSpec(slot=3, name="rocket", cooldown_s=0.62),
     4: WeaponSpec(slot=4, name="pulse", cooldown_s=0.72),
 }
+
+_BLINK_REACH = 94.0
+_BLINK_REACH_JUMP = 118.0
+_BLINK_MIN_CLEARANCE = 0.44
+_BLINK_TRAVEL_REF = 36.0
+
+_SLAM_RAY_REACH = 18.0
+_SLAM_REBOUND_RANGE = 17.0
+_SLAM_REBOUND_BASE = 2.8
+_SLAM_REBOUND_SCALE = 5.8
+_SLAM_REBOUND_UP_BASE = 1.0
+_SLAM_REBOUND_UP_SCALE = 2.6
 
 
 @dataclass
@@ -127,6 +140,11 @@ def _horizontal_unit(v: LVector3f) -> LVector3f:
     return out
 
 
+def _normalized01(v: float, *, ref: float) -> float:
+    d = max(1e-6, float(ref))
+    return max(0.0, min(1.0, float(v) / d))
+
+
 def _dash_player(host, *, direction: LVector3f, distance: float, min_clearance: float = 0.32) -> float:
     player = getattr(host, "player", None)
     if player is None:
@@ -154,6 +172,12 @@ def _dash_player(host, *, direction: LVector3f, distance: float, min_clearance: 
     if moved > 1e-6:
         player.pos = LVector3f(target)
     return moved
+
+
+def _slam_rebound_factor(*, impact_dist: float, world_hit: bool) -> float:
+    if not bool(world_hit):
+        return 0.0
+    return max(0.0, min(1.0, 1.0 - (max(0.0, float(impact_dist)) / _SLAM_REBOUND_RANGE)))
 
 
 def _register_combo_shot(st: CombatRuntimeState) -> int:
@@ -195,7 +219,7 @@ def _fire_blink(
 ) -> CombatFireEvent:
     # Slot 1: line-of-sight blink teleport to aim point.
     player = getattr(host, "player", None)
-    reach = 110.0 if bool(jump_held) else 88.0
+    reach = _BLINK_REACH_JUMP if bool(jump_held) else _BLINK_REACH
     impact, world_hit = _ray_hit_point(host, origin=origin, direction=direction, reach=reach)
     target = LVector3f(impact)
     if bool(world_hit):
@@ -212,15 +236,20 @@ def _fire_blink(
                 host,
                 direction=to_target,
                 distance=travel,
-                min_clearance=0.46,
+                min_clearance=_BLINK_MIN_CLEARANCE,
             )
         target = LVector3f(player.pos)
 
-    impulse = LVector3f(direction) * 0.26
+    travel_t = _normalized01(moved, ref=_BLINK_TRAVEL_REF)
+    impulse = LVector3f(direction) * (0.34 + 0.62 * travel_t)
+    impulse.z += 0.10 + 0.24 * travel_t
     if bool(jump_held):
-        impulse.z += 0.50
-    if moved > 8.0:
-        impulse.z += 0.35
+        impulse.z += 0.46 + 0.24 * travel_t
+    if moved > 10.0:
+        impulse.z += 0.18
+    if bool(slide_held):
+        strafe = _horizontal_unit(LVector3f(-direction.y, direction.x, 0.0))
+        impulse += strafe * (0.36 + 0.30 * travel_t)
     _apply_impulse(host, impulse=impulse, reason="weapon.blink.teleport")
     return CombatFireEvent(
         slot=1,
@@ -229,7 +258,7 @@ def _fire_blink(
         direction=LVector3f(direction),
         impact_pos=LVector3f(target),
         world_hit=bool(world_hit),
-        impact_power=0.38 + min(0.72, moved * 0.028),
+        impact_power=0.46 + min(1.00, moved * 0.034),
     )
 
 
@@ -243,20 +272,33 @@ def _fire_slam(
 ) -> CombatFireEvent:
     # Slot 2: aggressive aim-driven boost shot (great for diagonal jump lines).
     player = getattr(host, "player", None)
-    impulse = LVector3f(-direction * 7.20)
-    impulse.z += 2.40
+    move_speed = 0.0
+    if player is not None:
+        vel = getattr(player, "vel", None)
+        if vel is not None:
+            move_speed = math.sqrt(float(vel.x) * float(vel.x) + float(vel.y) * float(vel.y))
+    carry_bonus = min(2.8, move_speed * 0.16)
+    impulse = LVector3f(-direction * (7.8 + carry_bonus))
+    impulse.z += 2.8
     if float(direction.z) < -0.25:
-        impulse.z += abs(float(direction.z)) * 8.50
+        impulse.z += abs(float(direction.z)) * 9.4
     if bool(player is not None and getattr(player, "grounded", False)):
-        impulse.z += 2.50
+        impulse.z += 2.8
     else:
-        impulse.z += 0.90
+        impulse.z += 1.1
     if bool(jump_held):
-        impulse += LVector3f(direction * 2.85)
+        impulse += LVector3f(direction * 3.1)
+        impulse.z += 0.30
     if bool(slide_held):
-        impulse += _horizontal_unit(LVector3f(-direction.y, direction.x, 0.0)) * 1.6
+        impulse += _horizontal_unit(LVector3f(-direction.y, direction.x, 0.0)) * 1.9
     _apply_impulse(host, impulse=impulse, reason="weapon.slam")
-    impact, world_hit = _ray_hit_point(host, origin=origin, direction=direction, reach=18.0)
+    impact, world_hit = _ray_hit_point(host, origin=origin, direction=direction, reach=_SLAM_RAY_REACH)
+    impact_dist = float((LVector3f(impact) - LVector3f(origin)).length())
+    rebound_t = _slam_rebound_factor(impact_dist=impact_dist, world_hit=world_hit)
+    if rebound_t > 0.0:
+        rebound = LVector3f(-direction) * (_SLAM_REBOUND_BASE + _SLAM_REBOUND_SCALE * rebound_t)
+        rebound.z += _SLAM_REBOUND_UP_BASE + _SLAM_REBOUND_UP_SCALE * rebound_t
+        _apply_impulse(host, impulse=rebound, reason="weapon.slam.rebound")
     return CombatFireEvent(
         slot=2,
         weapon_name="slam",
@@ -264,7 +306,7 @@ def _fire_slam(
         direction=LVector3f(direction),
         impact_pos=LVector3f(impact),
         world_hit=bool(world_hit),
-        impact_power=0.72 + max(0.0, min(0.68, abs(float(direction.z)) * 0.65)),
+        impact_power=0.78 + max(0.0, min(0.72, abs(float(direction.z)) * 0.70)) + rebound_t * 0.62,
     )
 
 
@@ -408,7 +450,10 @@ def tick(host, *, cmd, dt: float) -> CombatFireEvent | None:
             jump_held=jump_held,
             slide_held=slide_held,
         )
-        _set_event(st, text="slam launch")
+        if bool(fired.world_hit) and float(fired.impact_power) >= 1.22:
+            _set_event(st, text="slam rebound")
+        else:
+            _set_event(st, text="slam launch")
     elif slot == 3:
         fired = _fire_rocket(host, origin=origin, direction=direction)
         _set_event(st, text="rocket burst")
