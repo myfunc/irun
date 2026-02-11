@@ -260,6 +260,8 @@ def on_connect_server_from_menu(host, host_text: str, port_text: str) -> None:
 
 def on_disconnect_server_from_menu(host) -> None:
     disconnect_multiplayer(host)
+    host._runtime_connect_host = None
+    host.pause_ui.set_connect_target(host="127.0.0.1", port=int(host._runtime_connect_port))
     if host._open_to_network:
         host._open_to_network = False
         host.pause_ui.set_open_to_network(False)

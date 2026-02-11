@@ -62,6 +62,13 @@ def _control_exec(*, host: str, port: int, line: str, role: str) -> list[str]:
     return []
 
 
+def _control_meta(*, host: str, port: int, role: str, prefix: str = "") -> list[str]:
+    line = "cmd_meta"
+    if str(prefix).strip():
+        line = f"cmd_meta --prefix {prefix}"
+    return _control_exec(host=host, port=port, line=line, role=role)
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="ivan-mcp", description="MCP stdio server for IVAN console control")
     ap.add_argument("--control-host", default="127.0.0.1", help="Host for IVAN ConsoleControlServer.")
@@ -132,6 +139,26 @@ def main(argv: list[str] | None = None) -> None:
                                     },
                                     "required": ["line"],
                                 },
+                            },
+                            {
+                                "name": "console_commands",
+                                "title": "IVAN Console Commands",
+                                "description": "List discoverable IVAN console command metadata.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "prefix": {
+                                            "type": "string",
+                                            "description": "Optional command name prefix filter.",
+                                            "default": "",
+                                        },
+                                        "role": {
+                                            "type": "string",
+                                            "description": 'Execution role hint: "client" or "server".',
+                                            "default": "client",
+                                        },
+                                    },
+                                },
                             }
                         ]
                     },
@@ -145,21 +172,29 @@ def main(argv: list[str] | None = None) -> None:
                 continue
             name = params.get("name")
             arguments = params.get("arguments")
-            if name != "console_exec" or not isinstance(arguments, dict):
+            if name not in ("console_exec", "console_commands") or not isinstance(arguments, dict):
                 _send_json(_error(req_id=req_id, code=-32602, message="Invalid tool call"))
                 continue
-            line = arguments.get("line")
             role = arguments.get("role") or "client"
-            if not isinstance(line, str):
-                _send_json(_error(req_id=req_id, code=-32602, message="line must be a string"))
-                continue
             try:
-                out_lines = _control_exec(
-                    host=str(args.control_host),
-                    port=int(args.control_port),
-                    line=line,
-                    role=str(role),
-                )
+                if name == "console_exec":
+                    line = arguments.get("line")
+                    if not isinstance(line, str):
+                        _send_json(_error(req_id=req_id, code=-32602, message="line must be a string"))
+                        continue
+                    out_lines = _control_exec(
+                        host=str(args.control_host),
+                        port=int(args.control_port),
+                        line=line,
+                        role=str(role),
+                    )
+                else:
+                    out_lines = _control_meta(
+                        host=str(args.control_host),
+                        port=int(args.control_port),
+                        role=str(role),
+                        prefix=str(arguments.get("prefix") or ""),
+                    )
             except Exception as e:
                 _send_json(_error(req_id=req_id, code=-32000, message=f"control error: {e}"))
                 continue

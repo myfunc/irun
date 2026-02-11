@@ -56,6 +56,18 @@ class RollingFeelDiagnostics:
         idx = max(0, min(len(vals) - 1, int(round(0.95 * (len(vals) - 1)))))
         return float(vals[idx])
 
+    def frame_ms_history(self) -> list[float]:
+        """Return a snapshot of recent frametimes (ms) for graph overlay."""
+        return list(self._frame_ms)
+
+    def frame_spike_threshold_ms(self) -> float:
+        """Baseline for spike detection: 2x median or 33ms (2 frames at 60Hz), whichever is higher."""
+        if not self._frame_ms:
+            return 33.0
+        vals = sorted(float(v) for v in self._frame_ms)
+        median = float(vals[len(vals) // 2])
+        return max(33.0, median * 2.0)
+
     def record_tick(
         self,
         *,

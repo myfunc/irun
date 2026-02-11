@@ -5,6 +5,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+_VIS_CACHE_MEM: dict[str, tuple["GoldSrcBspVis", int]] = {}
+
 
 @dataclass(frozen=True)
 class GoldSrcBspVis:
@@ -246,12 +248,40 @@ def load_or_build_visibility_cache(
     *,
     cache_path: Path,
     source_bsp_path: Path | None,
+    diagnostics: dict[str, object] | None = None,
 ) -> GoldSrcBspVis | None:
     """
     Load GoldSrc visibility cache from cache_path, or build it from a source BSP if missing/stale.
     """
 
     cache_path = Path(cache_path)
+    cache_key = str(cache_path.resolve())
+    cache_mtime_ns = -1
+    if cache_path.exists() and cache_path.is_file():
+        try:
+            st = cache_path.stat()
+            cache_mtime_ns = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)))
+        except Exception:
+            cache_mtime_ns = -1
+
+    warm = _VIS_CACHE_MEM.get(cache_key)
+    if isinstance(warm, tuple) and len(warm) == 2:
+        vis0, cached_cache_mtime_ns = warm
+        if int(cached_cache_mtime_ns) == int(cache_mtime_ns):
+            if source_bsp_path is None:
+                if diagnostics is not None:
+                    diagnostics["result"] = "memory-hit"
+                return vis0
+            if source_bsp_path.exists():
+                try:
+                    st = source_bsp_path.stat()
+                    source_mtime_ns = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)))
+                except Exception:
+                    source_mtime_ns = 0
+                if str(source_bsp_path) == str(vis0.source_bsp) and int(source_mtime_ns) == int(vis0.source_mtime_ns):
+                    if diagnostics is not None:
+                        diagnostics["result"] = "memory-hit"
+                    return vis0
 
     if cache_path.exists() and cache_path.is_file():
         try:
@@ -266,23 +296,41 @@ def load_or_build_visibility_cache(
                 mtime_ns = 0
             # If the cache matches the on-disk BSP, keep it.
             if str(source_bsp_path) == str(vis.source_bsp) and int(mtime_ns) == int(vis.source_mtime_ns):
+                _VIS_CACHE_MEM[cache_key] = (vis, int(cache_mtime_ns))
+                if diagnostics is not None:
+                    diagnostics["result"] = "disk-hit"
                 return vis
         elif vis is not None and source_bsp_path is None:
+            _VIS_CACHE_MEM[cache_key] = (vis, int(cache_mtime_ns))
+            if diagnostics is not None:
+                diagnostics["result"] = "disk-hit"
             return vis
 
     if source_bsp_path is None or not source_bsp_path.exists():
+        if diagnostics is not None:
+            diagnostics["result"] = "miss-no-source"
         return None
 
     vis = build_visibility_from_goldsrc_bsp(source_bsp_path=source_bsp_path)
     if vis is None:
+        if diagnostics is not None:
+            diagnostics["result"] = "build-failed"
         return None
 
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_text(vis.to_json(), encoding="utf-8")
+        try:
+            st = cache_path.stat()
+            cache_mtime_ns = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)))
+        except Exception:
+            cache_mtime_ns = -1
     except Exception:
         # Cache is optional; if we can't write, still return the in-memory data.
         pass
+    _VIS_CACHE_MEM[cache_key] = (vis, int(cache_mtime_ns))
+    if diagnostics is not None:
+        diagnostics["result"] = "rebuilt"
     return vis
 
 

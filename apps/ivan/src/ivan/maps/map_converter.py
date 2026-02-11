@@ -170,6 +170,9 @@ class MapConvertResult:
     # Parsed Half-Life light entities (for preview lighting in .map mode).
     lights: list[LightEntity] = field(default_factory=list)
 
+    # Optional fog from worldspawn or env_fog (for runtime preview).
+    fog: dict | None = None  # {"enabled": bool, "start": float, "end": float, "color": [r,g,b]}
+
 
 # ---------------------------------------------------------------------------
 # WAD path resolution
@@ -647,17 +650,31 @@ def convert_map_file(
         except ValueError:
             continue
 
-        # _light "R G B I" (RGB 0-255, I = intensity).
-        light_raw = ent.properties.get("_light", "255 255 255 200")
-        lp = light_raw.split()
+        # GoldSrc supports either:
+        # - _light: "R G B I"
+        # - _color + light (brightness)
+        light_raw = ent.properties.get("_light", "").strip()
+        lp = light_raw.split() if light_raw else []
         r, g, b, intensity = 255.0, 255.0, 255.0, 200.0
-        try:
-            if len(lp) >= 3:
+        if len(lp) >= 3:
+            try:
                 r, g, b = float(lp[0]), float(lp[1]), float(lp[2])
-            if len(lp) >= 4:
-                intensity = float(lp[3])
-        except ValueError:
-            pass
+                if len(lp) >= 4:
+                    intensity = float(lp[3])
+            except ValueError:
+                pass
+        else:
+            color_raw = ent.properties.get("_color", "255 255 255")
+            try:
+                cp = color_raw.split()
+                if len(cp) >= 3:
+                    r, g, b = float(cp[0]), float(cp[1]), float(cp[2])
+            except ValueError:
+                pass
+            try:
+                intensity = float(ent.properties.get("light", "200"))
+            except ValueError:
+                pass
 
         # Direction (light_environment / light_spot).
         pitch = 0.0
@@ -672,6 +689,25 @@ def convert_map_file(
                 angles = (float(a_raw[0]), float(a_raw[1]), float(a_raw[2]))
         except ValueError:
             pass
+        if cn == "light_environment" and angles == (0.0, 0.0, 0.0):
+            # GoldSrc commonly stores environment yaw in `angle`, not `angles`.
+            try:
+                yaw = float(ent.properties.get("angle", "0"))
+                angles = (0.0, yaw, 0.0)
+            except ValueError:
+                pass
+
+        inner_cone = 0.0
+        outer_cone = 0.0
+        if cn == "light_spot":
+            try:
+                inner_cone = float(ent.properties.get("_cone", "0"))
+            except ValueError:
+                pass
+            try:
+                outer_cone = float(ent.properties.get("_cone2", "0"))
+            except ValueError:
+                pass
 
         # Attenuation.
         fade = 1.0
@@ -697,6 +733,8 @@ def convert_map_file(
             brightness=intensity,
             pitch=pitch,
             angles=angles,
+            inner_cone=inner_cone,
+            outer_cone=outer_cone,
             fade=fade,
             falloff=falloff,
             style=style,
@@ -704,6 +742,49 @@ def convert_map_file(
 
     if lights:
         logger.info("Parsed %d light entities", len(lights))
+
+    # ── 8c. Parse fog (worldspawn or env_fog) ──────────────────────────
+    fog: dict | None = None
+    for ent in entities:
+        cn = ent.properties.get("classname", "").lower()
+        if cn == "env_fog":
+            start_s = ent.properties.get("fogstart") or ent.properties.get("fog_start")
+            end_s = ent.properties.get("fogend") or ent.properties.get("fog_end")
+            color_s = ent.properties.get("fogcolor") or ent.properties.get("fog_color") or "128 128 128"
+            try:
+                start = float(start_s) if start_s else 80.0
+                end = float(end_s) if end_s else 200.0
+            except (TypeError, ValueError):
+                continue
+            parts = color_s.split()
+            if len(parts) >= 3:
+                try:
+                    r, g, b = float(parts[0]) / 255.0, float(parts[1]) / 255.0, float(parts[2]) / 255.0
+                    fog = {"enabled": True, "start": start, "end": end, "color": [r, g, b]}
+                    break
+                except (TypeError, ValueError):
+                    pass
+    if fog is None:
+        for ent in entities:
+            if ent.properties.get("classname") != "worldspawn":
+                continue
+            start_s = ent.properties.get("fogstart") or ent.properties.get("fog_start")
+            end_s = ent.properties.get("fogend") or ent.properties.get("fog_end")
+            color_s = ent.properties.get("fogcolor") or ent.properties.get("fog_color")
+            if not (start_s and end_s and color_s):
+                continue
+            try:
+                start, end = float(start_s), float(end_s)
+            except (TypeError, ValueError):
+                continue
+            parts = color_s.split()
+            if len(parts) >= 3:
+                try:
+                    r, g, b = float(parts[0]) / 255.0, float(parts[1]) / 255.0, float(parts[2]) / 255.0
+                    fog = {"enabled": True, "start": start, "end": end, "color": [r, g, b]}
+                    break
+                except (TypeError, ValueError):
+                    pass
 
     # ── 9. Compute bounds ──────────────────────────────────────────────
     bounds_min, bounds_max = _compute_bounds(all_tri_dicts)
@@ -742,6 +823,7 @@ def convert_map_file(
     return MapConvertResult(
         triangles=all_tri_dicts,
         collision_triangles=all_collision,
+        fog=fog,
         spawn_position=spawn_pos,
         spawn_yaw=spawn_yaw,
         map_id=map_id,
