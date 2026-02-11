@@ -71,7 +71,7 @@ class FeelCaptureUI:
         hint_y = content_h - theme.pad - theme.small_scale * 0.9
         hint = DirectLabel(
             parent=self._content,
-            text="G: open capture | Enter: export | Apply auto-backs up tuning | Revert restores last backup",
+            text="G: freeze current run | Enter: export frozen run | Apply auto-backs up tuning | Revert restores last backup",
             text_scale=theme.small_scale * 0.90,
             text_align=TextNode.ALeft,
             text_fg=theme.text_muted,

@@ -8,6 +8,9 @@ NUMERIC_CONTROLS: list[tuple[str, float, float]] = [
     ("air_speed_mult", 0.50, 4.00),
     ("air_gain_t90", 0.03, 1.20),
     ("wallrun_sink_t90", 0.03, 1.20),
+    ("wallrun_min_entry_speed_mult", 0.0, 1.50),
+    ("wallrun_min_approach_dot", 0.0, 0.80),
+    ("wallrun_min_parallel_dot", 0.0, 1.0),
     ("jump_height", 0.2, 4.0),
     ("jump_apex_time", 0.08, 1.20),
     ("grace_period", 0.0, 0.35),
@@ -21,6 +24,7 @@ NUMERIC_CONTROLS: list[tuple[str, float, float]] = [
     ("vault_forward_boost", 0.00, 4.00),
     ("noclip_speed", 1.0, 80.0),
     ("player_half_height", 0.70, 1.60),
+    ("step_height", 0.10, 1.20),
 ]
 
 TOGGLE_CONTROLS: list[str] = [
@@ -47,6 +51,9 @@ GROUPS: list[tuple[str, list[str], list[str]]] = [
             "air_speed_mult",
             "air_gain_t90",
             "wallrun_sink_t90",
+            "wallrun_min_entry_speed_mult",
+            "wallrun_min_approach_dot",
+            "wallrun_min_parallel_dot",
             "jump_height",
             "jump_apex_time",
             "grace_period",
@@ -88,6 +95,7 @@ GROUPS: list[tuple[str, list[str], list[str]]] = [
         "Character",
         [
             "player_half_height",
+            "step_height",
         ],
         [
             "character_scale_lock_enabled",
@@ -102,6 +110,9 @@ FIELD_LABELS: dict[str, str] = {
     "air_speed_mult": "air speed multiplier",
     "air_gain_t90": "air gain t90 (s)",
     "wallrun_sink_t90": "wallrun sink t90 (s)",
+    "wallrun_min_entry_speed_mult": "wallrun min entry speed x Vmax",
+    "wallrun_min_approach_dot": "wallrun min approach dot",
+    "wallrun_min_parallel_dot": "wallrun min parallel dot",
     "jump_height": "jump height (u)",
     "jump_apex_time": "jump apex time (s)",
     "grace_period": "grace period (s)",
@@ -115,6 +126,7 @@ FIELD_LABELS: dict[str, str] = {
     "vault_forward_boost": "vault speed boost (u/s)",
     "noclip_speed": "noclip speed (u/s)",
     "player_half_height": "player half height (u)",
+    "step_height": "step height (u)",
 }
 
 FIELD_HELP: dict[str, str] = {
@@ -124,6 +136,9 @@ FIELD_HELP: dict[str, str] = {
     "air_speed_mult": "Lower: tighter air-speed cap relative to Vmax. Higher: allows more carry and bhop top speed.",
     "air_gain_t90": "Lower: faster air speed gain (stronger bhop/strafe gain). Higher: slower air speed build-up.",
     "wallrun_sink_t90": "Lower: weaker wallrun hold and faster height loss. Higher: stronger wallrun hold and slower height loss.",
+    "wallrun_min_entry_speed_mult": "Lower: wallrun can engage from slower air speed. Higher: requires faster incoming speed before wallrun engages.",
+    "wallrun_min_approach_dot": "Lower: even shallow/parallel wall touches can engage wallrun. Higher: requires clearer movement into the wall before engage.",
+    "wallrun_min_parallel_dot": "Lower: near head-on wall impacts may still engage wallrun. Higher: requires stronger along-wall motion to engage.",
     "jump_height": "Lower: shorter hop height. Higher: higher jump apex.",
     "jump_apex_time": "Lower: shorter time to jump apex (snappier pop). Higher: longer float to apex.",
     "grace_period": "Lower: tighter shared leniency distance for jump buffer/coyote/vault timing. Higher: wider distance-derived grace window (time scales from speed, but never below base).",
@@ -137,6 +152,7 @@ FIELD_HELP: dict[str, str] = {
     "vault_forward_boost": "Lower: weaker forward carry when vault triggers. Higher: stronger forward push while vaulting.",
     "noclip_speed": "Lower: slower noclip traversal while flying. Higher: faster noclip speed along view direction.",
     "player_half_height": "Lower: shorter player hull. Higher: taller player hull; eye height auto-scales to keep camera proportion.",
+    "step_height": "Lower: smaller ledges require jumps and footing is less sticky on uneven terrain. Higher: larger steps are walkable and slope/edge grounding is more forgiving.",
     "autojump_enabled": "Lower (OFF): jump requires press timing each hop. Higher (ON): holding jump auto-queues grounded hops.",
     "coyote_buffer_enabled": "Lower (OFF): disable coyote + buffered leniency windows. Higher (ON): enable forgiving jump windows.",
     "custom_friction_enabled": "Lower (OFF): skip custom ground friction for isolation tests. Higher (ON): use normal friction model.",

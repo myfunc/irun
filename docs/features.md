@@ -7,9 +7,9 @@
 - Ivan: debug-tuned parameters persist to local state and load as next-run defaults
 - Ivan: debug panel upgraded to grouped, collapsible, scrollable CS-style boxed layout with real-unit sliders/entries
 - Ivan: debug profile manager with default presets (`surf_bhop_c2`, `surf_bhop`, `bhop`, `surf`, `surf_sky2_server`), immediate per-profile setting restore on switch, and persistent custom profile saves
-- Ivan: in-game menu on `Esc` (Resume, Map Selector, Key Bindings, Back to Main Menu, Quit)
+- Ivan: in-game menu on `Esc` (Resume, Map Selector, Settings, Back to Main Menu, Quit)
 - Ivan: debug/admin panel moved to `` ` `` (tilde/backtick)
-- Ivan: rebindable noclip toggle (default `V`) via in-game Key Bindings
+- Ivan: rebindable noclip toggle (default `V`) via in-game Settings tab
 - Ivan: in-game menu/debug UI block gameplay input but keep simulation running (no pause)
 - Ivan: classic center crosshair (Half-Life/CS style) visible during active gameplay
 - Ivan: debug HUD overlay (`F12`) — compact FPS/frametime panel with mode cycle
@@ -49,12 +49,26 @@
   - kept compact controls for `Vmax`, run response timing, ground stop timing, air speed/gain, wallrun sink timing, jump height/apex timing, slide stop timing, leniency windows, and vault iteration (`vault_max_ledge_height`, `vault_height_boost`, `vault_forward_boost`)
   - added explicit `noclip_speed` slider for fly-mode iteration without touching movement invariants
   - added character-height iteration slider (`player_half_height`) with automatic eye-height proportional update
+  - added `step_height` slider for live step-up / uneven-ground footing iteration
   - added optional character scale lock toggle to auto-derive `player_radius` + `step_height` from `player_half_height` without touching core feel invariants
   - restored `autojump_enabled` in compact toggles for bhop-chain validation
   - restored `wallrun_enabled` toggle for wallrun iteration
   - surf section is now isolation-only toggle (`surf_enabled`) with no surf-specific scalar sliders in the debug surface
+- Ivan: slide grounding stability pass
+  - short slide ground-loss grace prevents one-tick grounded/airborne flicker from forcing repeated crouch/stand transitions on sloped descents
+  - ground probing now incorporates step-aware distance/hysteresis to reduce slope contact jitter
+  - ground trace/snap now re-check nearby footprint offsets (including a small lifted re-probe) when center sweep hits step faces/surf-like edges, reducing angled-step grounded flicker and jitter
+  - downward probe validation now rejects near-level side grazes away from capsule center, reducing false "ledge ground" cases where players could walk on wall seams
+  - step-slide path choice now prefers progress along intended move direction (not only raw distance), reducing diagonal "push along step face" behavior
+  - step-slide now preserves grounded state from the selected path result (fixes false airborne flags on stair descent path comparisons)
+- Ivan: pointer-capture focus safety
+  - mouse center-snap is suspended while the game window is unfocused/minimized, so alt-tab no longer drags cursor back to center
+  - on focus return, one recenter frame is swallowed to avoid a large first-frame look spike
 - Ivan: wallrun feedback polish
   - wallrun is now enabled by default in the base tuning profile (`wallrun_enabled=True`)
+  - wallrun engagement now requires intent-like motion gates (minimum entry speed, minimum into-wall approach, and minimum along-wall travel), reducing accidental activation from incidental wall brushes
+  - wallrun now uses stricter acquire gates but softer sustain gates once active, improving curved-wall continuity without restoring accidental first-contact engages
+  - new wallrun engagement gates are runtime-tunable in debug UI (`wallrun_min_entry_speed_mult`, `wallrun_min_approach_dot`, `wallrun_min_parallel_dot`)
   - while wallrunning, camera now applies slight roll tilt away from the wall as an engagement indicator
   - wallrun jump now biases horizontal launch direction toward camera forward heading (while still peeling off wall)
   - wallrun jump now enforces a minimum peel-away horizontal component opposite the wall so jump-off gains reliable wall-exit distance
@@ -103,9 +117,12 @@
   - if jump is buffered shortly before wall contact while airborne, vault can now still trigger on contact
 - Ivan: controller module split for ownership clarity and reviewability
   - `player_controller.py`: orchestration + authority loop
+  - `player_controller_kinematics.py`: jump/slide solve + velocity write helpers
+  - `player_controller_state.py`: state/query and camera-observer helpers
   - `player_controller_actions.py`: jump/vault/grapple/slide-hull/friction
   - `player_controller_surf.py`: surf/air behavior + wall/surf probes
   - `player_controller_collision.py`: collision/step-slide/sweep logic
+  - `player_controller_momentum.py`: targeted momentum helpers for jump-transition speed floors (no global per-tick speed lock)
 - Ivan: camera and animation are now explicit read-only observers
   - `camera_observer.py`: render-shell camera smoothing that follows solved simulation state only
   - `animation_observer.py`: optional visual bob/root-motion layer that applies camera-only offsets and never writes movement state
@@ -168,8 +185,12 @@
   - export/apply flow stores route/comment metadata into replay summary export history, clears feedback input, and confirms save in-panel
 - Ivan: quick feel capture popup (`G` while playing)
   - route selector (`A/B/C`) + free text fields (`route name`, `run notes`, `feedback`)
+  - opening the popup now immediately freezes the current run recording (saves and stages that replay) so notes/editing do not append extra post-finish ticks
+  - while popup is open, gameplay respawn hotkey (`R`) is blocked to prevent accidental run restarts while typing notes
   - one-click `Save + Export` writes current run telemetry and route-scoped comparisons
   - optional `Export + Apply` runs the same export path, snapshots current tuning backup, and then applies feedback-driven tuning suggestions
+  - `Export + Apply` now falls back to `run notes` text when `feedback` field is empty, preventing accidental no-op applies from writing notes in the wrong field
+  - feedback intent parsing now recognizes curved-wallrun, non-engaging wallrun, and false-ground phrasing (for example "wallrun is not engaging, i fall of the wall", "curved wallruns dont work", and "walk along bottom ledge where there is no ground"), reducing false `no tuning changes` results
   - added `Revert Last` button to restore the latest tuning backup directly from popup UI (no console command needed)
   - route compare history now includes:
     - latest vs preferred prior run (prefers prior runs with notes/feedback)
@@ -185,9 +206,15 @@
 - Ivan: multiplayer foundation (authoritative server + connected clients)
   - dedicated server mode with TCP bootstrap + UDP gameplay packets
   - normal client sessions are offline by default; ESC menu `Open To Network` starts/stops embedded host mode for LAN joinability while keeping the local player in-session
-  - if the local host port is already in use, host-toggle falls back to connecting an existing local server instead of crashing
+  - host toggle now always restarts the embedded local host first (prevents reconnecting stale in-process server state)
+  - if the local host port is already in use, host-toggle now fails fast and does not auto-connect to an unknown existing local server
   - ESC menu `Multiplayer` tab supports runtime server join via host/port input plus Connect/Disconnect controls
   - joining a server auto-loads the server map on the client before multiplayer session starts
+  - client now applies welcome spawn/yaw immediately on successful connect to avoid large first-frame correction teleports
+  - when opening local host mode mid-run (`Open To Network`), embedded server now seeds local-player spawn from current live player position/yaw to avoid forced teleport back to map start
+  - additional joining players spawn with small offsets around the authoritative spawn base (prevents all players overlapping one point when map spawn fallback is used)
+  - hosting while running a direct TrenchBroom `.map` now uses converted `.map` spawn/collision data on the authoritative server (prevents empty-world respawn loops/void teleports in host mode)
+  - direct `.map` host startup now fails explicitly if conversion cannot produce a valid collision mesh (no silent broken-world fallback)
   - host-opened server starts with host client tuning (no config reset on open-to-network)
   - dedicated server defaults to `surf_bhop_c2` tuning (same movement baseline as client default profile)
   - server tuning is authoritative: only config owner (host client) can change it; other clients receive live updates and apply them in-session
@@ -195,11 +222,16 @@
     - host/config owner profile switches are sent to server as full tuning snapshots and wait for authoritative `cfg_v` acknowledgement
     - non-owner clients are blocked from profile switching and are reset to authoritative server tuning
   - multiplayer respawn (`R`) sends authoritative respawn request and also applies an immediate local predictive respawn; server `rs` snapshots still finalize authoritative state
+  - kill-plane auto-respawn is skipped on connected clients so server authority does not fight local respawn logic
   - player snapshots include per-player respawn sequence so clients force immediate authoritative reposition on respawn
   - local player netcode uses sequence-history reconciliation (rollback + replay) for smoother online movement
   - reconciliation replay now avoids per-step render-snapshot churn and records per-second net perf stats (snapshot cadence, correction magnitude, replay cost) shown in the `F2` input debug overlay
   - local first-person camera uses a short render-shell smoothing path in online mode to avoid sluggish/jerky correction pops
   - remote interpolation delay auto-adjusts to observed snapshot jitter
+  - server snapshot replication now uses per-client AOI relevance on GoldSrc maps when `visibility.goldsrc.json` is present:
+    - PVS/leaf-aware filtering via existing GoldSrc VIS data
+    - local player is always included in its own snapshot stream (so ack/reconciliation never starves)
+    - short-range distance fallback keeps nearby players visible across leaf/PVS edge cases
   - clients can connect, send input, and receive replicated player snapshots
   - client-side prediction + server reconciliation for local player movement
   - reconciliation smoothing reduces visible micro-stutter from frequent authoritative corrections
@@ -207,7 +239,25 @@
   - server-side lag compensation for grapple hit checks (rewind by client tick hint)
   - health system with grapple damage (`20` per hit) and corner HP HUD
 - Ivan: autojump toggle (hold jump to continue hopping)
-- Ivan: grapple hook traversal (attach/detach on LMB, one-shot attach boost, rope swing constraint)
+- Ivan: grapple hook traversal (attach/detach on RMB, one-shot attach boost, rope swing constraint)
+- Ivan: combat sandbox prototype (movement-first)
+  - weapon slots `1-4` with fixed per-slot cooldowns
+  - controls: fire on `LMB` (`mouse1`), grapple on `RMB` (`mouse3`)
+  - slot `1` is now `blink`: line-of-sight teleport to aimed point (with collision-safe landing offset)
+  - slot `2` is now `slam`: aim-driven boost shot for aggressive launch lines (down-aim boosts upward launch strength)
+  - slot `3` rocket burst supports consistent self-boost/rocket-jump near impact surfaces
+  - slot `4` pulse dash adds a forward-up burst for fast route re-direction
+  - rocket and pulse cooldowns/impulses were tightened for faster chaining and punchier route correction
+  - combo chain system: repeated weapon use in a short window grants temporary sustain boost and burst pop at higher stacks
+  - visible projectile tracers are now rendered for combat shots (slot-styled travel visuals to impact)
+  - combat visuals now use richer procedural textures for weapon mesh, projectile tracers, and particles
+  - each slot now has dedicated first-person weapon kick animation (per-slot recoil timing/shape)
+  - each slot now has distinct particle VFX (muzzle burst and impact-style particles; rocket now adds heavier multi-layer explosion bursts with embers/smoke/shockwave rings)
+  - combat view-punch feedback now reacts to weapon fire and scales up on nearby heavy impacts
+  - synthesized weapon and movement SFX are now present (per-slot weapon sounds, grapple attach/detach, walk/run footsteps) with extra impact-layer sounds for rocket/pulse hits
+  - in-game Settings tab (ESC menu) now includes audio controls (`Master Volume`, `SFX Volume`) and keybinding controls
+  - replay input format now records weapon slot switches (`ws`) for deterministic playback of combat-assisted movement lines
+  - multiplayer note: combat actions are currently local/offline-only; networked sessions keep server-authoritative movement without local combat impulses
 - Ivan: vault is enabled by default (runtime toggle in debug menu)
 - Ivan: surf prototype on slanted surfaces (strafe-held surf with live tuning controls)
 - Ivan: legacy-style surf preset (`surf_sky2_server`) approximating public surf_ski_2/surf_sky_2 server cvars

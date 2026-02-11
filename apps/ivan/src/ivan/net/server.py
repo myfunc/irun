@@ -9,6 +9,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 
 from panda3d.core import LVector3f, NodePath, PandaNode
 
@@ -17,6 +18,7 @@ from ivan.console.control_server import ConsoleControlServer
 from ivan.console.server_bindings import build_server_console
 from ivan.console.line_bus import ThreadSafeLineBus
 from ivan.maps.bundle_io import resolve_bundle_handle
+from ivan.net.relevance import GoldSrcPvsRelevance, build_goldsrc_pvs_relevance_from_map
 from ivan.physics.collision_world import CollisionWorld
 from ivan.physics.motion.intent import MotionIntent
 from ivan.physics.player_controller import PlayerController
@@ -60,6 +62,8 @@ class MultiplayerServer:
         udp_port: int,
         map_json: str | None,
         initial_tuning: dict[str, float | bool] | None = None,
+        initial_spawn: tuple[float, float, float] | None = None,
+        initial_spawn_yaw: float | None = None,
     ) -> None:
         self.host = str(host)
         self.tcp_port = int(tcp_port)
@@ -78,10 +82,22 @@ class MultiplayerServer:
         self.spawn_point = LVector3f(0, 35, 1.9)
         self.spawn_yaw = 0.0
         self.kill_z = -18.0
+        self._relevance: GoldSrcPvsRelevance | None = None
 
         self.aabbs: list[AABB] = []
         self.collision_triangles: list[list[float]] | None = None
         self._load_map_bundle()
+        if isinstance(initial_spawn, tuple) and len(initial_spawn) == 3:
+            try:
+                self.spawn_point = LVector3f(
+                    float(initial_spawn[0]),
+                    float(initial_spawn[1]),
+                    float(initial_spawn[2]),
+                )
+            except Exception:
+                pass
+        if isinstance(initial_spawn_yaw, (int, float)):
+            self.spawn_yaw = float(initial_spawn_yaw)
 
         root_np = NodePath(PandaNode("server-root"))
         self.collision = CollisionWorld(
@@ -227,10 +243,12 @@ class MultiplayerServer:
         self._safe_close_socket(self._udp_sock)
 
     def _load_map_bundle(self) -> None:
+        self._relevance = None
         if not self.map_json:
             return
         handle = resolve_bundle_handle(self.map_json)
         if handle is None:
+            self._load_map_file_for_server()
             return
         # Advertise the concrete map.json path so clients can load the same map on connect.
         self.map_json = str(handle.map_json)
@@ -239,6 +257,13 @@ class MultiplayerServer:
             payload = json.loads(payload_path.read_text(encoding="utf-8"))
         except Exception:
             return
+        try:
+            self._relevance = build_goldsrc_pvs_relevance_from_map(
+                map_json=payload_path,
+                payload=payload,
+            )
+        except Exception:
+            self._relevance = None
         spawn = payload.get("spawn")
         if isinstance(spawn, dict):
             pos = spawn.get("position")
@@ -298,10 +323,102 @@ class MultiplayerServer:
                         pass
             self.collision_triangles = pos_tris
 
-    def _make_controller(self) -> PlayerController:
+    def _load_map_file_for_server(self) -> None:
+        """
+        Load direct TrenchBroom `.map` files for authoritative server simulation.
+
+        Without this path, host-on-.map mode runs the server with an empty world, causing
+        respawn loops and apparent teleports into void positions.
+        """
+
+        if not self.map_json:
+            return
+        map_file = Path(str(self.map_json)).expanduser().resolve()
+        if not map_file.exists() or not map_file.is_file() or map_file.suffix.lower() != ".map":
+            return
+        self.map_json = str(map_file)
+        try:
+            from ivan.maps.map_converter import convert_map_file
+            from ivan.maps.bundle_io import _default_materials_dirs, _default_wad_search_dirs
+            from ivan.state import state_dir
+
+            tex_cache = state_dir() / "cache" / "server_map_textures" / map_file.stem
+            tex_cache.mkdir(parents=True, exist_ok=True)
+            result = convert_map_file(
+                map_file,
+                scale=0.03,
+                wad_search_dirs=_default_wad_search_dirs(map_file),
+                materials_dirs=_default_materials_dirs(map_file),
+                texture_cache_dir=tex_cache,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Server failed to convert .map file: {map_file}") from e
+
+        if not result.triangles:
+            raise RuntimeError(f"Server map conversion produced no render triangles: {map_file}")
+
+        if result.spawn_position is not None and len(result.spawn_position) == 3:
+            try:
+                self.spawn_point = LVector3f(
+                    float(result.spawn_position[0]),
+                    float(result.spawn_position[1]),
+                    float(result.spawn_position[2]),
+                )
+                self.spawn_point.setZ(self.spawn_point.getZ() + 1.2)
+            except Exception:
+                pass
+        self.spawn_yaw = float(result.spawn_yaw)
+        try:
+            self.kill_z = float(result.bounds_min[2]) - 5.0
+        except Exception:
+            pass
+
+        pos_tris: list[list[float]] = []
+        for t in result.triangles:
+            if not isinstance(t, dict):
+                continue
+            p = t.get("p")
+            if isinstance(p, list) and len(p) == 9:
+                try:
+                    pos_tris.append([float(x) for x in p])
+                except Exception:
+                    pass
+        if not pos_tris:
+            raise RuntimeError(f"Server map conversion produced no position triangles: {map_file}")
+        if result.collision_triangles:
+            coll: list[list[float]] = []
+            for t in result.collision_triangles:
+                if isinstance(t, list) and len(t) == 9:
+                    try:
+                        coll.append([float(x) for x in t])
+                    except Exception:
+                        pass
+            self.collision_triangles = coll if coll else pos_tris
+        else:
+            self.collision_triangles = pos_tris
+        if not self.collision_triangles:
+            raise RuntimeError(f"Server map conversion produced no collision triangles: {map_file}")
+
+    def _spawn_point_for_player(self, *, player_id: int) -> LVector3f:
+        idx = max(0, int(player_id) - 1)
+        if idx == 0:
+            return LVector3f(self.spawn_point)
+        # Keep host at base spawn; spread other players in small rings to avoid overlap.
+        ring = 1 + ((idx - 1) // 6)
+        slot = (idx - 1) % 6
+        angle = (math.tau * (float(slot) / 6.0)) + (float(ring) * 0.37)
+        base_radius = max(float(self.tuning.player_radius) * 3.0, 0.9)
+        r = base_radius * float(ring)
+        return LVector3f(
+            float(self.spawn_point.x) + math.cos(angle) * r,
+            float(self.spawn_point.y) + math.sin(angle) * r,
+            float(self.spawn_point.z),
+        )
+
+    def _make_controller(self, *, spawn_point: LVector3f | None = None) -> PlayerController:
         return PlayerController(
             tuning=self.tuning,
-            spawn_point=self.spawn_point,
+            spawn_point=(LVector3f(spawn_point) if spawn_point is not None else self.spawn_point),
             aabbs=self.aabbs,
             collision=self.collision,
         )
@@ -362,7 +479,8 @@ class MultiplayerServer:
                 pid = self._next_player_id
                 self._next_player_id += 1
                 token = secrets.token_hex(12)
-                ctrl = self._make_controller()
+                player_spawn = self._spawn_point_for_player(player_id=int(pid))
+                ctrl = self._make_controller(spawn_point=player_spawn)
                 st = _ClientState(
                     player_id=pid,
                     token=token,
@@ -399,7 +517,8 @@ class MultiplayerServer:
                     "token": token,
                     "tick_rate": self.tick_rate_hz,
                     "udp_port": self.udp_port,
-                    "spawn": [float(self.spawn_point.x), float(self.spawn_point.y), float(self.spawn_point.z)],
+                    "spawn": [float(player_spawn.x), float(player_spawn.y), float(player_spawn.z)],
+                    "spawn_yaw": float(self.spawn_yaw),
                     "map_json": self.map_json,
                     "can_configure": bool(token == self._config_owner_token),
                     "cfg_v": int(self._tuning_version),
@@ -605,39 +724,74 @@ class MultiplayerServer:
                 st.respawn_seq = int(st.respawn_seq) + 1
             st.rewind_history.append((int(self._tick), LVector3f(st.ctrl.pos)))
 
-    def _snapshot_players(self) -> list[dict]:
-        out: list[dict] = []
+    def _snapshot_players(self) -> tuple[list[int], dict[int, dict], dict[int, LVector3f], dict[int, int | None]]:
+        ordered_ids: list[int] = []
+        rows_by_id: dict[int, dict] = {}
+        positions_by_id: dict[int, LVector3f] = {}
+        leaves_by_id: dict[int, int | None] = {}
         for st in self._clients_by_token.values():
-            out.append(
-                {
-                    "id": int(st.player_id),
-                    "n": st.name,
-                    "x": round(float(st.ctrl.pos.x), 6),
-                    "y": round(float(st.ctrl.pos.y), 6),
-                    "z": round(float(st.ctrl.pos.z), 6),
-                    "yaw": round(float(st.yaw), 4),
-                    "pitch": round(float(st.pitch), 4),
-                    "vx": round(float(st.ctrl.vel.x), 6),
-                    "vy": round(float(st.ctrl.vel.y), 6),
-                    "vz": round(float(st.ctrl.vel.z), 6),
-                    "ack": int(st.last_input.seq),
-                    "hp": int(st.hp),
-                    "rs": int(st.respawn_seq),
-                }
-            )
-        return out
+            pid = int(st.player_id)
+            pos = LVector3f(st.ctrl.pos)
+            ordered_ids.append(pid)
+            positions_by_id[pid] = LVector3f(pos)
+            rows_by_id[pid] = {
+                "id": int(st.player_id),
+                "n": st.name,
+                "x": round(float(st.ctrl.pos.x), 6),
+                "y": round(float(st.ctrl.pos.y), 6),
+                "z": round(float(st.ctrl.pos.z), 6),
+                "yaw": round(float(st.yaw), 4),
+                "pitch": round(float(st.pitch), 4),
+                "vx": round(float(st.ctrl.vel.x), 6),
+                "vy": round(float(st.ctrl.vel.y), 6),
+                "vz": round(float(st.ctrl.vel.z), 6),
+                "ack": int(st.last_input.seq),
+                "hp": int(st.hp),
+                "rs": int(st.respawn_seq),
+            }
+            if self._relevance is not None:
+                leaves_by_id[pid] = self._relevance.world_pos_to_leaf(pos=pos)
+            else:
+                leaves_by_id[pid] = None
+        ordered_ids.sort()
+        return (ordered_ids, rows_by_id, positions_by_id, leaves_by_id)
 
     def _broadcast_snapshot(self) -> None:
-        players = self._snapshot_players()
-        pkt = encode_snapshot_packet(
-            tick=self._tick,
-            players=players,
-            cfg_v=int(self._tuning_version),
-            tuning=self._tuning_snapshot(),
-        )
+        ordered_ids, rows_by_id, positions_by_id, leaves_by_id = self._snapshot_players()
+        if not ordered_ids:
+            return
+
+        all_players = [rows_by_id[int(pid)] for pid in ordered_ids if int(pid) in rows_by_id]
+        packet_cache: dict[tuple[int, ...], bytes] = {
+            tuple(int(pid) for pid in ordered_ids): encode_snapshot_packet(
+                tick=self._tick,
+                players=all_players,
+                cfg_v=int(self._tuning_version),
+                tuning=self._tuning_snapshot(),
+            )
+        }
         for st in self._clients_by_token.values():
             if st.udp_addr is None:
                 continue
+            key_ids = tuple(int(pid) for pid in ordered_ids)
+            if self._relevance is not None and len(ordered_ids) > 1:
+                visible_ids = self._relevance.relevant_player_ids(
+                    viewer_player_id=int(st.player_id),
+                    ordered_player_ids=list(ordered_ids),
+                    positions_by_player_id=positions_by_id,
+                    leaves_by_player_id=leaves_by_id,
+                )
+                key_ids = tuple(int(pid) for pid in visible_ids)
+            pkt = packet_cache.get(key_ids)
+            if pkt is None:
+                players = [rows_by_id[int(pid)] for pid in key_ids if int(pid) in rows_by_id]
+                pkt = encode_snapshot_packet(
+                    tick=self._tick,
+                    players=players,
+                    cfg_v=int(self._tuning_version),
+                    tuning=self._tuning_snapshot(),
+                )
+                packet_cache[key_ids] = pkt
             try:
                 self._udp_sock.sendto(pkt, st.udp_addr)
             except Exception:
@@ -679,6 +833,8 @@ class EmbeddedHostServer:
         udp_port: int,
         map_json: str | None,
         initial_tuning: dict[str, float | bool] | None = None,
+        initial_spawn: tuple[float, float, float] | None = None,
+        initial_spawn_yaw: float | None = None,
     ) -> None:
         self._srv = MultiplayerServer(
             host=host,
@@ -686,6 +842,8 @@ class EmbeddedHostServer:
             udp_port=udp_port,
             map_json=map_json,
             initial_tuning=initial_tuning,
+            initial_spawn=initial_spawn,
+            initial_spawn_yaw=initial_spawn_yaw,
         )
         self._stop = threading.Event()
         self._thread = threading.Thread(
@@ -711,6 +869,8 @@ def run_server(
     udp_port: int,
     map_json: str | None,
     initial_tuning: dict[str, float | bool] | None = None,
+    initial_spawn: tuple[float, float, float] | None = None,
+    initial_spawn_yaw: float | None = None,
 ) -> None:
     srv = MultiplayerServer(
         host=host,
@@ -718,5 +878,7 @@ def run_server(
         udp_port=udp_port,
         map_json=map_json,
         initial_tuning=initial_tuning,
+        initial_spawn=initial_spawn,
+        initial_spawn_yaw=initial_spawn_yaw,
     )
     srv.run_forever()

@@ -78,6 +78,83 @@ def test_suggest_invariant_adjustments_uses_history_and_stays_invariant_only() -
     assert float(by_field["max_ground_speed"].after) <= float(by_field["max_ground_speed"].before) * 1.05 + 1e-9
 
 
+def test_suggest_invariant_adjustments_handles_wallrun_aggressive_feedback() -> None:
+    tuning = PhysicsTuning(
+        wallrun_min_entry_speed_mult=0.45,
+        wallrun_min_approach_dot=0.08,
+        wallrun_min_parallel_dot=0.30,
+    )
+    adjustments = suggest_invariant_adjustments(
+        feedback_text="wallrun too aggressive and triggers too easily",
+        tuning=tuning,
+        latest_summary=None,
+        history_payload=None,
+    )
+
+    by_field = {adj.field: adj for adj in adjustments}
+    assert by_field["wallrun_min_entry_speed_mult"].after > by_field["wallrun_min_entry_speed_mult"].before
+    assert by_field["wallrun_min_approach_dot"].after > by_field["wallrun_min_approach_dot"].before
+    assert by_field["wallrun_min_parallel_dot"].after > by_field["wallrun_min_parallel_dot"].before
+
+
+def test_suggest_invariant_adjustments_handles_curved_wallrun_feedback() -> None:
+    tuning = PhysicsTuning(
+        wallrun_sink_t90=0.22,
+        wallrun_min_entry_speed_mult=0.45,
+        wallrun_min_approach_dot=0.08,
+        wallrun_min_parallel_dot=0.30,
+    )
+    adjustments = suggest_invariant_adjustments(
+        feedback_text="curved wallrun doesnt work",
+        tuning=tuning,
+        latest_summary=None,
+        history_payload=None,
+    )
+
+    by_field = {adj.field: adj for adj in adjustments}
+    assert by_field["wallrun_sink_t90"].after > by_field["wallrun_sink_t90"].before
+    assert by_field["wallrun_min_approach_dot"].after < by_field["wallrun_min_approach_dot"].before
+    assert by_field["wallrun_min_parallel_dot"].after < by_field["wallrun_min_parallel_dot"].before
+
+
+def test_suggest_invariant_adjustments_handles_wallrun_not_working_phrase() -> None:
+    tuning = PhysicsTuning(
+        wallrun_sink_t90=0.22,
+        wallrun_min_entry_speed_mult=0.45,
+        wallrun_min_approach_dot=0.08,
+        wallrun_min_parallel_dot=0.30,
+    )
+    adjustments = suggest_invariant_adjustments(
+        feedback_text="wallrun doesnt work really",
+        tuning=tuning,
+        latest_summary=None,
+        history_payload=None,
+    )
+
+    by_field = {adj.field: adj for adj in adjustments}
+    assert by_field["wallrun_sink_t90"].after > by_field["wallrun_sink_t90"].before
+    assert by_field["wallrun_min_entry_speed_mult"].after < by_field["wallrun_min_entry_speed_mult"].before
+
+
+def test_suggest_invariant_adjustments_handles_wallrun_not_engaging_phrase() -> None:
+    tuning = PhysicsTuning(
+        wallrun_sink_t90=0.22,
+        wallrun_min_entry_speed_mult=0.45,
+        wallrun_min_approach_dot=0.08,
+        wallrun_min_parallel_dot=0.30,
+    )
+    adjustments = suggest_invariant_adjustments(
+        feedback_text="wallrun is not engaging, i fall of the wall",
+        tuning=tuning,
+        latest_summary=None,
+        history_payload=None,
+    )
+
+    by_field = {adj.field: adj for adj in adjustments}
+    assert by_field["wallrun_sink_t90"].after > by_field["wallrun_sink_t90"].before
+    assert by_field["wallrun_min_entry_speed_mult"].after < by_field["wallrun_min_entry_speed_mult"].before
+
+
 def test_evaluate_route_guardrails_returns_route_score_and_checks(tmp_path: Path, monkeypatch) -> None:
     latest = _write_summary(
         tmp_path / "latest.summary.json",

@@ -59,6 +59,21 @@ def test_update_state_merges_tuning_overrides(tmp_path: Path) -> None:
             os.environ["IRUN_IVAN_STATE_DIR"] = prev
 
 
+def test_update_state_persists_audio_volume(tmp_path: Path) -> None:
+    prev = os.environ.get("IRUN_IVAN_STATE_DIR")
+    os.environ["IRUN_IVAN_STATE_DIR"] = str(tmp_path / "state")
+    try:
+        update_state(master_volume=0.42, sfx_volume=0.73)
+        s = load_state()
+        assert abs(float(s.master_volume) - 0.42) < 1e-9
+        assert abs(float(s.sfx_volume) - 0.73) < 1e-9
+    finally:
+        if prev is None:
+            os.environ.pop("IRUN_IVAN_STATE_DIR", None)
+        else:
+            os.environ["IRUN_IVAN_STATE_DIR"] = prev
+
+
 def test_time_trial_persists_pb_and_last(tmp_path: Path) -> None:
     prev = os.environ.get("IRUN_IVAN_STATE_DIR")
     os.environ["IRUN_IVAN_STATE_DIR"] = str(tmp_path / "state")

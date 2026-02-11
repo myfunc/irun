@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from ivan.replays.compare import compare_latest_route_exports, compare_latest_replays
 from ivan.replays.telemetry import export_replay_telemetry
@@ -29,6 +30,21 @@ def _status(host, text: str) -> None:
         pass
 
 
+def _clear_staged_demo(host) -> None:
+    setattr(host, "_feel_capture_staged_demo_path", None)
+
+
+def _stage_current_run_for_capture(host) -> Path | None:
+    staged: Path | None = None
+    if host._active_recording is not None:
+        out = host._save_current_demo()
+        if isinstance(out, Path):
+            staged = Path(out)
+    host._active_recording = None
+    setattr(host, "_feel_capture_staged_demo_path", staged)
+    return staged
+
+
 def open_feel_capture(host) -> None:
     if host._mode != "game":
         return
@@ -37,10 +53,14 @@ def open_feel_capture(host) -> None:
         return
     if host._pause_menu_open or host._debug_menu_open or host._replay_browser_open or host._console_open:
         host._close_all_game_menus()
+    staged = _stage_current_run_for_capture(host)
     host._feel_capture_open = True
     host.feel_capture_ui.show()
     host._set_pointer_lock(False)
-    _status(host, "Feel capture: choose route + notes, then Save + Export.")
+    if staged is not None:
+        _status(host, f"Feel capture: run frozen at {staged.name}. Add notes and export.")
+    else:
+        _status(host, "Feel capture: no frozen run yet. Add notes and export when ready.")
 
 
 def close_feel_capture(host) -> None:
@@ -49,6 +69,9 @@ def close_feel_capture(host) -> None:
         host.feel_capture_ui.hide()
     except Exception:
         pass
+    _clear_staged_demo(host)
+    if not host._playback_active and host._active_recording is None:
+        host._start_new_demo_recording()
     if not (host._pause_menu_open or host._debug_menu_open or host._replay_browser_open or host._console_open):
         host._set_pointer_lock(True)
 
@@ -77,7 +100,14 @@ def _save_and_export_current_run(
     run_note: str,
     feedback_text: str,
 ):
-    out = host._save_current_demo()
+    staged = getattr(host, "_feel_capture_staged_demo_path", None)
+    out = None
+    if isinstance(staged, Path):
+        p = Path(staged)
+        if p.exists():
+            out = p
+    if out is None:
+        out = host._save_current_demo()
     if out is None:
         return None, None, "Save skipped (no active run yet)."
 
@@ -112,6 +142,32 @@ def _save_and_export_current_run(
     return exported, latest_summary, comp_note
 
 
+def _suggest_export_apply_adjustments(
+    *,
+    feedback_text: str,
+    tuning,
+    latest_summary: dict | None,
+):
+    adjustments = _suggest_feel_adjustments(
+        feedback_text=feedback_text,
+        tuning=tuning,
+        latest_summary=latest_summary,
+    )
+    if adjustments:
+        return adjustments
+    try:
+        from .autotune import suggest_invariant_adjustments as _suggest_invariant_adjustments
+
+        return _suggest_invariant_adjustments(
+            feedback_text=feedback_text,
+            tuning=tuning,
+            latest_summary=latest_summary,
+            history_payload=None,
+        )
+    except Exception:
+        return []
+
+
 def submit_feel_capture_export(
     host,
     *,
@@ -142,14 +198,16 @@ def submit_feel_capture_export(
     if exported is None:
         _status(host, compare_note)
         return
+    _clear_staged_demo(host)
 
     apply_note = ""
     if apply_feedback:
-        if not feedback:
+        feedback_for_apply = feedback if feedback else note
+        if not feedback_for_apply:
             apply_note = "feedback empty"
         else:
-            adjustments = _suggest_feel_adjustments(
-                feedback_text=feedback,
+            adjustments = _suggest_export_apply_adjustments(
+                feedback_text=feedback_for_apply,
                 tuning=host.tuning,
                 latest_summary=(latest_summary if isinstance(latest_summary, dict) else None),
             )
@@ -180,7 +238,7 @@ def submit_feel_capture_export(
                     pass
 
     # Roll to a fresh recording so each run/export maps to one replay file.
-    if not host._playback_active:
+    if not host._playback_active and host._active_recording is None:
         host._start_new_demo_recording()
 
     suffix = f"; {apply_note}" if apply_note else ""

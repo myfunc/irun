@@ -36,6 +36,9 @@ See: `docs/ui-kit.md`.
   - `apps/ivan/src/ivan/game/netcode.py`: client prediction/reconciliation + remote interpolation helpers
   - `apps/ivan/src/ivan/game/tuning_profiles.py`: tuning profile defaults + persistence helpers
   - `apps/ivan/src/ivan/game/input_system.py`: mouse/keyboard sampling + input command helpers
+  - `apps/ivan/src/ivan/game/combat_system.py`: offline combat sandbox orchestration (weapon slot state, per-slot cooldowns, and impulse-style firing actions)
+  - `apps/ivan/src/ivan/game/combat_fx.py`: weapon presentation layer (first-person weapon kick animation, per-slot particles/tracers, impact shockwaves, and fire/impact view-punch feedback)
+  - `apps/ivan/src/ivan/game/audio_system.py`: synthesized SFX runtime (weapon/grapple/footstep audio + impact layers, volume controls, local audio asset cache)
   - `apps/ivan/src/ivan/game/feel_diagnostics.py`: rolling frame/tick diagnostics buffer and JSON dump utility for movement feel analysis
   - `apps/ivan/src/ivan/game/determinism.py`: per-tick quantized state hashing + rolling determinism trace buffer
 - `apps/ivan/src/ivan/game/camera_observer.py`: read-only camera smoothing observer over solved simulation state
@@ -76,15 +79,20 @@ See: `docs/ui-kit.md`.
   - `solver.py`: authority for derived run/jump/gravity/ground-damping operations
   - `intent.py`, `state.py`: motion pipeline contracts for staged refactor
 - `apps/ivan/src/ivan/physics/player_controller.py`: Kinematic character controller orchestration (intent -> mode -> solver -> collision)
+- `apps/ivan/src/ivan/physics/player_controller_kinematics.py`: Kinematic state mutation mixin (slide solve, jump consume/apply, velocity write helpers)
+- `apps/ivan/src/ivan/physics/player_controller_state.py`: Read-only state/query mixin (motion lane name, camera roll/pitch observers, external velocity lane toggles)
 - `apps/ivan/src/ivan/physics/player_controller_actions.py`: Player action mixin (jump variants, vault, grapple, slide hull, friction)
 - `apps/ivan/src/ivan/physics/player_controller_surf.py`: Air/surf behavior mixin (air steer, surf redirect, wall/surf contact probes)
 - `apps/ivan/src/ivan/physics/player_controller_collision.py`: Collision and step-slide mixin (sweep, snap, graybox fallback)
+- `apps/ivan/src/ivan/physics/player_controller_momentum.py`: Momentum helper mixin (targeted speed-floor guards for jump transitions; no global per-tick speed lock)
 - `apps/ivan/src/ivan/physics/collision_world.py`: Bullet collision query world (convex sweeps against static geometry)
 - `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (CS-style grouped boxes, collapsible sections, scrollable content, real-unit sliders/entries, profile dropdown/save)
 - `apps/ivan/src/ivan/ui/main_menu.py`: main menu controller (bundle list + import flow + video settings)
-- `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game ESC menu (Resume/Map Selector/Key Bindings/Back/Quit) and keybinding controls
+- `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game ESC menu (Resume/Map Selector/Settings/Back/Quit) with settings, multiplayer, and feel-session tabs
   - Menu page uses a two-column action layout to keep all actions visible at gameplay resolutions.
+  - Settings page includes audio sliders (master/sfx) and keybinding controls.
   - Includes a Feel Session tab with route radio options (`A/B/C`), replay export, and feedback-driven tuning tweaks.
+- `apps/ivan/src/ivan/ui/pause_menu_settings_section.py`: focused settings subsection widget for pause menu settings tab (audio + keybind controls)
 - `apps/ivan/src/ivan/ui/feel_capture_ui.py`: in-game quick capture popup (`G`) for route-tagged save/export/apply flow, including one-click `Revert Last` rollback
 - `apps/ivan/src/ivan/ui/replay_browser_ui.py`: in-game replay browser overlay (UI kit list menu)
 - `apps/ivan/src/ivan/ui/replay_input_ui.py`: in-game replay input HUD (UI kit panel) for recorded command visualization
@@ -139,10 +147,21 @@ See: `docs/ui-kit.md`.
   - active movement tuning is invariant-first: run, stop damping, jump, air gain/cap, wallrun sink, and slide are derived from timing/target invariants
   - `PlayerController` now uses `MotionSolver` for derived ground run, ground coasting damping, jump takeoff speed, air gain/cap, wallrun sink response, and gravity
   - gameplay and authoritative server ticks now feed movement through `MotionIntent` (`step_with_intent`) instead of ad-hoc feature velocity calls
+  - deceleration policy is explicit:
+    - regular grounded coasting/run is a deceleration lane
+    - slide uses invariant damping + slope-aligned acceleration (downhill gains, uphill losses)
+    - walljump keeps targeted total-speed floor preservation at jump transition only
+    - collision clipping is non-energy-gaining (`overbounce=1.0`) to reduce high-speed ricochet escalation
   - slide invariant (`slide_stop_t90`) derives grounded slide speed decay; slide is hold-driven, preserves carried speed, and owns low-profile hull state while active
   - shared leniency invariant (`grace_period`) drives jump buffer, coyote window, and vault grace checks from one slider, with runtime distance-derivation (`grace_distance = grace_period * Vmax`) for speed-aware grace timing
   - optional character scale lock derives geometry-facing values (`player_radius`, `step_height`) from `player_half_height` while keeping motion feel invariants independent
   - debug tuning UI is intentionally narrow: invariant-first controls plus harness isolation toggles (legacy direct scalars and niche sliders are hidden), with one explicit utility control for `noclip_speed`
+  - character group also exposes `step_height` for live step-up/ground-contact tuning without reopening broader legacy slider surface
+  - slide lane includes short ground-loss grace so transient slope contact jitter does not flap slide hull state (crouch/stand spam)
+  - step-slide resolver now compares path progress along intended horizontal move direction and preserves grounded state from the selected path, matching Quake-style step intent under oblique stair contact
+  - ground trace/snap use footprint multi-probe fallback (plus a small lifted re-probe) when center downward sweeps are blocked by step faces, keeping grounded classification stable on angled stair edges
+  - ground contact filtering rejects near-level off-center side grazes from downward probes, preventing false grounded states along wall/ledge seams
+  - wallrun gating splits acquire vs sustain: stricter entry heuristics (intent/speed/approach/parallel) and softer sustain thresholds for curved wall continuity, with tunable gate fields
   - legacy direct run/gravity tuning fields are migrated to invariants and no longer part of active tuning schema
   - legacy air gain scalars are migrated (`max_air_speed`, `jump_accel`, `air_control`, `air_counter_strafe_brake`) and removed from active tuning schema
 - Feel diagnostics:
@@ -152,6 +171,11 @@ See: `docs/ui-kit.md`.
 - Multiplayer networking:
   - TCP bootstrap for join/session token assignment.
   - Bootstrap welcome includes server map reference (`map_json`) so connecting clients can auto-load matching content.
+  - Bootstrap welcome includes per-player authoritative spawn + yaw so clients can align immediately on join.
+  - Dedicated/embedded server supports direct `.map` authoring inputs by converting the map for authoritative spawn/collision at startup (same scale/spawn offset parity as client runtime map loading).
+  - `.map` host startup is fail-fast: conversion errors or empty collision results raise and abort host startup (no silent empty-world server fallback).
+  - Embedded host handoff seeds authoritative spawn from current local player transform when host mode is toggled mid-run (prevents forced map-start respawn on host open).
+  - Per-player spawn assignment applies deterministic small ring offsets for later joins so multiple clients do not overlap one spawn point.
   - Bootstrap welcome also includes tuning ownership (`can_configure`) and initial authoritative tuning snapshot/version.
   - UDP packets for gameplay input and world snapshots.
   - Snapshot replication runs at `30 Hz` to reduce visible interpolation stutter.
@@ -161,15 +185,21 @@ See: `docs/ui-kit.md`.
   - Debug-profile switches in multiplayer use the same ownership flow: owner sends full snapshot to server and waits for `cfg_v` ack; non-owners are blocked and re-synced to authoritative tuning.
   - Respawn requests are sent to server over TCP; server performs authoritative respawn and replicates result.
   - Client `R` respawn uses immediate local predictive reset to keep controls responsive while waiting for authoritative `rs` confirmation.
+  - Connected clients skip local kill-plane auto-respawn; death/respawn stays server-authoritative.
   - Player snapshots include respawn sequence (`rs`) to force immediate authoritative client reset after respawn events.
   - Local reconciliation uses sequence-based prediction history: rollback to authoritative acked state, replay unacked inputs, then apply short visual error decay.
+  - Movement authority stays deterministic and code-first (Bullet remains collision/query layer only), which keeps advanced movement mechanics and multiplayer reconciliation aligned.
   - Replay during reconciliation runs without per-step render snapshot pushes; a single snapshot is captured after replay completes to reduce jitter/perf spikes.
   - Local first-person render path uses a short camera shell smoothing layer in online mode; reconciliation offsets are not applied directly to the camera.
   - Remote interpolation delay is adaptive (derived from observed snapshot interval mean/stddev), and server-tick estimation uses smoothed offset tracking.
+  - Server snapshot replication supports AOI relevance filtering on GoldSrc bundles when visibility cache exists:
+    - uses the same `visibility.goldsrc.json`/leaf VIS data model as render culling
+    - includes local player unconditionally in each client snapshot stream
+    - keeps short-range distance fallback to avoid over-culling near VIS boundaries
   - Client records network diagnostics (snapshot cadence, correction magnitude, replay cost) and exposes a rolling one-second summary in the `F2` input debug overlay.
   - Client-host mode: the game can run an embedded local server thread on demand; `Esc` menu `Open To Network` toggles host mode ON/OFF.
   - Client join mode: `Esc` menu `Multiplayer` tab allows runtime remote connect/disconnect by host+port (no restart required).
-  - Host toggle handles busy local ports gracefully by attempting to join an already running local server.
+  - Host toggle force-restarts embedded host state before connect, and if bind fails (busy port) it exits without auto-joining unknown local servers.
   - Default multiplayer port uses env var `DEFAULT_HOST_PORT` (fallback `7777`).
 - Console control / MCP:
   - Runtime includes a typed command-bus-first console engine (`apps/ivan/src/ivan/console/`) for command + cvar execution.
@@ -220,17 +250,36 @@ See: `docs/ui-kit.md`.
   - `Esc` opens gameplay menu and unlocks cursor.
   - `` ` `` opens debug/admin tuning menu and unlocks cursor.
   - `G` opens quick feel-capture popup during active gameplay (route/name/notes/feedback + save/export/apply + `Revert Last` buttons).
+  - entering quick feel-capture (`G`) snapshots/cuts the active replay recording immediately; export actions operate on that frozen run to avoid post-finish input contamination.
+  - while quick feel-capture is open, respawn hotkey handling is blocked so text-entry keys do not trigger gameplay restarts.
+  - mouse center-snap look capture is automatically suspended when the window is unfocused/minimized and resumes with a one-frame recenter guard on focus return.
+  - combat sandbox controls:
+    - weapon slot select: `1`, `2`, `3`, `4`
+    - fire current slot: `LMB` / `mouse1`
+    - grapple action: `RMB` / `mouse3` (edge-triggered attach/detach)
+    - slot `1`: blink teleport to aimed line-of-sight point
+    - slot `2`: slam boost shot
+    - slot `3`: rocket burst (self-boost near impact for rocket-jump routing)
+    - slot `4`: pulse dash burst (forward/up impulse)
+    - short combo window adds temporary movement sustain/burst during rapid chains
+    - per-slot visuals: first-person kick animation + procedural particle bursts + visible projectile tracers; heavy impacts add shockwave rings and stronger explosion debris layering
+  - pause Settings tab includes keybind controls and volume sliders (`Master`, `SFX`).
+  - runtime audio uses synthesized local SFX with configurable volumes for footsteps, grapple, and weapon actions.
   - While either menu is open, gameplay input is blocked but simulation continues.
   - `Esc` menu can open a replay browser (`Replays`) to load saved input demos.
   - `Esc` menu Feel Session tab can export current run telemetry and apply feedback-based tuning changes.
   - Any feedback-driven apply path creates a pre-apply tuning backup snapshot for rollback safety.
+  - quick capture `Export + Apply` treats `run note` as fallback feedback text when feedback field is empty, then tries feel-feedback intents first and invariant-autotune suggestions as fallback.
+  - feedback intent parser includes explicit wallrun/false-ground phrase handling (including "wallrun is not engaging" / "fall off wall" variants) so in-game `Export + Apply` does not silently no-op on common phrasing variants.
   - Apply-feedback flow auto-runs route-scoped compare (latest route run vs prior route run) and reports deltas.
   - Route compare can also emit baseline + route-history context files for longer tuning sessions.
   - Replay playback shows a dedicated replay input HUD and keeps gameplay/menu inputs locked until exit (`R`).
   - Replay input HUD prefers explicitly recorded held states (`WASD`, arrows, mouse buttons) over derived movement axes.
+  - Replay input frames now also store weapon-slot switch events (`ws`) so slot-based movement behavior replays deterministically.
   - `F2` input debug overlay includes rolling gameplay-feel telemetry (for movement/camera tuning passes).
   - Gameplay movement step supports optional noclip mode, optional autojump queueing, surf behavior on configured slanted surfaces, and grapple-rope constraint movement.
   - Grapple targeting uses collision-world ray queries (`ray_closest`) from camera center.
+  - Combat sandbox impulses are applied only in offline/replay simulation; connected multiplayer remains server-authoritative for gameplay actions.
   - Camera feedback effects are read-only and isolated behind compact camera invariants (`camera_feedback_enabled`, `camera_base_fov`, `camera_speed_fov_max_add`, `camera_tilt_gain`, `camera_event_gain`).
   - Wallrun behavior is enabled by default in base tuning (`wallrun_enabled=True`), with per-profile overrides still supported (for example `surf_sky2_server` keeps wallrun disabled).
 

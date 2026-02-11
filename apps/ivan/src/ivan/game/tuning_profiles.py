@@ -53,6 +53,18 @@ def _migrate_to_invariants(profile: dict[str, float | bool]) -> dict[str, float 
     out["air_speed_mult"] = max(0.50, min(4.0, legacy_air_speed / vmax))
     out["air_gain_t90"] = max(0.03, min(1.2, 0.9 / legacy_air_accel))
     out["wallrun_sink_t90"] = max(0.03, min(1.2, float(out.get("wallrun_sink_t90", 0.22))))
+    out["wallrun_min_entry_speed_mult"] = max(
+        0.0,
+        min(1.5, float(out.get("wallrun_min_entry_speed_mult", 0.45))),
+    )
+    out["wallrun_min_approach_dot"] = max(
+        0.0,
+        min(0.8, float(out.get("wallrun_min_approach_dot", 0.08))),
+    )
+    out["wallrun_min_parallel_dot"] = max(
+        0.0,
+        min(1.0, float(out.get("wallrun_min_parallel_dot", 0.30))),
+    )
     legacy_slide_duration = max(1e-4, float(out.get("slide_duration", out.get("dash_duration", 0.24))))
     legacy_slide_stop_t90 = math.log(10.0) / (math.log(2.0) / legacy_slide_duration)
     out["slide_stop_t90"] = max(

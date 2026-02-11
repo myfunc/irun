@@ -218,6 +218,8 @@ def on_toggle_open_network(host, enabled: bool) -> None:
     host.pause_ui.set_open_to_network(host._open_to_network)
     if host._open_to_network:
         host._runtime_connect_host = None
+        # Force a fresh local host instance so we do not reconnect to stale in-process state.
+        host._stop_embedded_server()
         host.pause_ui.set_keybind_status("Starting local host...")
         host.pause_ui.set_connect_target(host="127.0.0.1", port=int(host._runtime_connect_port))
         host._connect_multiplayer_if_requested()
@@ -488,6 +490,19 @@ def start_embedded_server(host) -> bool:
     if host._embedded_server is not None:
         return True
     bind_host = "0.0.0.0" if host._open_to_network else "127.0.0.1"
+    spawn_override = None
+    spawn_yaw_override = None
+    if host.player is not None:
+        try:
+            spawn_override = (
+                float(host.player.pos.x),
+                float(host.player.pos.y),
+                float(host.player.pos.z),
+            )
+            spawn_yaw_override = float(host._yaw)
+        except Exception:
+            spawn_override = None
+            spawn_yaw_override = None
     try:
         host._embedded_server = host.EmbeddedHostServer(  # type: ignore[attr-defined]
             host=bind_host,
@@ -495,6 +510,8 @@ def start_embedded_server(host) -> bool:
             udp_port=int(host._runtime_connect_port) + 1,
             map_json=host._current_map_json,
             initial_tuning=host._current_tuning_snapshot(),
+            initial_spawn=spawn_override,
+            initial_spawn_yaw=spawn_yaw_override,
         )
         host._embedded_server.start()
     except OSError as e:
