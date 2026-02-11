@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import errno
 import os
@@ -7,7 +8,9 @@ import sys
 import threading
 import time
 import traceback
+from collections import deque
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from direct.showbase.ShowBase import ShowBase
@@ -225,6 +228,7 @@ class RunnerDemo(ShowBase):
         self._sim_prev_pitch: float = 0.0
         self._sim_curr_pitch: float = 0.0
         self._sim_state_ready: bool = False
+        self._load_report_emitted_for_scene_id: int | None = None
         self._grapple_rope_node = GeomNode("grapple-rope")
         self._grapple_rope_np = self.render.attachNewNode(self._grapple_rope_node)
         self._grapple_rope_np.setTwoSided(True)
@@ -243,6 +247,7 @@ class RunnerDemo(ShowBase):
         self._game_mode_ctx: ModeContext | None = None
         self._game_mode_events: list[str] = []
         self._current_map_json: str | None = None
+        self._active_run_cfg: RunConfig | None = None
 
         self._menu: MainMenuController | None = None
         self._import_thread: threading.Thread | None = None
@@ -327,9 +332,15 @@ class RunnerDemo(ShowBase):
         self.console = build_client_console(self)
         self._console_bus = ThreadSafeLineBus(max_lines=500)
         self.console.register_listener(self._console_bus.listener)
+        self._console_req_lock = threading.Lock()
+        self._console_req_queue: deque[dict[str, Any]] = deque()
         # Default chosen to be near the multiplayer default (7777) but not collide.
         self._console_control_port = int(os.environ.get("IRUN_IVAN_CONSOLE_PORT", "7779"))
-        self.console_control = ConsoleControlServer(console=self.console, port=int(self._console_control_port))
+        self.console_control = ConsoleControlServer(
+            console=self.console,
+            port=int(self._console_control_port),
+            execute_request=self._queue_console_request,
+        )
         try:
             self.console_control.start()
         except Exception:
@@ -439,13 +450,14 @@ class RunnerDemo(ShowBase):
         self.accept("f10", lambda: self._safe_call("feel.dump", self._dump_feel_rolling_log))
         self.accept("f11", lambda: self._safe_call("determinism.dump", self._dump_determinism_trace))
         self.accept("shift-f3", lambda: self._safe_call("errors.clear", self._clear_errors))
-        self.accept("arrow_up", lambda: self._menu_nav_press(-1))
-        self.accept("arrow_down", lambda: self._menu_nav_press(1))
+        self.accept("arrow_up", lambda: self._safe_call("input.arrow_up", self._on_arrow_up))
+        self.accept("arrow_down", lambda: self._safe_call("input.arrow_down", self._on_arrow_down))
         self.accept("arrow_up-up", lambda: self._menu_nav_release(-1))
         self.accept("arrow_down-up", lambda: self._menu_nav_release(1))
         self.accept("arrow_left", lambda: self._menu_page(-1))
         self.accept("arrow_right", lambda: self._menu_page(1))
         self.accept("enter", self._menu_select)
+        self.accept("tab", lambda: self._safe_call("input.tab", self._on_console_autocomplete))
         self.accept("delete", self._menu_delete)
         self.accept("backspace", self._menu_delete)
         self.accept("w", lambda: self._menu_nav_press(-1))
@@ -465,6 +477,44 @@ class RunnerDemo(ShowBase):
 
     def _on_tuning_change(self, field: str) -> None:
         _profiles.on_tuning_change(self, field)
+
+    def _on_arrow_up(self) -> None:
+        if self._console_open:
+            self.console_ui.history_prev()
+            return
+        self._menu_nav_press(-1)
+
+    def _on_arrow_down(self) -> None:
+        if self._console_open:
+            self.console_ui.history_next()
+            return
+        self._menu_nav_press(1)
+
+    def _on_console_autocomplete(self) -> None:
+        if not self._console_open:
+            return
+        text = self.console_ui.get_input_text().strip()
+        if not text:
+            return
+        head = text.split(" ", 1)[0]
+        rows = self.console.suggest_commands(head, limit=1)
+        if not rows:
+            return
+        cmd = str(rows[0][0])
+        tail = text[len(head) :]
+        self.console_ui.set_input_text(cmd + tail)
+
+    def _refresh_console_hint(self) -> None:
+        if not self._console_open:
+            return
+        text = self.console_ui.get_input_text().strip()
+        prefix = text.split(" ", 1)[0] if text else ""
+        rows = self.console.suggest_commands(prefix, limit=4)
+        if rows:
+            hint = " | ".join(f"{name}: {help_s}" for name, help_s in rows)
+            self.console_ui.set_hint(hint)
+        else:
+            self.console_ui.set_hint("Type `help` or `cmd_meta` to discover commands.")
 
     def _persist_tuning_field(self, field: str) -> None:
         if field not in PhysicsTuning.__annotations__:
@@ -719,7 +769,67 @@ class RunnerDemo(ShowBase):
             self._set_pointer_lock(True)
 
     def _console_submit_line(self, line: str) -> list[str]:
-        return list(self.console.execute_line(ctx=CommandContext(role="client", origin="ui"), line=str(line)))
+        res = self._execute_console_line_now(ctx=CommandContext(role="client", origin="ui"), line=str(line))
+        return list(res.out)
+
+    def _execute_console_line_now(self, *, ctx: CommandContext, line: str):
+        return self.console.execute_line_detailed(ctx=ctx, line=str(line))
+
+    def _queue_console_request(self, *, ctx: CommandContext, line: str):
+        # Control server runs on a worker thread; enqueue and let the game loop execute the command.
+        ticket = {
+            "ctx": ctx,
+            "line": str(line),
+            "event": threading.Event(),
+            "result": None,
+        }
+        with self._console_req_lock:
+            # Keep queue bounded to avoid unbounded memory growth if client spams requests.
+            if len(self._console_req_queue) >= 256:
+                dropped = self._console_req_queue.popleft()
+                try:
+                    dropped["result"] = SimpleNamespace(
+                        ok=False,
+                        out=["error: console queue overflow"],
+                        executions=[],
+                        elapsed_ms=0.0,
+                    )
+                    dropped["event"].set()
+                except Exception:
+                    pass
+            self._console_req_queue.append(ticket)
+        if not ticket["event"].wait(timeout=1.5):
+            # Timeout keeps MCP/control clients from blocking forever.
+            return SimpleNamespace(
+                ok=False,
+                out=["error: command timed out waiting for game thread"],
+                executions=[],
+                elapsed_ms=0.0,
+            )
+        return ticket["result"]
+
+    def _drain_console_request_queue(self, *, budget_ms: float = 1.8, max_requests: int = 8) -> None:
+        t0 = time.perf_counter()
+        processed = 0
+        while processed < int(max_requests):
+            with self._console_req_lock:
+                if not self._console_req_queue:
+                    break
+                ticket = self._console_req_queue.popleft()
+            try:
+                ticket["result"] = self._execute_console_line_now(ctx=ticket["ctx"], line=ticket["line"])
+            except Exception as e:
+                ticket["result"] = SimpleNamespace(
+                    ok=False,
+                    out=[f"error: {e}"],
+                    executions=[],
+                    elapsed_ms=0.0,
+                )
+            finally:
+                ticket["event"].set()
+            processed += 1
+            if (time.perf_counter() - t0) * 1000.0 >= float(budget_ms):
+                break
 
     def _open_keybindings_menu(self) -> None:
         if self._mode != "game":
@@ -1040,14 +1150,28 @@ class RunnerDemo(ShowBase):
                 feel_harness=bool(self.cfg.feel_harness),
                 map_json=cfg_map_json,
                 map_profile=profile,
+                runtime_lighting=getattr(self.cfg, "runtime_lighting", None),
                 hl_root=self.cfg.hl_root,
                 hl_mod=self.cfg.hl_mod,
                 lighting=lighting_cfg if isinstance(lighting_cfg, dict) else None,
                 visibility=visibility_cfg if isinstance(visibility_cfg, dict) else None,
                 fog=fog_cfg,
             )
+            self._active_run_cfg = cfg
             self.scene = WorldScene()
             self.scene.build(cfg=cfg, loader=self.loader, render=self.world_root, camera=self.camera)
+            self._load_report_emitted_for_scene_id = None
+            try:
+                diag = self.scene.runtime_world_diagnostics()
+                print(
+                    "[IVAN] world runtime: "
+                    f"entry={diag.get('entry_kind')} "
+                    f"path={diag.get('runtime_path')}({diag.get('runtime_path_source')}) "
+                    f"sky={diag.get('skyname')}[{diag.get('sky_source')}] "
+                    f"fog={diag.get('fog_source')} enabled={int(bool(diag.get('fog_enabled')))}"
+                )
+            except Exception:
+                pass
             # Visibility culling defaults OFF (can be enabled via the debug menu).
             self.scene.set_visibility_enabled(bool(self.tuning.vis_culling_enabled))
             self._current_map_json = cfg_map_json
@@ -2012,12 +2136,17 @@ class RunnerDemo(ShowBase):
 
     def _update(self, task: Task) -> int:
         try:
+            self._drain_console_request_queue()
             # Drain console output produced by background threads (MCP/control bridge) into the UI.
             try:
                 if getattr(self, "_console_bus", None) is not None:
                     lines = self._console_bus.drain()
                     if lines:
                         self.console_ui.append(*lines)
+            except Exception:
+                pass
+            try:
+                self._refresh_console_hint()
             except Exception:
                 pass
 
@@ -2042,6 +2171,15 @@ class RunnerDemo(ShowBase):
                 if self.replay_input_ui.is_visible():
                     self.replay_input_ui.hide()
                 return Task.cont
+            if self.scene is not None:
+                sid = id(self.scene)
+                if self._load_report_emitted_for_scene_id != int(sid):
+                    finalize = getattr(self.scene, "finalize_load_report_if_ready", None)
+                    if callable(finalize):
+                        payload = finalize()
+                        if isinstance(payload, dict):
+                            print(f"[IVAN] load report: {json.dumps(payload, ensure_ascii=True, sort_keys=True)}")
+                            self._load_report_emitted_for_scene_id = int(sid)
 
             frame_dt = min(globalClock.getDt(), 0.25)
             now = float(globalClock.getFrameTime())
@@ -2105,6 +2243,18 @@ class RunnerDemo(ShowBase):
                 vault_dbg = self.player.vault_debug_status() if self.player is not None else "idle"
                 state_name = self.player.motion_state_name() if self.player is not None else "none"
                 last_input_age = max(0.0, float(now) - float(self._last_input_time))
+                world_diag_line = "world=none"
+                if self.scene is not None:
+                    try:
+                        wd = self.scene.runtime_world_diagnostics()
+                        world_diag_line = (
+                            f"world={wd.get('entry_kind')} path={wd.get('runtime_path')}({wd.get('runtime_path_source')}) "
+                            f"sky={wd.get('skyname')}[{wd.get('sky_source')}] "
+                            f"fog={wd.get('fog_source')}:{int(bool(wd.get('fog_enabled')))} "
+                            f"{float(wd.get('fog_start', 0.0)):.0f}-{float(wd.get('fog_end', 0.0)):.0f}"
+                        )
+                    except Exception:
+                        pass
                 self.input_debug.set_text(
                     "input debug (F2)\n"
                     f"mode={self._mode} lock={self._pointer_locked} dt={frame_dt:.3f} hasMouse={has_mouse} mouse=({mx:+.2f},{my:+.2f})\n"
@@ -2117,6 +2267,7 @@ class RunnerDemo(ShowBase):
                     f"cam_fov={self._cam_dbg_fov:.2f} cam_tgt={self._cam_dbg_target_fov:.2f} cam_speed_r={self._cam_dbg_speed_ratio:.2f} cam_speed_t={self._cam_dbg_speed_t:.2f}\n"
                     f"cam_event={self._cam_dbg_event_name} quality={self._cam_dbg_event_quality:.2f} applied_amp={self._cam_dbg_event_amp:.2f} blocked_reason={self._cam_dbg_event_blocked}\n"
                     f"last_input_age={last_input_age:.3f}s jump_buf={jump_buf:.3f}s coyote={coyote:.3f}s vault={vault_dbg}\n"
+                    f"{world_diag_line}\n"
                     f"{self._net_perf_text if self._net_perf_text else 'net perf | waiting for samples...'}\n"
                     f"{self._feel_perf_text}"
                 )
@@ -2275,6 +2426,7 @@ def run(
     feel_harness: bool = False,
     map_json: str | None = None,
     map_profile: str = "auto",
+    runtime_lighting: bool = False,
     hl_root: str | None = None,
     hl_mod: str = "valve",
     net_host: str | None = None,
@@ -2289,6 +2441,7 @@ def run(
             feel_harness=feel_harness,
             map_json=map_json,
             map_profile=map_profile,
+            runtime_lighting=True if runtime_lighting else None,
             hl_root=hl_root,
             hl_mod=hl_mod,
             net_host=net_host,

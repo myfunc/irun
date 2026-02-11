@@ -34,8 +34,24 @@ Introduce **map pipeline profiles** shared by build tools and runtime:
 Runtime `--map-profile` chooses `auto` | `dev-fast` | `prod-baked`:
 
 - **auto** (default): Infer from path — `.map` file or directory bundle → `dev-fast`; `.irunmap` → `prod-baked`.
-- **dev-fast**: Fog off unless `run.json` enables; visibility culling off (permissive).
-- **prod-baked**: Fog from `run.json` or conservative defaults (start 80, end 200); visibility can enable via `run.json`.
+- **dev-fast**: Visibility culling off (permissive); fog follows baseline precedence.
+- **prod-baked**: Visibility can enable via `run.json`; fog follows baseline precedence.
+
+Fog baseline precedence is now fixed across all map entry points:
+
+1. map payload fog override (`map.json` or synthetic `.map` payload),
+2. run profile fog (`run.json` / launch config),
+3. engine default conservative horizon fog (`enabled=true`, `start=120`, `end=360`).
+
+Skybox baseline is also fixed across all map entry points:
+
+1. map `skyname` when present,
+2. default runtime skybox preset (`default_horizon`) if missing/unresolved.
+
+Runtime diagnostics report active entry kind, active lighting path + reason, and fog/sky source through:
+- `WorldScene.runtime_world_diagnostics()`,
+- `F2` debug overlay line,
+- console command `world_runtime`.
 
 ### Primary Authoring Flow
 
@@ -61,6 +77,7 @@ Cycle: off → minimal → render → streaming → graph → off. Top-right pla
 - Devs get fast edit-run loops without paying for vis/light or compression.
 - Production builds get predictable full-quality output.
 - Runtime defaults match content type; explicit `--map-profile` overrides inference when needed.
+- Runtime world behavior is inspectable in-game and over console for parity debugging.
 - Debug HUD (F12) provides compact frametime/net perf overlay orthogonal to profile behavior.
 
 ## Related

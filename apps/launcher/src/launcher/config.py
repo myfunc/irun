@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
@@ -40,27 +40,20 @@ class LauncherConfig:
     wad_dir: str = ""
     # Directory containing .material.json PBR definitions.
     materials_dir: str = ""
-    # Half-Life / Steam install root (optional, for resource import).
+    # Half-Life / Steam install root (optional, for resource lookup at runtime).
     hl_root: str = ""
-    # Directory containing ericw-tools binaries (optional, for bake workflow).
-    ericw_tools_dir: str = ""
     # Directory to scan for .map files.
     maps_dir: str = ""
     # Python executable used to run ivan / tools (defaults to sys.executable).
     python_exe: str = ""
-    # Runtime launch profile for Play Map.
-    play_map_profile: str = "dev-fast"
+    # Guided launch preset.
+    launch_preset: str = "fast-iterate"
     # Enable --watch for Play Map.
     play_watch: bool = True
+    # Force runtime lighting at launch.
+    play_runtime_lighting: bool = False
     # Pack pipeline profile.
     pack_profile: str = "dev-fast"
-    # Bake pipeline profile.
-    bake_profile: str = "prod-baked"
-    # Optional bake flags.
-    bake_no_vis: bool = False
-    bake_no_light: bool = False
-    bake_light_extra: bool = False
-    bake_bounce: int = 0
     # Window geometry (persisted between sessions).
     window_width: int = 720
     window_height: int = 700
@@ -105,7 +98,7 @@ def _sanitize_stale_paths(cfg: LauncherConfig) -> LauncherConfig:
 
     This prevents stale absolute paths (e.g. from a moved/renamed repo clone)
     from silently breaking the launcher.  Only project-internal fields are
-    checked — external tool paths (trenchbroom_exe, hl_root, ericw_tools_dir)
+    checked — external tool paths (trenchbroom_exe, hl_root)
     are left as-is because they may be temporarily unavailable (USB drive, etc.).
     """
     _DIR_FIELDS = ("maps_dir", "wad_dir", "materials_dir")

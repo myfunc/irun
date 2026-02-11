@@ -25,10 +25,18 @@ class ConsoleControlServer:
       response: {"ok":true,"out":["..."]}
     """
 
-    def __init__(self, *, console: Console, host: str = "127.0.0.1", port: int = 7779) -> None:
+    def __init__(
+        self,
+        *,
+        console: Console,
+        host: str = "127.0.0.1",
+        port: int = 7779,
+        execute_request=None,
+    ) -> None:
         self.console = console
         self.host = str(host)
         self.port = int(port)
+        self._execute_request = execute_request
         self._sock: socket.socket | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -85,8 +93,28 @@ class ConsoleControlServer:
                 role = str(obj.get("role") or "client")
                 origin = str(obj.get("origin") or "mcp")
                 ctx = CommandContext(role=role, origin=origin)
-                out = self.console.execute_line(ctx=ctx, line=line_s)
-                resp = {"ok": True, "out": out}
+                if callable(self._execute_request):
+                    detail = self._execute_request(ctx=ctx, line=line_s)
+                else:
+                    detail = self.console.execute_line_detailed(ctx=ctx, line=line_s)
+                executions = []
+                for it in getattr(detail, "executions", []):
+                    executions.append(
+                        {
+                            "name": str(it.name),
+                            "ok": bool(it.ok),
+                            "elapsed_ms": float(it.elapsed_ms),
+                            "error_code": str(it.error_code or ""),
+                            "data": dict(it.data or {}),
+                        }
+                    )
+                resp = {
+                    "ok": bool(getattr(detail, "ok", True)),
+                    "command": str(line_s),
+                    "out": list(getattr(detail, "out", [])),
+                    "elapsed_ms": float(getattr(detail, "elapsed_ms", 0.0)),
+                    "executions": executions,
+                }
                 try:
                     cs.sendall((json.dumps(resp, ensure_ascii=True) + "\n").encode("utf-8"))
                 except Exception:

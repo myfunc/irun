@@ -1,8 +1,7 @@
 # IVAN Launcher Toolbox
 
-A lightweight Dear PyGui desktop app that acts as a command center for the IVAN
-map-editing workflow. One window, a few panels, persistent settings — replace
-memorizing CLI commands with clicking buttons.
+A lightweight Dear PyGui desktop app for the runtime-first IVAN map workflow.
+One window, map selection, launch, and pack.
 
 ## How to Run
 
@@ -29,12 +28,10 @@ python -m launcher
 
 ### Settings Panel (collapsible)
 Configure and persist paths used by the launcher:
-- **TrenchBroom executable** — needed to open maps in the editor.
 - **WAD directory** — where `.wad` texture files live (default: `apps/ivan/assets/textures/`).
-- **Materials directory** — where `.material.json` PBR definitions live (default: `apps/ivan/assets/materials/`).
-- **Steam/HL root** — optional Half-Life install root for resource imports.
-- **ericw-tools directory** — optional, needed only for the bake workflow (`qbsp`, `vis`, `light`).
+- **Steam/HL root** — optional Half-Life install root/runtime resource root.
 - **Maps directory** — where `.map` source files are scanned (default: `apps/ivan/assets/maps/`).
+- **Python executable** — interpreter used to launch IVAN and pack scripts.
 
 Settings are saved to `~/.irun/launcher/config.json`.
 
@@ -44,27 +41,34 @@ Settings are saved to `~/.irun/launcher/config.json`.
 - Click a map to select it for all actions.
 - Auto-refreshes every 5 seconds.
 
-### Action Buttons
+### Guided Runflow
+Top section now uses a guided flow:
+- **Map selection** from Map Browser.
+- **Preset selection**:
+  - `Fast Iterate`
+  - `Runtime Visual QA`
+- **Runtime-first launch** always targets the selected source `.map`.
+- **Launch + Pack Options** (collapsed by default): optional overrides for watch/runtime-lighting and pack profile.
+
+Major controls and profile references include tooltips with expected behavior and command-line effect.
+
+### Primary Actions
 | Button | What it does |
 |---|---|
-| **Play Map** | Launches `python -m ivan --map <selected> [--map-profile ...] [--watch]` based on Pipeline Controls |
+| **Launch** | Launches selected source `.map` with runtime-first options |
+| **Pack** | Runs `tools/pack_map.py --profile <selected>` |
 | **Stop Game** | Terminates the running IVAN game process |
-| **Edit in TrenchBroom** | Opens the selected `.map` file in TrenchBroom |
-| **Pack .irunmap** | Runs `tools/pack_map.py --profile <selected>` from Pipeline Controls |
-| **Bake Lightmaps (legacy)** | Optional CLI bake path via `tools/bake_map.py` with selected profile/overrides |
 
-Buttons that require unconfigured paths (TrenchBroom exe, ericw-tools) are
-grayed out until the paths are set in Settings.
+Launch is disabled until a source `.map` is selected.
 
 ### Log Panel
 - Captures stdout/stderr from all spawned subprocesses.
 - Timestamped, scrollable, with a Clear button.
 
-### Pipeline Controls
-- Choose per-action profile: `dev-fast` or `prod-baked`.
-- Control Play behavior (`--map-profile`, `--watch`) without editing CLI.
-- Control Bake overrides (`--no-vis`, `--no-light`, `--light-extra`, `--bounce`) directly in UI.
-- For full lightmap bake, set `Bake profile = prod-baked`, keep `--no-light` unchecked, and configure **ericw-tools dir** in Settings.
+### Launch + Pack Options
+- Collapsed by default to keep the first-run launch path clean.
+- Controls launch overrides (`--watch`, `--runtime-lighting`).
+- Controls Pack profile for `pack_map.py`.
 
 ## Dependencies
 
@@ -75,13 +79,14 @@ grayed out until the paths are set in Settings.
 ## Typical Workflow
 
 1. Open the launcher: `python -m launcher`
-2. Set TrenchBroom path in Settings (first time only).
+2. Confirm maps directory in Settings (first time only).
 3. Select a `.map` file in the Map Browser.
-4. Click **Edit in TrenchBroom** to open it.
-5. Click **Play Map** to launch the game with auto-reload.
-6. Edit in TrenchBroom, save — the game reloads automatically.
-7. When ready to share, click **Pack .irunmap**.
+4. Select a preset (`Fast Iterate` is default recommendation).
+5. Click **Launch**.
+6. Optionally tune Launch + Pack options when preset defaults are not enough.
+7. When ready to share, click **Pack**.
 
-Notes:
-- Preferred workflow for GoldSrc-style lighting is to compile/bake in the editor toolchain, then package via launcher.
-- Launcher bake remains available for advanced/legacy CLI-driven workflows.
+## Migration Notes
+- Legacy launcher bake and baked run-mode paths were removed.
+- Legacy create-map/import-WAD launcher flows were removed.
+- Runtime-first launch now always uses the selected source `.map`.

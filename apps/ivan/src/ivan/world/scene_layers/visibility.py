@@ -48,7 +48,9 @@ def tick_visibility(scene: SceneLayerContract) -> None:
                 pass
 
         if show and int(w0) <= int(face_idx) < int(w1):
-            ensure_deferred_lightmaps_loaded(scene, face_idx=int(face_idx))
+            # Runtime-only path: no lightmaps; skip deferred loading to avoid wasted work.
+            if not scene._runtime_only_lighting:
+                ensure_deferred_lightmaps_loaded(scene, face_idx=int(face_idx))
 
 
 def best_effort_visibility_leaf(scene: SceneLayerContract, *, pos: LVector3f) -> int | None:
@@ -173,8 +175,32 @@ def resolve_visibility(scene: SceneLayerContract, *, cfg, map_json: Path, payloa
     source_bsp_path = Path(str(source_bsp)) if isinstance(source_bsp, str) and source_bsp.strip() else None
     if not build_cache:
         source_bsp_path = None
+    diag: dict[str, object] = {}
     try:
-        return load_or_build_visibility_cache(cache_path=cache_path, source_bsp_path=source_bsp_path)
+        vis = load_or_build_visibility_cache(
+            cache_path=cache_path,
+            source_bsp_path=source_bsp_path,
+            diagnostics=diag,
+        )
+        set_diag = getattr(scene, "_set_visibility_cache_report", None)
+        if callable(set_diag):
+            set_diag(
+                enabled=True,
+                mode=str(mode),
+                result=diag.get("result", "unknown"),
+                cache_path=str(cache_path),
+                source_bsp=str(source_bsp_path) if source_bsp_path is not None else "",
+            )
+        return vis
     except Exception:
+        set_diag = getattr(scene, "_set_visibility_cache_report", None)
+        if callable(set_diag):
+            set_diag(
+                enabled=True,
+                mode=str(mode),
+                result="error",
+                cache_path=str(cache_path),
+                source_bsp=str(source_bsp_path) if source_bsp_path is not None else "",
+            )
         return None
 

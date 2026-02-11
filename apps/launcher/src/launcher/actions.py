@@ -1,4 +1,4 @@
-"""Subprocess spawning for launcher actions (game, TrenchBroom, pack, bake)."""
+"""Subprocess spawning for launcher actions (game, pack)."""
 
 from __future__ import annotations
 
@@ -92,10 +92,11 @@ def spawn_game(
     *,
     watch: bool = True,
     map_profile: str = "auto",
+    runtime_lighting: bool = False,
     hl_root: str = "",
     on_line: Callable[[str], None] | None = None,
 ) -> ProcessHandle:
-    """Launch ``python -m ivan [--map <map_path>] [--watch]``."""
+    """Launch ``python -m ivan`` with optional map/run options."""
     cmd = [python, "-m", "ivan"]
     if map_path:
         cmd.extend(["--map", map_path])
@@ -105,18 +106,9 @@ def spawn_game(
             cmd.append("--watch")
     if hl_root:
         cmd.extend(["--hl-root", hl_root])
+    if runtime_lighting:
+        cmd.append("--runtime-lighting")
     return _spawn("IVAN Game", cmd, cwd=ivan_root, on_line=on_line)
-
-
-def spawn_trenchbroom(
-    trenchbroom_exe: str,
-    map_path: str,
-    *,
-    on_line: Callable[[str], None] | None = None,
-) -> ProcessHandle:
-    """Launch TrenchBroom with a map file."""
-    cmd = [trenchbroom_exe, map_path]
-    return _spawn("TrenchBroom", cmd, on_line=on_line)
 
 
 def spawn_pack(
@@ -141,37 +133,3 @@ def spawn_pack(
     return _spawn("Pack Map", cmd, cwd=ivan_root, on_line=on_line)
 
 
-def spawn_bake(
-    python: str,
-    ivan_root: str,
-    map_path: str,
-    *,
-    profile: str = "prod-baked",
-    no_vis: bool = False,
-    no_light: bool = False,
-    light_extra: bool = False,
-    bounce: int | None = None,
-    ericw_tools_dir: str = "",
-    game_root: str = "",
-    on_line: Callable[[str], None] | None = None,
-) -> ProcessHandle:
-    """Run ``python tools/bake_map.py --map <map> --output <out> --ericw-tools ... --game-root ...``."""
-    script = str(Path(ivan_root) / "tools" / "bake_map.py")
-    map_p = Path(map_path)
-    output = map_p.with_suffix(".irunmap")
-    cmd = [python, script, "--map", map_path, "--output", str(output)]
-    if profile:
-        cmd.extend(["--profile", profile])
-    if no_vis:
-        cmd.append("--no-vis")
-    if no_light:
-        cmd.append("--no-light")
-    if light_extra:
-        cmd.append("--light-extra")
-    if bounce is not None and bounce > 0:
-        cmd.extend(["--bounce", str(int(bounce))])
-    if ericw_tools_dir:
-        cmd.extend(["--ericw-tools", ericw_tools_dir])
-    if game_root:
-        cmd.extend(["--game-root", game_root])
-    return _spawn("Bake Lightmaps", cmd, cwd=ivan_root, on_line=on_line)

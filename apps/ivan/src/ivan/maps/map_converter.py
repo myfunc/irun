@@ -170,6 +170,9 @@ class MapConvertResult:
     # Parsed Half-Life light entities (for preview lighting in .map mode).
     lights: list[LightEntity] = field(default_factory=list)
 
+    # Optional fog from worldspawn or env_fog (for runtime preview).
+    fog: dict | None = None  # {"enabled": bool, "start": float, "end": float, "color": [r,g,b]}
+
 
 # ---------------------------------------------------------------------------
 # WAD path resolution
@@ -740,6 +743,49 @@ def convert_map_file(
     if lights:
         logger.info("Parsed %d light entities", len(lights))
 
+    # ── 8c. Parse fog (worldspawn or env_fog) ──────────────────────────
+    fog: dict | None = None
+    for ent in entities:
+        cn = ent.properties.get("classname", "").lower()
+        if cn == "env_fog":
+            start_s = ent.properties.get("fogstart") or ent.properties.get("fog_start")
+            end_s = ent.properties.get("fogend") or ent.properties.get("fog_end")
+            color_s = ent.properties.get("fogcolor") or ent.properties.get("fog_color") or "128 128 128"
+            try:
+                start = float(start_s) if start_s else 80.0
+                end = float(end_s) if end_s else 200.0
+            except (TypeError, ValueError):
+                continue
+            parts = color_s.split()
+            if len(parts) >= 3:
+                try:
+                    r, g, b = float(parts[0]) / 255.0, float(parts[1]) / 255.0, float(parts[2]) / 255.0
+                    fog = {"enabled": True, "start": start, "end": end, "color": [r, g, b]}
+                    break
+                except (TypeError, ValueError):
+                    pass
+    if fog is None:
+        for ent in entities:
+            if ent.properties.get("classname") != "worldspawn":
+                continue
+            start_s = ent.properties.get("fogstart") or ent.properties.get("fog_start")
+            end_s = ent.properties.get("fogend") or ent.properties.get("fog_end")
+            color_s = ent.properties.get("fogcolor") or ent.properties.get("fog_color")
+            if not (start_s and end_s and color_s):
+                continue
+            try:
+                start, end = float(start_s), float(end_s)
+            except (TypeError, ValueError):
+                continue
+            parts = color_s.split()
+            if len(parts) >= 3:
+                try:
+                    r, g, b = float(parts[0]) / 255.0, float(parts[1]) / 255.0, float(parts[2]) / 255.0
+                    fog = {"enabled": True, "start": start, "end": end, "color": [r, g, b]}
+                    break
+                except (TypeError, ValueError):
+                    pass
+
     # ── 9. Compute bounds ──────────────────────────────────────────────
     bounds_min, bounds_max = _compute_bounds(all_tri_dicts)
 
@@ -777,6 +823,7 @@ def convert_map_file(
     return MapConvertResult(
         triangles=all_tri_dicts,
         collision_triangles=all_collision,
+        fog=fog,
         spawn_position=spawn_pos,
         spawn_yaw=spawn_yaw,
         map_id=map_id,

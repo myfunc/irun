@@ -4,8 +4,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ivan.console.command_bus import CommandArgSpec, CommandMetadata, CommandResult
 from ivan.console.autotune_bindings import register_autotune_commands
 from ivan.console.core import CommandContext, Console
+from ivan.console.scene_runtime import SceneRuntimeRegistry
 from ivan.physics.tuning import PhysicsTuning
 
 
@@ -66,8 +68,27 @@ def build_client_console(runner: Any) -> Console:
     """
 
     con = Console()
+    scene_runtime = SceneRuntimeRegistry(runner=runner)
 
-    def _cmd_help(_ctx: CommandContext, _argv: list[str]) -> list[str]:
+    def _format_bus_meta(name: str) -> list[str]:
+        meta = con.find_command_metadata(name)
+        if meta is None:
+            return [f"unknown command: {name}"]
+        lines = [f"{meta.name}: {meta.summary}", f"route: {meta.route}"]
+        if meta.tags:
+            lines.append(f"tags: {', '.join(meta.tags)}")
+        if meta.args:
+            lines.append("args:")
+            for a in meta.args:
+                req = "required" if bool(a.required and a.default is None) else "optional"
+                default = "" if a.default is None else f" default={a.default}"
+                choices = "" if not a.choices else f" choices={','.join(a.choices)}"
+                lines.append(f"  --{a.name} ({a.typ}, {req}){default}{choices} {a.help}".rstrip())
+        return lines
+
+    def _cmd_help(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        if argv:
+            return _format_bus_meta(str(argv[0]))
         lines: list[str] = ["commands:"]
         for name, help_s in con.list_commands():
             lines.append(f"  {name} - {help_s}".rstrip(" -"))
@@ -371,6 +392,372 @@ def build_client_console(runner: Any) -> Console:
         ok = _set_pos(obj, x, y, z)
         return ["ok"] if ok else ["error: failed to set position"]
 
+    def _cmd_world_runtime(_ctx: CommandContext, _argv: list[str]) -> list[str]:
+        scene = getattr(runner, "scene", None)
+        if scene is None:
+            return [json.dumps({"error": "scene-unavailable"}, ensure_ascii=True)]
+        fn = getattr(scene, "runtime_world_diagnostics", None)
+        if callable(fn):
+            try:
+                payload = fn()
+            except Exception as e:
+                return [json.dumps({"error": str(e)}, ensure_ascii=True)]
+            return [json.dumps(payload, ensure_ascii=True)]
+        return [json.dumps({"error": "diagnostics-unavailable"}, ensure_ascii=True)]
+
+    def _bus_help(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+        cmd = str(args.get("command") or "").strip()
+        if cmd:
+            return CommandResult.success(out=_format_bus_meta(cmd))
+        return CommandResult.success(out=_cmd_help(_ctx, []))
+
+    def _bus_meta(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+        prefix = str(args.get("prefix") or "").strip().casefold()
+        rows: list[dict[str, Any]] = []
+        for meta in con.list_command_metadata():
+            if prefix and prefix not in str(meta.name).casefold():
+                continue
+            rows.append(
+                {
+                    "name": meta.name,
+                    "summary": meta.summary,
+                    "route": meta.route,
+                    "tags": list(meta.tags),
+                    "args": [
+                        {
+                            "name": a.name,
+                            "type": a.typ,
+                            "required": bool(a.required and a.default is None),
+                            "default": a.default,
+                            "help": a.help,
+                            "choices": list(a.choices),
+                        }
+                        for a in meta.args
+                    ],
+                }
+            )
+        rows.sort(key=lambda x: str(x.get("name") or ""))
+        return CommandResult.success(out=[json.dumps({"commands": rows}, ensure_ascii=True)], data={"commands": rows})
+
+    def _bus_scene_list(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+        try:
+            payload = scene_runtime.list_objects(
+                name=str(args.get("name") or ""),
+                typ=str(args.get("type") or ""),
+                tag=str(args.get("tag") or ""),
+                page=int(args.get("page") or 1),
+                page_size=int(args.get("page_size") or 25),
+            )
+        except Exception as e:
+            return CommandResult.failure(str(e), error_code="scene-list")
+        return CommandResult.success(out=[json.dumps(payload, ensure_ascii=True)], data=payload)
+
+    def _bus_scene_select(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+        try:
+            payload = scene_runtime.select_object(target=str(args.get("target") or ""))
+        except Exception as e:
+            return CommandResult.failure(str(e), error_code="scene-select")
+        return CommandResult.success(out=[json.dumps(payload, ensure_ascii=True)], data=payload)
+
+    def _bus_scene_inspect(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+        target = str(args.get("target") or "").strip() or None
+        try:
+            payload = scene_runtime.inspect_selected(target=target)
+        except Exception as e:
+            return CommandResult.failure(str(e), error_code="scene-inspect")
+        return CommandResult.success(out=[json.dumps(payload, ensure_ascii=True)], data=payload)
+
+    def _bus_player_look(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+        try:
+            payload = scene_runtime.player_look_target(distance=float(args.get("distance") or 256.0))
+        except Exception as e:
+            return CommandResult.failure(str(e), error_code="player-look")
+        return CommandResult.success(out=[json.dumps(payload, ensure_ascii=True)], data=payload)
+
+    def _bus_scene_create(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+        try:
+            payload = scene_runtime.create_object(
+                object_type=str(args.get("object_type") or ""),
+                name=str(args.get("name") or "runtime_obj"),
+            )
+        except Exception as e:
+            return CommandResult.failure(str(e), error_code="scene-create")
+        return CommandResult.success(out=[json.dumps(payload, ensure_ascii=True)], data=payload)
+
+    def _bus_scene_delete(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+        target = str(args.get("target") or "").strip() or None
+        try:
+            payload = scene_runtime.delete_object(target=target)
+        except Exception as e:
+            return CommandResult.failure(str(e), error_code="scene-delete")
+        return CommandResult.success(out=[json.dumps(payload, ensure_ascii=True)], data=payload)
+
+    def _bus_scene_transform(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+        target = str(args.get("target") or "").strip() or None
+        try:
+            payload = scene_runtime.transform_object(
+                target=target,
+                mode=str(args.get("mode") or "move"),
+                x=float(args.get("x") or 0.0),
+                y=float(args.get("y") or 0.0),
+                z=float(args.get("z") or 0.0),
+                relative=bool(args.get("relative")),
+            )
+        except Exception as e:
+            return CommandResult.failure(str(e), error_code="scene-transform")
+        return CommandResult.success(out=[json.dumps(payload, ensure_ascii=True)], data=payload)
+
+    def _bus_scene_group(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+        raw_targets = str(args.get("targets") or "").strip()
+        targets = [s for s in (x.strip() for x in raw_targets.split(",")) if s]
+        try:
+            payload = scene_runtime.group_objects(group_id=str(args.get("group_id") or ""), targets=targets)
+        except Exception as e:
+            return CommandResult.failure(str(e), error_code="scene-group")
+        return CommandResult.success(out=[json.dumps(payload, ensure_ascii=True)], data=payload)
+
+    def _bus_scene_ungroup(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+        try:
+            payload = scene_runtime.ungroup(group_id=str(args.get("group_id") or ""))
+        except Exception as e:
+            return CommandResult.failure(str(e), error_code="scene-ungroup")
+        return CommandResult.success(out=[json.dumps(payload, ensure_ascii=True)], data=payload)
+
+    def _bus_scene_group_transform(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+        try:
+            payload = scene_runtime.group_transform(
+                group_id=str(args.get("group_id") or ""),
+                mode=str(args.get("mode") or "move"),
+                x=float(args.get("x") or 0.0),
+                y=float(args.get("y") or 0.0),
+                z=float(args.get("z") or 0.0),
+                relative=bool(args.get("relative")),
+            )
+        except Exception as e:
+            return CommandResult.failure(str(e), error_code="scene-group-transform")
+        return CommandResult.success(out=[json.dumps(payload, ensure_ascii=True)], data=payload)
+
+    def _bus_world_fog_set(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+        try:
+            payload = scene_runtime.set_world_fog(
+                mode=str(args.get("mode") or "linear"),
+                start=float(args.get("start") or 120.0),
+                end=float(args.get("end") or 360.0),
+                density=float(args.get("density") or 0.02),
+                color_r=float(args.get("color_r") or 0.63),
+                color_g=float(args.get("color_g") or 0.67),
+                color_b=float(args.get("color_b") or 0.73),
+            )
+        except Exception as e:
+            return CommandResult.failure(str(e), error_code="world-fog")
+        return CommandResult.success(out=[json.dumps(payload, ensure_ascii=True)], data=payload)
+
+    def _bus_world_skybox_set(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+        try:
+            payload = scene_runtime.set_world_skybox(skyname=str(args.get("skyname") or ""))
+        except Exception as e:
+            return CommandResult.failure(str(e), error_code="world-skybox")
+        return CommandResult.success(out=[json.dumps(payload, ensure_ascii=True)], data=payload)
+
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="help",
+            summary="List commands or command details.",
+            route="immediate",
+            tags=("discoverability",),
+            args=(CommandArgSpec(name="command", typ="str", required=False, default="", help="Optional command name."),),
+        ),
+        handler=_bus_help,
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="cmd_meta",
+            summary="Dump typed command metadata as JSON.",
+            route="immediate",
+            tags=("discoverability", "mcp"),
+            args=(CommandArgSpec(name="prefix", typ="str", required=False, default="", help="Optional name prefix filter."),),
+        ),
+        handler=_bus_meta,
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="scene_list",
+            summary="List scene objects with filters + pagination.",
+            route="game-thread",
+            tags=("scene", "introspection", "mcp"),
+            args=(
+                CommandArgSpec(name="name", typ="str", required=False, default="", help="Case-insensitive name filter."),
+                CommandArgSpec(name="type", typ="str", required=False, default="", help="Case-insensitive node type filter."),
+                CommandArgSpec(name="tag", typ="str", required=False, default="", help="Tag key filter."),
+                CommandArgSpec(name="page", typ="int", required=False, default=1, minimum=1, help="Page index (1-based)."),
+                CommandArgSpec(
+                    name="page_size",
+                    typ="int",
+                    required=False,
+                    default=25,
+                    minimum=1,
+                    maximum=200,
+                    help="Items per page (max 200).",
+                ),
+            ),
+        ),
+        handler=_bus_scene_list,
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="scene_select",
+            summary="Select scene object by id or exact name.",
+            route="game-thread",
+            tags=("scene", "introspection", "mcp"),
+            args=(CommandArgSpec(name="target", typ="str", required=True, help="Object id or exact name."),),
+        ),
+        handler=_bus_scene_select,
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="scene_inspect",
+            summary="Inspect selected object details.",
+            route="game-thread",
+            tags=("scene", "introspection", "mcp"),
+            args=(CommandArgSpec(name="target", typ="str", required=False, default="", help="Optional object id/name override."),),
+        ),
+        handler=_bus_scene_inspect,
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="player_look_target",
+            summary="Report current player look-target raycast hit.",
+            route="game-thread",
+            tags=("scene", "introspection", "mcp"),
+            args=(
+                CommandArgSpec(
+                    name="distance",
+                    typ="float",
+                    required=False,
+                    default=256.0,
+                    minimum=1.0,
+                    maximum=5000.0,
+                    help="Raycast distance in world units.",
+                ),
+            ),
+        ),
+        handler=_bus_player_look,
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="scene_create",
+            summary="Create a runtime scene object by type.",
+            route="game-thread",
+            tags=("scene", "manipulation", "mcp"),
+            args=(
+                CommandArgSpec(name="object_type", typ="str", required=True, choices=("box", "sphere", "empty"), help="Object kind."),
+                CommandArgSpec(name="name", typ="str", required=False, default="runtime_obj", help="Node name."),
+            ),
+        ),
+        handler=_bus_scene_create,
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="scene_delete",
+            summary="Delete selected scene object or explicit target.",
+            route="game-thread",
+            tags=("scene", "manipulation", "mcp"),
+            args=(CommandArgSpec(name="target", typ="str", required=False, default="", help="Optional object id/name."),),
+        ),
+        handler=_bus_scene_delete,
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="scene_transform",
+            summary="Move/rotate/scale object transform.",
+            route="game-thread",
+            tags=("scene", "manipulation", "mcp"),
+            args=(
+                CommandArgSpec(name="mode", typ="str", required=True, choices=("move", "rotate", "scale"), help="Transform mode."),
+                CommandArgSpec(name="x", typ="float", required=True, help="X / H / scale-x value."),
+                CommandArgSpec(name="y", typ="float", required=True, help="Y / P / scale-y value."),
+                CommandArgSpec(name="z", typ="float", required=True, help="Z / R / scale-z value."),
+                CommandArgSpec(name="target", typ="str", required=False, default="", help="Optional object id/name."),
+                CommandArgSpec(name="relative", typ="bool", required=False, default=False, help="Apply delta in local space."),
+            ),
+        ),
+        handler=_bus_scene_transform,
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="scene_group",
+            summary="Group objects under a shared transform root.",
+            route="game-thread",
+            tags=("scene", "manipulation", "mcp"),
+            args=(
+                CommandArgSpec(name="group_id", typ="str", required=True, help="Group id."),
+                CommandArgSpec(
+                    name="targets",
+                    typ="str",
+                    required=True,
+                    help="Comma-separated object ids/names.",
+                ),
+            ),
+        ),
+        handler=_bus_scene_group,
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="scene_ungroup",
+            summary="Ungroup all objects from a group root.",
+            route="game-thread",
+            tags=("scene", "manipulation", "mcp"),
+            args=(CommandArgSpec(name="group_id", typ="str", required=True, help="Group id."),),
+        ),
+        handler=_bus_scene_ungroup,
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="scene_group_transform",
+            summary="Move/rotate/scale a whole group transform.",
+            route="game-thread",
+            tags=("scene", "manipulation", "mcp"),
+            args=(
+                CommandArgSpec(name="group_id", typ="str", required=True, help="Group id."),
+                CommandArgSpec(name="mode", typ="str", required=True, choices=("move", "rotate", "scale"), help="Transform mode."),
+                CommandArgSpec(name="x", typ="float", required=True, help="X / H / scale-x value."),
+                CommandArgSpec(name="y", typ="float", required=True, help="Y / P / scale-y value."),
+                CommandArgSpec(name="z", typ="float", required=True, help="Z / R / scale-z value."),
+                CommandArgSpec(name="relative", typ="bool", required=False, default=False, help="Apply delta in local space."),
+            ),
+        ),
+        handler=_bus_scene_group_transform,
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="world_fog_set",
+            summary="Apply runtime fog override with validation.",
+            route="game-thread",
+            tags=("world", "fog", "mcp"),
+            args=(
+                CommandArgSpec(name="mode", typ="str", required=False, default="linear", choices=("off", "linear", "exp", "exp2")),
+                CommandArgSpec(name="start", typ="float", required=False, default=120.0),
+                CommandArgSpec(name="end", typ="float", required=False, default=360.0),
+                CommandArgSpec(name="density", typ="float", required=False, default=0.02, minimum=0.0),
+                CommandArgSpec(name="color_r", typ="float", required=False, default=0.63, minimum=0.0, maximum=1.0),
+                CommandArgSpec(name="color_g", typ="float", required=False, default=0.67, minimum=0.0, maximum=1.0),
+                CommandArgSpec(name="color_b", typ="float", required=False, default=0.73, minimum=0.0, maximum=1.0),
+            ),
+        ),
+        handler=_bus_world_fog_set,
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="world_skybox_set",
+            summary="Switch runtime skybox preset with validation.",
+            route="game-thread",
+            tags=("world", "skybox", "mcp"),
+            args=(CommandArgSpec(name="skyname", typ="str", required=True, help="Skybox preset name."),),
+        ),
+        handler=_bus_world_skybox_set,
+    )
+
+    # Legacy/compat commands remain available for existing scripts.
     con.register_command(name="help", help="List commands and cvars.", handler=_cmd_help)
     con.register_command(name="echo", help="Print text.", handler=_cmd_echo)
     con.register_command(name="exec", help="Execute a .cfg-like script file.", handler=_cmd_exec)
@@ -417,6 +804,11 @@ def build_client_console(runner: Any) -> Console:
     con.register_command(name="ent_set", help="Set a property by path using JSON value.", handler=_cmd_ent_set)
     con.register_command(name="ent_dir", help="List keys/attrs for an entity or sub-path.", handler=_cmd_ent_dir)
     con.register_command(name="ent_pos", help="Get/set position for an entity.", handler=_cmd_ent_pos)
+    con.register_command(
+        name="world_runtime",
+        help="Dump world runtime path + sky/fog diagnostics as JSON.",
+        handler=_cmd_world_runtime,
+    )
 
     for field, anno in PhysicsTuning.__annotations__.items():
         if not isinstance(field, str) or not field:

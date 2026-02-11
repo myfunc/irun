@@ -35,6 +35,19 @@ class SceneLayerContract(Protocol):
     _vis_enabled: bool
     _vis_deferred_lightmaps: dict[int, dict]
     _vis_initial_world_face_flags: bytearray | None
+    _runtime_only_lighting: bool
+    _runtime_path_label: str
+    _runtime_path_source: str
+    _runtime_entry_kind: str
+    _active_skyname: str
+    _sky_source: str
+    _fog_source: str
+    _fog_enabled: bool
+    _fog_mode: str
+    _fog_density: float
+    _fog_range: tuple[float, float]
+    _fog_color: tuple[float, float, float]
+    _runtime_fog_override: dict | None
     _ambient_np: Any
     _sun_np: Any
     _skybox_np: Any
@@ -57,11 +70,19 @@ class SceneLayerContract(Protocol):
     def _attach_triangle_map_geometry_v2(self, *, loader, render, triangles: list[dict]) -> None: ...
     def _attach_triangle_map_geometry_v2_unlit(self, *, loader, render, triangles: list[dict]) -> None: ...
     def _enhance_map_file_lighting(self, render, lights) -> None: ...
-    def _setup_skybox(self, *, loader, camera, skyname: str) -> None: ...
+    def _setup_skybox(
+        self,
+        *,
+        loader,
+        camera,
+        skyname: str,
+        fallback_skyname: str | None = None,
+    ) -> tuple[str, str]: ...
     def _build_material_texture_index(self, root: Path) -> dict[str, Path]: ...
     def _resolve_material_texture_path(self, *, material_name: str) -> Path | None: ...
     def _make_debug_checker_texture(self) -> Texture: ...
     def _make_solid_texture(self, *, name: str, rgba: tuple[float, float, float, float]) -> Texture: ...
     def _lightmap_shader(self) -> Shader: ...
     def _vformat_v3n3c4t2t2(self) -> GeomVertexFormat: ...
+    def runtime_world_diagnostics(self) -> dict[str, Any]: ...
 

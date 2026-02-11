@@ -61,6 +61,8 @@ class ConsoleUI:
         est_line_h = max(0.012, float(theme.small_scale) * 1.15)
         self._max_lines = max(6, int(usable_h / est_line_h))
         self._lines: deque[str] = deque(maxlen=int(self._max_lines))
+        self._history: deque[str] = deque(maxlen=200)
+        self._history_cursor: int | None = None
         self._log = DirectLabel(
             parent=self._root,
             text="",
@@ -86,6 +88,16 @@ class ConsoleUI:
             frame_color=theme.panel2,
             text_fg=theme.text,
         )
+        self._hint = DirectLabel(
+            parent=self._root,
+            text="Type `help` or `help <command>`.",
+            text_scale=theme.small_scale * 0.92,
+            text_align=TextNode.ALeft,
+            text_fg=theme.text_muted,
+            frameColor=(0, 0, 0, 0),
+            pos=(theme.pad, 0, theme.pad + 0.005),
+        )
+        self._hint.setTransparency(True)
 
         self._root.hide()
 
@@ -120,6 +132,46 @@ class ConsoleUI:
             self._lines.append(s)
         self._log["text"] = "\n".join(self._lines)
 
+    def set_hint(self, text: str) -> None:
+        self._hint["text"] = str(text or "")
+
+    def get_input_text(self) -> str:
+        try:
+            return str(self._input.entry.get())
+        except Exception:
+            return ""
+
+    def set_input_text(self, text: str) -> None:
+        s = str(text or "")
+        try:
+            self._input.entry.enterText(s)
+            self._input.entry.setCursorPosition(len(s))
+        except Exception:
+            pass
+
+    def history_prev(self) -> None:
+        if not self._history:
+            return
+        if self._history_cursor is None:
+            self._history_cursor = len(self._history) - 1
+        else:
+            self._history_cursor = max(0, int(self._history_cursor) - 1)
+        self.set_input_text(self._history[int(self._history_cursor)])
+
+    def history_next(self) -> None:
+        if not self._history:
+            return
+        if self._history_cursor is None:
+            self.set_input_text("")
+            return
+        nxt = int(self._history_cursor) + 1
+        if nxt >= len(self._history):
+            self._history_cursor = None
+            self.set_input_text("")
+            return
+        self._history_cursor = nxt
+        self.set_input_text(self._history[nxt])
+
     def _submit(self, text: str) -> None:
         line = str(text or "").strip()
         try:
@@ -129,6 +181,8 @@ class ConsoleUI:
             pass
         if not line:
             return
+        self._history.append(line)
+        self._history_cursor = None
         self.append(f"] {line}")
         try:
             out_lines = self._on_submit(line)
