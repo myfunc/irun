@@ -251,6 +251,58 @@ def _pick_spawn(entities, scale: float) -> tuple[list[float], float]:
     return fallback
 
 
+def _extract_fog_from_entities(entities) -> dict | None:
+    """
+    Extract optional fog from worldspawn or env_fog entity (GoldSrc convention).
+    Returns dict with enabled, start, end, color or None if no fog.
+    """
+    fog: dict | None = None
+    for ent in entities:
+        if not isinstance(ent, dict):
+            continue
+        cn = str(ent.get("classname") or "").strip().lower()
+        if cn == "env_fog":
+            start_s = ent.get("fogstart") or ent.get("fog_start")
+            end_s = ent.get("fogend") or ent.get("fog_end")
+            color_s = ent.get("fogcolor") or ent.get("fog_color") or "128 128 128"
+            try:
+                start = float(start_s) if start_s else 80.0
+                end = float(end_s) if end_s else 200.0
+            except (TypeError, ValueError):
+                continue
+            parts = str(color_s).split()
+            if len(parts) >= 3:
+                try:
+                    r, g, b = float(parts[0]) / 255.0, float(parts[1]) / 255.0, float(parts[2]) / 255.0
+                    fog = {"enabled": True, "start": start, "end": end, "color": [r, g, b]}
+                    break
+                except (TypeError, ValueError):
+                    pass
+    if fog:
+        return fog
+    for ent in entities:
+        if not isinstance(ent, dict) or ent.get("classname") != "worldspawn":
+            continue
+        start_s = ent.get("fogstart") or ent.get("fog_start")
+        end_s = ent.get("fogend") or ent.get("fog_end")
+        color_s = ent.get("fogcolor") or ent.get("fog_color")
+        if not (start_s and end_s and color_s):
+            continue
+        try:
+            start = float(start_s)
+            end = float(end_s)
+        except (TypeError, ValueError):
+            continue
+        parts = str(color_s).split()
+        if len(parts) >= 3:
+            try:
+                r, g, b = float(parts[0]) / 255.0, float(parts[1]) / 255.0, float(parts[2]) / 255.0
+                return {"enabled": True, "start": start, "end": end, "color": [r, g, b]}
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
 def _skyname_from_entities(entities) -> str | None:
     for ent in entities:
         if ent.get("classname") == "worldspawn":
@@ -840,6 +892,7 @@ def main() -> None:
             # Store as string keys for JSON stability.
             lightstyles[str(style)] = pat
         payload_lights = _extract_light_entities(entities, float(args.scale))
+        payload_fog = _extract_fog_from_entities(entities)
 
         model_entities: dict[int, dict] = {}
         for ent in entities:
@@ -1248,6 +1301,8 @@ def main() -> None:
             "triangles": render_triangles,
             "brush_models": brush_model_report,
         }
+        if payload_fog is not None:
+            payload["fog"] = payload_fog
         map_json.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
         if packed_out is not None:
             pack_bundle_dir_to_irunmap(bundle_dir=out_dir, out_path=packed_out, compresslevel=1)

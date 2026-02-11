@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import shlex
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any, Callable
 
+from ivan.console.command_bus import CommandBus, CommandExecution, CommandLineExecution, CommandMetadata
 
 @dataclass(frozen=True)
 class CommandContext:
@@ -36,6 +38,15 @@ class _Cvar:
     type: str  # "bool" | "int" | "float" | "str"
     get_value: Callable[[], Any]
     set_value: Callable[[Any], None]
+
+
+@dataclass
+class _LegacyExecution:
+    name: str
+    ok: bool
+    out: list[str]
+    data: dict[str, Any]
+    error_code: str = ""
 
 
 def _split_commands(line: str) -> list[str]:
@@ -108,6 +119,7 @@ class Console:
     def __init__(self) -> None:
         self._cmds: dict[str, _Command] = {}
         self._cvars: dict[str, _Cvar] = {}
+        self._bus = CommandBus()
         self._listeners: list[ConsoleListener] = []
 
     def register_command(self, *, name: str, handler: CommandHandler, help: str = "") -> None:
@@ -115,6 +127,9 @@ class Console:
         if not n:
             raise ValueError("command name is required")
         self._cmds[n] = _Command(name=n, help=str(help or ""), handler=handler)
+
+    def register_bus_command(self, *, metadata: CommandMetadata, handler) -> None:
+        self._bus.register(metadata=metadata, handler=handler)
 
     def register_cvar(
         self,
@@ -140,7 +155,26 @@ class Console:
         )
 
     def list_commands(self) -> list[tuple[str, str]]:
-        return sorted(((c.name, c.help) for c in self._cmds.values()), key=lambda x: x[0])
+        items: dict[str, str] = {}
+        for c in self._cmds.values():
+            items[c.name] = c.help
+        for m in self._bus.list_metadata():
+            items[m.name] = m.summary
+        return sorted(items.items(), key=lambda x: x[0])
+
+    def list_command_metadata(self) -> list[CommandMetadata]:
+        return self._bus.list_metadata()
+
+    def find_command_metadata(self, name: str) -> CommandMetadata | None:
+        return self._bus.get_metadata(name)
+
+    def suggest_commands(self, prefix: str, *, limit: int = 8) -> list[tuple[str, str]]:
+        p = str(prefix or "").strip().casefold()
+        rows = self.list_commands()
+        if not p:
+            return rows[: max(1, int(limit))]
+        out = [it for it in rows if str(it[0]).casefold().startswith(p)]
+        return out[: max(1, int(limit))]
 
     def list_cvars(self) -> list[tuple[str, str, str]]:
         return sorted(((v.name, v.type, v.help) for v in self._cvars.values()), key=lambda x: x[0])
@@ -148,47 +182,99 @@ class Console:
     def register_listener(self, listener: ConsoleListener) -> None:
         self._listeners.append(listener)
 
-    def execute_line(self, *, ctx: CommandContext, line: str) -> list[str]:
+    def _exec_legacy(self, *, ctx: CommandContext, name: str, argv: list[str]) -> _LegacyExecution:
+        cvar = self._cvars.get(name)
+        if cvar is not None:
+            if len(argv) == 0:
+                try:
+                    return _LegacyExecution(
+                        name=name,
+                        ok=True,
+                        out=[f'{cvar.name} "{cvar.get_value()}"'],
+                        data={"kind": "cvar"},
+                    )
+                except Exception as e:
+                    return _LegacyExecution(
+                        name=name,
+                        ok=False,
+                        out=[f"error reading {cvar.name}: {e}"],
+                        data={"kind": "cvar"},
+                        error_code="cvar-read",
+                    )
+            try:
+                val = _coerce_value(argv[0], typ=cvar.type)
+            except Exception as e:
+                return _LegacyExecution(
+                    name=name,
+                    ok=False,
+                    out=[f"error: {cvar.name} expects {cvar.type}: {e}"],
+                    data={"kind": "cvar"},
+                    error_code="cvar-parse",
+                )
+            try:
+                cvar.set_value(val)
+                return _LegacyExecution(
+                    name=name,
+                    ok=True,
+                    out=[f'{cvar.name} "{cvar.get_value()}"'],
+                    data={"kind": "cvar"},
+                )
+            except Exception as e:
+                return _LegacyExecution(
+                    name=name,
+                    ok=False,
+                    out=[f"error setting {cvar.name}: {e}"],
+                    data={"kind": "cvar"},
+                    error_code="cvar-write",
+                )
+
+        cmd = self._cmds.get(name)
+        if cmd is None:
+            return _LegacyExecution(name=name, ok=False, out=[f"unknown command: {name}"], data={}, error_code="unknown-command")
+        try:
+            return _LegacyExecution(name=name, ok=True, out=list(cmd.handler(ctx, argv)), data={})
+        except Exception as e:
+            return _LegacyExecution(name=name, ok=False, out=[f"error in {name}: {e}"], data={}, error_code="handler-error")
+
+    def execute_line_detailed(self, *, ctx: CommandContext, line: str) -> CommandLineExecution:
+        t0 = perf_counter()
         out: list[str] = []
+        executions: list[CommandExecution] = []
         for raw_cmd in _split_commands(line):
             argv = _parse_argv(raw_cmd)
             if not argv:
                 continue
-            name = argv[0]
-
-            cvar = self._cvars.get(name)
-            if cvar is not None:
-                if len(argv) == 1:
-                    try:
-                        out.append(f'{cvar.name} "{cvar.get_value()}"')
-                    except Exception as e:
-                        out.append(f"error reading {cvar.name}: {e}")
-                    continue
-                try:
-                    val = _coerce_value(argv[1], typ=cvar.type)
-                except Exception as e:
-                    out.append(f"error: {cvar.name} expects {cvar.type}: {e}")
-                    continue
-                try:
-                    cvar.set_value(val)
-                    out.append(f'{cvar.name} "{cvar.get_value()}"')
-                except Exception as e:
-                    out.append(f"error setting {cvar.name}: {e}")
+            name = str(argv[0])
+            if self._bus.has(name):
+                ex = self._bus.dispatch(ctx=ctx, name=name, argv=argv[1:])
+                executions.append(ex)
+                out.extend(ex.out)
                 continue
-
-            cmd = self._cmds.get(name)
-            if cmd is None:
-                out.append(f"unknown command: {name}")
-                continue
-            try:
-                out.extend(cmd.handler(ctx, argv[1:]))
-            except Exception as e:
-                out.append(f"error in {name}: {e}")
+            lg = self._exec_legacy(ctx=ctx, name=name, argv=argv[1:])
+            ex = CommandExecution(
+                name=lg.name,
+                ok=lg.ok,
+                out=list(lg.out),
+                data=dict(lg.data),
+                elapsed_ms=0.0,
+                error_code=str(lg.error_code),
+            )
+            executions.append(ex)
+            out.extend(ex.out)
+        result = CommandLineExecution(
+            ok=all(x.ok for x in executions) if executions else True,
+            out=out,
+            executions=executions,
+            elapsed_ms=(perf_counter() - t0) * 1000.0,
+        )
         if self._listeners:
             for it in list(self._listeners):
                 try:
-                    it(ctx, str(line), list(out))
+                    it(ctx, str(line), list(result.out))
                 except Exception:
                     # Listener failures must never break the console execution path.
                     pass
-        return out
+        return result
+
+    def execute_line(self, *, ctx: CommandContext, line: str) -> list[str]:
+        return list(self.execute_line_detailed(ctx=ctx, line=line).out)

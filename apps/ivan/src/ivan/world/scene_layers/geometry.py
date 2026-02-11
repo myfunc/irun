@@ -77,12 +77,15 @@ def attach_triangle_map_geometry_v2_unlit(
     """
     Attach v2-format triangle geometry without lightmap shader.
     """
+    # Batch by material only (no lightmap IDs) for runtime path.
     tris_by_mat: dict[str, list[dict]] = {}
     for t in triangles:
         m = t.get("m")
         if not isinstance(m, str):
             continue
         tris_by_mat.setdefault(m, []).append(t)
+    tex_cache: dict[str, Texture | None] = {}
+    missing_cache: set[str] = set()
 
     for mat_name, tris in tris_by_mat.items():
         vdata = GeomVertexData(
@@ -128,20 +131,29 @@ def attach_triangle_map_geometry_v2_unlit(
             except Exception:
                 pass
 
-        tex: Texture | None = None
-        tex_path = scene._resolve_material_texture_path(material_name=mat_name)
-        if tex_path and tex_path.exists():
-            tex = loader.loadTexture(Filename.fromOsSpecific(str(tex_path)))
-            if tex is not None:
-                tex.setWrapU(Texture.WM_repeat)
-                tex.setWrapV(Texture.WM_repeat)
-                if mat_name.startswith("{"):
-                    tex.setMinfilter(Texture.FT_nearest)
-                    tex.setMagfilter(Texture.FT_nearest)
-                np.setTexture(tex, 1)
-        else:
-            tex = scene._make_debug_checker_texture()
+        tex: Texture | None = tex_cache.get(mat_name)
+        if mat_name in missing_cache:
+            tex = None
+        if tex is None and mat_name not in missing_cache:
+            tex_path = scene._resolve_material_texture_path(material_name=mat_name)
+            if tex_path and tex_path.exists():
+                tex = loader.loadTexture(Filename.fromOsSpecific(str(tex_path)))
+                if tex is not None:
+                    tex.setWrapU(Texture.WM_repeat)
+                    tex.setWrapV(Texture.WM_repeat)
+                    if mat_name.startswith("{"):
+                        tex.setMinfilter(Texture.FT_nearest)
+                        tex.setMagfilter(Texture.FT_nearest)
+                tex_cache[mat_name] = tex
+            else:
+                missing_cache.add(mat_name)
+        if tex is not None:
             np.setTexture(tex, 1)
+        else:
+            np.setTexture(scene._make_debug_checker_texture(), 1)
+
+        # Runtime path: use setShaderAuto so geometry receives scene lights (no baked lightmap).
+        np.setShaderAuto()
 
 
 def attach_triangle_map_geometry_v2(scene: SceneLayerContract, *, loader, render, triangles: list[dict]) -> None:
@@ -178,6 +190,8 @@ def attach_triangle_map_geometry_v2(scene: SceneLayerContract, *, loader, render
             scene._vis_initial_world_face_flags = scene._vis_goldsrc.visible_world_face_flags_for_leaf(int(leaf))
         except Exception:
             scene._vis_initial_world_face_flags = None
+    base_tex_cache: dict[str, Texture | None] = {}
+    base_tex_missing: set[str] = set()
 
     for (mat_name, lmi), tris in tris_by_key.items():
         vdata = GeomVertexData(
@@ -232,7 +246,8 @@ def attach_triangle_map_geometry_v2(scene: SceneLayerContract, *, loader, render
         geom_node.addGeom(geom)
         np = render.attachNewNode(geom_node)
         np.setTwoSided(False)
-        # Imported BSP geometry should be lit by baked lighting, not by the game's ambient/sun lights.
+        # Baked path: lightmaps supply lighting; block runtime lights to avoid double-lighting.
+        # Runtime path (v2_unlit) never uses setLightOff so geometry receives scene lights via setShaderAuto.
         np.setLightOff(1)
         if isinstance(lmi, int):
             scene._vis_face_nodes.setdefault(int(lmi), []).append(np)
@@ -270,20 +285,26 @@ def attach_triangle_map_geometry_v2(scene: SceneLayerContract, *, loader, render
                         )
                     )
 
-        tex: Texture | None = None
-        tex_path = scene._resolve_material_texture_path(material_name=mat_name)
-        if tex_path and tex_path.exists():
-            tex = loader.loadTexture(Filename.fromOsSpecific(str(tex_path)))
-            if tex is not None:
-                tex.setWrapU(Texture.WM_repeat)
-                tex.setWrapV(Texture.WM_repeat)
-                if mat_name.startswith("{"):
-                    tex.setMinfilter(Texture.FT_nearest)
-                    tex.setMagfilter(Texture.FT_nearest)
-                np.setTexture(tex, 1)
-        else:
-            tex = scene._make_debug_checker_texture()
+        tex: Texture | None = base_tex_cache.get(mat_name)
+        if mat_name in base_tex_missing:
+            tex = None
+        if tex is None and mat_name not in base_tex_missing:
+            tex_path = scene._resolve_material_texture_path(material_name=mat_name)
+            if tex_path and tex_path.exists():
+                tex = loader.loadTexture(Filename.fromOsSpecific(str(tex_path)))
+                if tex is not None:
+                    tex.setWrapU(Texture.WM_repeat)
+                    tex.setWrapV(Texture.WM_repeat)
+                    if mat_name.startswith("{"):
+                        tex.setMinfilter(Texture.FT_nearest)
+                        tex.setMagfilter(Texture.FT_nearest)
+                base_tex_cache[mat_name] = tex
+            else:
+                base_tex_missing.add(mat_name)
+        if tex is not None:
             np.setTexture(tex, 1)
+        else:
+            np.setTexture(scene._make_debug_checker_texture(), 1)
 
         # Apply baked lightmaps (Source: single; GoldSrc: up to 4 styles).
         lm_entry = scene._lightmap_faces.get(lmi) if (lmi is not None and scene._lightmap_faces) else None
@@ -355,8 +376,15 @@ def attach_triangle_map_geometry_v2(scene: SceneLayerContract, *, loader, render
                     nps.append(np)
 
 
-def setup_skybox(scene: SceneLayerContract, *, loader, camera, skyname: str) -> None:
-    """Attach cubemap-like skybox cards from imported skybox textures."""
+def setup_skybox(
+    scene: SceneLayerContract,
+    *,
+    loader,
+    camera,
+    skyname: str,
+    fallback_skyname: str | None = None,
+) -> tuple[str, str]:
+    """Attach cubemap-like skybox cards with a guaranteed preset fallback."""
     # Source convention: materials/skybox/<skyname><face>.vtf -> converted to PNG.
     if scene._skybox_np is not None:
         scene._skybox_np.removeNode()
@@ -371,23 +399,50 @@ def setup_skybox(scene: SceneLayerContract, *, loader, camera, skyname: str) -> 
         "dn": ("dn", (0, 0, -200), (180, 90, 0)),
     }
 
-    if not scene._material_texture_root:
-        return
-    if scene._material_texture_index is None:
+    if scene._material_texture_root and scene._material_texture_index is None:
         scene._material_texture_index = scene._build_material_texture_index(scene._material_texture_root)
 
-    def find_face(face_suffix: str) -> Path | None:
+    requested = str(skyname or "").strip()
+    fallback = str(fallback_skyname or "").strip()
+    active = requested or fallback
+
+    def has_any_face(name: str) -> bool:
+        if not name:
+            return False
+        for face in ("ft", "bk", "lf", "rt", "up", "dn"):
+            if find_face_for(name, face) is not None:
+                return True
+        return False
+
+    def find_face_for(name: str, face_suffix: str) -> Path | None:
+        if not name:
+            return None
+        return find_face_from_name(name, face_suffix)
+
+    def find_face_from_name(name: str, face_suffix: str) -> Path | None:
+        if scene._material_texture_index is None:
+            return None
         candidates = [
-            f"skybox/{skyname}{face_suffix}",
-            f"skybox/{skyname.lower()}{face_suffix}",
-            f"skybox/{skyname.upper()}{face_suffix}",
-            f"skybox/{skyname.capitalize()}{face_suffix}",
+            f"skybox/{name}{face_suffix}",
+            f"skybox/{name.lower()}{face_suffix}",
+            f"skybox/{name.upper()}{face_suffix}",
+            f"skybox/{name.capitalize()}{face_suffix}",
         ]
         for c in candidates:
             p = scene._material_texture_index.get(c.casefold())
             if p:
                 return p
         return None
+
+    sky_source = "default-preset"
+    if requested and has_any_face(requested):
+        active = requested
+        sky_source = "map-skyname"
+    elif fallback and has_any_face(fallback):
+        active = fallback
+        sky_source = "default-skyname"
+    elif not active:
+        active = "default"
 
     root = camera.getParent().attachNewNode("skybox-root")
     try:
@@ -400,20 +455,34 @@ def setup_skybox(scene: SceneLayerContract, *, loader, camera, skyname: str) -> 
     root.setLightOff(1)
 
     size = 200.0
+    preset_face_colors = {
+        "ft": (0.58, 0.63, 0.72, 1.0),
+        "bk": (0.58, 0.63, 0.72, 1.0),
+        "lf": (0.56, 0.61, 0.70, 1.0),
+        "rt": (0.56, 0.61, 0.70, 1.0),
+        "up": (0.22, 0.34, 0.54, 1.0),
+        "dn": (0.08, 0.09, 0.11, 1.0),
+    }
     for _, (suffix, pos, hpr) in faces.items():
-        tex_path = find_face(suffix)
-        if not tex_path:
-            continue
+        tex_path = find_face_for(active, suffix)
         cm = CardMaker(f"sky-{suffix}")
         cm.setFrame(-size, size, -size, size)
         card = root.attachNewNode(cm.generate())
         card.setPos(*pos)
         card.setHpr(*hpr)
-        tex = loader.loadTexture(Filename.fromOsSpecific(str(tex_path)))
+        if tex_path is not None:
+            tex = loader.loadTexture(Filename.fromOsSpecific(str(tex_path)))
+        else:
+            color = preset_face_colors.get(suffix, (0.5, 0.55, 0.65, 1.0))
+            tex = scene._make_solid_texture(name=f"sky-default-{suffix}", rgba=color)
+            sky_source = "default-preset"
+            if not active:
+                active = fallback or requested or "default"
         if tex is not None:
             tex.setWrapU(Texture.WM_clamp)
             tex.setWrapV(Texture.WM_clamp)
             card.setTexture(tex, 1)
 
     scene._skybox_np = root
+    return active, sky_source
 

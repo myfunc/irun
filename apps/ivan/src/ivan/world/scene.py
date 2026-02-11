@@ -1,5 +1,6 @@
 from __future__ import annotations
 import math
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,6 +52,10 @@ from ivan.world.scene_layers.lighting import (
 from ivan.world.scene_layers.loading import (
     try_load_external_map,
     try_load_map_file,
+)
+from ivan.world.loading_report import (
+    LOAD_STAGE_MATERIAL_SKY_FOG_RESOLVE,
+    LoadReporter,
 )
 
 
@@ -107,12 +112,28 @@ class WorldScene:
         # Used to lazy-load per-face lightmap textures (big GoldSrc maps) when a face becomes visible via PVS.
         self._vis_deferred_lightmaps: dict[int, dict] = {}
         self._vis_initial_world_face_flags: bytearray | None = None
+        self._runtime_only_lighting: bool = False
+        self._runtime_path_label: str = "uninitialized"
+        self._runtime_path_source: str = "boot"
+        self._runtime_entry_kind: str = "none"
+        self._active_skyname: str = ""
+        self._sky_source: str = "unresolved"
+        self._fog_source: str = "unresolved"
+        self._fog_enabled: bool = False
+        self._fog_mode: str = "linear"
+        self._fog_density: float = 0.02
+        self._fog_range: tuple[float, float] = (0.0, 0.0)
+        self._fog_color: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self._runtime_fog_override: dict | None = None
         self._map_json_path: Path | None = None
         self._map_payload: dict | None = None
         self._ambient_np = None
         self._sun_np = None
         self._moving_blocks: list[_MovingBlock] = []
         self._collision_updater = None
+        self._load_reporter = LoadReporter()
+        self._load_report_emitted = False
+        self._visibility_cache_report: dict[str, object] = {}
 
     @property
     def map_id(self) -> str:
@@ -126,9 +147,12 @@ class WorldScene:
         self._collision_updater = updater
 
     def build(self, *, cfg, loader, render, camera) -> None:
+        self._begin_load_report(cfg=cfg)
         self._world_root_np = render
         self._camera_np = camera
         self._build_lighting(render)
+        with self._time_load_stage(LOAD_STAGE_MATERIAL_SKY_FOG_RESOLVE):
+            self._apply_fog(cfg=cfg, render=render)
         self._moving_blocks = []
 
         if bool(getattr(cfg, "feel_harness", False)):
@@ -145,6 +169,9 @@ class WorldScene:
                 camera=camera,
             )
             if self.external_map_loaded:
+                # Re-apply fog after map load so map payload (fog config) takes effect.
+                with self._time_load_stage(LOAD_STAGE_MATERIAL_SKY_FOG_RESOLVE):
+                    self._apply_fog(cfg=cfg, render=render)
                 return
 
         # Official Panda3D sample environment model used in basic tutorial scenes.
@@ -153,6 +180,44 @@ class WorldScene:
         env.setScale(0.25)
         env.setPos(-8, 42, 0)
         self._build_graybox_scene(loader=loader, render=render)
+
+    def _begin_load_report(self, *, cfg) -> None:
+        map_ref = getattr(cfg, "map_json", None)
+        profile = getattr(cfg, "map_profile", None)
+        self._load_reporter.begin(map_ref=map_ref, map_profile=profile, entry_kind_hint=self._runtime_entry_kind)
+        self._load_reporter.set_optimizations(
+            material_texture_cache=True,
+            visibility_memory_cache=True,
+            visibility_deferred_lightmaps=True,
+        )
+        self._load_reporter.set_visibility_cache(enabled=False, result="not-requested")
+        self._load_report_emitted = False
+        self._visibility_cache_report = {}
+
+    def _time_load_stage(self, stage_name: str):
+        fn = getattr(self._load_reporter, "stage", None)
+        if callable(fn):
+            return fn(stage_name)
+        return nullcontext()
+
+    def _set_visibility_cache_report(self, **payload: object) -> None:
+        clean: dict[str, object] = {}
+        for k, v in payload.items():
+            if v is None:
+                continue
+            clean[str(k)] = v
+        self._visibility_cache_report = clean
+        self._load_reporter.set_visibility_cache(**clean)
+
+    def finalize_load_report_if_ready(self) -> dict[str, object] | None:
+        if self._load_report_emitted:
+            return None
+        if not self._load_reporter.needs_first_frame():
+            return None
+        self._load_reporter.mark_first_frame_ready()
+        payload = self._load_reporter.as_payload(runtime_diag=self.runtime_world_diagnostics())
+        self._load_report_emitted = True
+        return payload
 
     def tick(self, *, now: float) -> None:
         """
@@ -443,8 +508,71 @@ class WorldScene:
     def _attach_triangle_map_geometry_v2(self, *, loader, render, triangles: list[dict]) -> None:
         attach_triangle_map_geometry_v2(self, loader=loader, render=render, triangles=triangles)
 
-    def _setup_skybox(self, *, loader, camera, skyname: str) -> None:
-        setup_skybox(self, loader=loader, camera=camera, skyname=skyname)
+    def _setup_skybox(
+        self,
+        *,
+        loader,
+        camera,
+        skyname: str,
+        fallback_skyname: str | None = None,
+    ) -> tuple[str, str]:
+        return setup_skybox(
+            self,
+            loader=loader,
+            camera=camera,
+            skyname=skyname,
+            fallback_skyname=fallback_skyname,
+        )
+
+    def runtime_world_diagnostics(self) -> dict:
+        diag = {
+            "entry_kind": str(self._runtime_entry_kind),
+            "runtime_path": str(self._runtime_path_label),
+            "runtime_path_source": str(self._runtime_path_source),
+            "skyname": str(self._active_skyname),
+            "sky_source": str(self._sky_source),
+            "fog_source": str(self._fog_source),
+            "fog_enabled": bool(self._fog_enabled),
+            "fog_mode": str(self._fog_mode),
+            "fog_density": float(self._fog_density),
+            "fog_start": float(self._fog_range[0]),
+            "fog_end": float(self._fog_range[1]),
+            "fog_color": [
+                float(self._fog_color[0]),
+                float(self._fog_color[1]),
+                float(self._fog_color[2]),
+            ],
+            "runtime_only_lighting": bool(self._runtime_only_lighting),
+        }
+        if isinstance(self._visibility_cache_report, dict) and self._visibility_cache_report:
+            diag["visibility_cache"] = dict(self._visibility_cache_report)
+        return diag
+
+    def list_available_skyboxes(self) -> list[str]:
+        if self._material_texture_index is None and self._material_texture_root:
+            self._material_texture_index = self._build_material_texture_index(self._material_texture_root)
+        idx = self._material_texture_index or {}
+        out: dict[str, int] = {}
+        faces = ("ft", "bk", "lf", "rt", "up", "dn")
+        for key in idx.keys():
+            s = str(key)
+            if not s.startswith("skybox/"):
+                continue
+            rel = s[len("skybox/") :]
+            for face in faces:
+                if rel.endswith(face) and len(rel) > len(face):
+                    base = rel[: -len(face)]
+                    out[base] = int(out.get(base, 0)) + 1
+                    break
+        names = [k for k, count in out.items() if count >= 1]
+        names.sort()
+        return names
+
+    def set_runtime_skybox(self, *, loader, camera, skyname: str) -> dict:
+        active, source = self._setup_skybox(loader=loader, camera=camera, skyname=str(skyname), fallback_skyname=None)
+        self._active_skyname = str(active)
+        self._sky_source = str(source if source else "runtime-console")
+        return self.runtime_world_diagnostics()
 
     @staticmethod
     def _resolve_material_root(*, map_json: Path, payload: dict) -> Path | None:
