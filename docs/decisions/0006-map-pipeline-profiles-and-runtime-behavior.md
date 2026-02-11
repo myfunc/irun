@@ -20,10 +20,10 @@ Introduce **map pipeline profiles** shared by build tools and runtime:
 
 ### Profiles
 
-| Profile | Purpose | Bake (vis/light) | Pack (compression) |
-|---------|---------|------------------|--------------------|
-| `dev-fast` | Fast iteration | Skip (default) | Off (level 0) |
-| `prod-baked` | Production quality | Run both | On (level 6) |
+| Profile      | Purpose            | Bake (vis/light) | Pack (compression) |
+| ------------ | ------------------ | ---------------- | ------------------ |
+| `dev-fast`   | Fast iteration     | Skip (default)   | Off (level 0)      |
+| `prod-baked` | Production quality | Run both         | On (level 6)       |
 
 - `bake_map.py` and `pack_map.py` accept `--profile`; default `dev-fast`.
 - `bake_map.py`: when `--no-vis` / `--no-light` not explicitly set, dev-fast skips both.
@@ -63,12 +63,12 @@ Runtime diagnostics report active entry kind, active lighting path + reason, and
 
 Compact F12-driven overlay with mode cycle:
 
-| Mode | Purpose |
-|------|---------|
-| minimal | FPS + frame time (ms) |
-| render | FPS, frame time, p95, sim steps/hz |
-| streaming | FPS, p95, network perf |
-| graph | FPS, spike count, mini frametime bar graph |
+| Mode      | Purpose                                    |
+| --------- | ------------------------------------------ |
+| minimal   | FPS + frame time (ms)                      |
+| render    | FPS, frame time, p95, sim steps/hz         |
+| streaming | FPS, p95, network perf                     |
+| graph     | FPS, spike count, mini frametime bar graph |
 
 Cycle: off → minimal → render → streaming → graph → off. Top-right placement to avoid HUD overlap.
 

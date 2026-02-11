@@ -23,29 +23,23 @@ class DebugHudOverlay:
     """Compact debug overlay: F12 cycles minimal | render | streaming | graph."""
 
     def __init__(self, *, aspect2d, theme: Theme) -> None:
-        aspect_ratio = 16.0 / 9.0
-        if getattr(ShowBaseGlobal, "base", None) is not None:
-            try:
-                aspect_ratio = float(ShowBaseGlobal.base.getAspectRatio())
-            except Exception:
-                pass
-
+        self._aspect2d = aspect2d
         self._theme = theme
         self._mode_index = 0
         self._enabled = False
 
         # Compact box: top-right, below speed chip; avoid overlap with speed/health HUD.
-        pad = 0.04
-        w = 0.32
-        h = 0.18
-        x = aspect_ratio - pad - w
+        self._pad = 0.04
+        self._w = 0.32
+        self._h = 0.18
+        x = 0.0
         y = 0.80
 
         self._root = DirectFrame(
-            parent=aspect2d,
+            parent=self._aspect2d,
             frameColor=theme.outline,
             relief=DGG.FLAT,
-            frameSize=(0.0, w, 0.0, h),
+            frameSize=(0.0, self._w, 0.0, self._h),
             pos=(x, 0.0, y),
         )
         self._root["state"] = DGG.DISABLED
@@ -54,7 +48,7 @@ class DebugHudOverlay:
             parent=self._root,
             frameColor=(theme.panel[0], theme.panel[1], theme.panel[2], 0.58),
             relief=DGG.FLAT,
-            frameSize=(theme.outline_w, w - theme.outline_w, theme.outline_w, h - theme.outline_w),
+            frameSize=(theme.outline_w, self._w - theme.outline_w, theme.outline_w, self._h - theme.outline_w),
         )
         inner["state"] = DGG.DISABLED
         inner.setTransparency(TransparencyAttrib.M_alpha)
@@ -66,14 +60,14 @@ class DebugHudOverlay:
             text_align=TextNode.ALeft,
             text_fg=theme.text,
             frameColor=(0, 0, 0, 0),
-            pos=(theme.outline_w + theme.pad * 0.5, 0.0, h - theme.outline_w - theme.pad - 0.022),
+            pos=(theme.outline_w + theme.pad * 0.5, 0.0, self._h - theme.outline_w - theme.pad - 0.022),
             text_wordwrap=45,
         )
 
         # Graph area: below the header line, thin strip for frametime bars.
         graph_h = 0.055
         graph_y = theme.outline_w + theme.pad * 0.3
-        graph_w = w - theme.outline_w * 2 - theme.pad
+        graph_w = self._w - theme.outline_w * 2 - theme.pad
         graph_x = theme.outline_w + theme.pad * 0.5
 
         self._graph_root = DirectFrame(
@@ -89,7 +83,32 @@ class DebugHudOverlay:
 
         self._graph_w = graph_w
         self._graph_h = graph_h
+        self._last_aspect_ratio: float | None = None
+        self._relayout()
         self._root.hide()
+
+    @staticmethod
+    def _current_aspect_ratio() -> float:
+        aspect_ratio = 16.0 / 9.0
+        if getattr(ShowBaseGlobal, "base", None) is not None:
+            try:
+                aspect_ratio = float(ShowBaseGlobal.base.getAspectRatio())
+            except Exception:
+                pass
+        return float(aspect_ratio)
+
+    def _relayout(self) -> None:
+        # Anchor to the right edge every time aspect ratio changes.
+        aspect_ratio = self._current_aspect_ratio()
+        if self._last_aspect_ratio is not None and abs(float(aspect_ratio) - float(self._last_aspect_ratio)) <= 1e-5:
+            return
+        self._last_aspect_ratio = float(aspect_ratio)
+        x = float(aspect_ratio) - float(self._pad) - float(self._w)
+        try:
+            p = self._root.getPos()
+            self._root.setPos(float(x), float(p[1]), float(p[2]))
+        except Exception:
+            self._root.setPos(float(x), 0.0, 0.80)
 
     def cycle_mode(self) -> None:
         """F12: cycle off -> minimal -> render -> streaming -> graph -> off."""
@@ -134,6 +153,7 @@ class DebugHudOverlay:
         """Update overlay content based on current mode."""
         if not self._enabled:
             return
+        self._relayout()
 
         mode = DEBUG_HUD_MODES[self._mode_index]
         mode_tag = f"[{MODE_LABELS[mode]}]"
@@ -213,6 +233,7 @@ class DebugHudOverlay:
 
     def show(self) -> None:
         self._enabled = True
+        self._relayout()
         self._root.show()
         if self.mode() == "graph":
             self._graph_root.show()

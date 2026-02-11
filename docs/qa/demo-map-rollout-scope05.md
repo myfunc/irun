@@ -4,7 +4,7 @@ Status: `active (initial evidence captured)`
 
 ## Acceptance Baseline
 - Primary acceptance map: `apps/ivan/assets/maps/demo/demo.map`.
-- Cross-path acceptance artifact for baked path: `.tmp/scope05/demo/demo-scope05.irunmap` (generated from `demo.map` with `pack_map.py --profile prod-baked`).
+- Cross-path acceptance artifact for packed path: `.tmp/scope05/demo/demo-scope05.irunmap` (generated from `demo.map` with `pack_map.py --profile prod-baked`).
 - Imported-map validation set (at least one required):
   - primary: `imported/halflife/valve/surf_ski_4_2`
   - secondary fallback: `imported/halflife/cstrike/de_rats_zabka`
@@ -17,7 +17,7 @@ Status: `active (initial evidence captured)`
   - `runtime.sky_source != unresolved`.
   - `runtime.fog_source != unresolved`.
   - direct-map path reports runtime-lighting (`runtime_only_lighting=true` expected for `demo.map` source path).
-  - baked/imported paths report baked-lightmaps runtime path.
+  - packed path reports runtime-lighting when lightmaps are absent; imported path reports baked-lightmaps when bundle lightmaps are present.
 - Current state (2026-02-10): **pass**.
 
 ### Gate B: Launcher / Runflow UX
@@ -41,13 +41,13 @@ Status: `active (initial evidence captured)`
 ### Gate D: Loading Performance Targets
 - Targets are validated by `apps/ivan/tools/scope05_rollout_validation.py`:
   - `demo-source` first-frame <= `2600 ms`
-  - `demo-baked` first-frame <= `2600 ms`
+  - `demo-packed` first-frame <= `2600 ms`
   - `imported-map` first-frame <= `3200 ms`
 - Current state (2026-02-10): **fail** (see measurements below).
 
 ## Regression Checklist
 - [x] `demo.map` source path (`Play Map` equivalent) smoke boots and emits runtime + load report.
-- [x] baked demo path (`Play Baked` equivalent) smoke boots and emits runtime + load report.
+- [x] packed demo path (`Pack` equivalent) smoke boots and emits runtime + load report.
 - [x] imported map path smoke boots and emits runtime + load report.
 - [x] launcher runflow tests pass.
 - [x] command bus contract tests pass.
@@ -69,7 +69,7 @@ Output:
 
 What this script does:
 - builds `.tmp/scope05/demo/demo-scope05.irunmap` from `demo.map` if needed;
-- runs cross-path smoke checks (`demo.map`, baked demo artifact, imported map);
+- runs cross-path smoke checks (`demo.map`, packed demo artifact, imported map);
 - runs launcher + command-bus regression test groups;
 - evaluates rollout gates and emits `go` or `no-go`.
 
@@ -86,11 +86,11 @@ apps/ivan/.venv/Scripts/python apps/ivan/tools/mcp_scope04_demo.py --host 127.0.
 
 ## Latest Evidence (2026-02-10)
 - Artifact: `.tmp/scope05/scope05-validation-20260210T145836Z.json`
-- Baked demo artifact: `.tmp/scope05/demo/demo-scope05.irunmap`
+- Packed demo artifact: `.tmp/scope05/demo/demo-scope05.irunmap`
 
 Measured first-frame load (`total_ms`):
 - `demo-source`: `17456.17 ms` (target `2600 ms`) -> fail
-- `demo-baked`: `3964.91 ms` (target `2600 ms`) -> fail
+- `demo-packed`: `3964.91 ms` (target `2600 ms`) -> fail
 - `imported-map` (`surf_ski_4_2`): `8598.38 ms` (target `3200 ms`) -> fail
 
 Supporting regressions:
@@ -112,6 +112,6 @@ Supporting regressions:
 ## Recommendation
 - **Current recommendation: NO-GO** for default rollout.
 - Exit criteria before switching to go:
-  1. loading gate meets thresholds on `demo-source`, `demo-baked`, and one imported map path;
+  1. loading gate meets thresholds on `demo-source`, `demo-packed`, and one imported map path;
   2. live MCP sequence executed and archived in a follow-up Scope 05 artifact;
   3. no new S1 issues opened by rerun.

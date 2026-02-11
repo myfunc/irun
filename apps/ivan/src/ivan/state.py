@@ -8,8 +8,8 @@ from pathlib import Path
 
 from ivan.paths import app_root as ivan_app_root
 
-DEFAULT_WINDOW_WIDTH = 1920 if os.name == "nt" else 1280
-DEFAULT_WINDOW_HEIGHT = 1080 if os.name == "nt" else 720
+DEFAULT_WINDOW_WIDTH = 1920
+DEFAULT_WINDOW_HEIGHT = 1080
 
 
 @dataclass(frozen=True)

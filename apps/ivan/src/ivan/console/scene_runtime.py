@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from time import perf_counter
 from typing import Any
 
@@ -470,6 +472,7 @@ class SceneRuntimeRegistry:
             "color": [_clamp01(color_r), _clamp01(color_g), _clamp01(color_b)],
         }
         setattr(scene, "_runtime_fog_override", fog)
+        setattr(scene, "_pending_map_fog", dict(fog))
         apply_fn = getattr(scene, "_apply_fog", None)
         if callable(apply_fn):
             apply_fn(cfg=cfg, render=world_root)
@@ -477,6 +480,52 @@ class SceneRuntimeRegistry:
         if callable(diag_fn):
             return dict(diag_fn())
         return {"ok": True}
+
+    def save_world_map(self, *, include_fog: bool = True) -> dict[str, Any]:
+        scene = getattr(self._runner, "scene", None)
+        if scene is None:
+            raise ValueError("scene unavailable")
+        map_json = getattr(scene, "_map_json_path", None)
+        if not isinstance(map_json, Path):
+            raise ValueError("map is not backed by writable map.json")
+        if map_json.suffix.lower() != ".json":
+            raise ValueError("current map source is not map.json (direct .map is not writable here)")
+        # Packed .irunmap maps are extracted to cache; writing there is misleading.
+        extracted_marker = map_json.parent / ".irunmap-extracted.json"
+        if extracted_marker.exists():
+            raise ValueError("packed .irunmap is read-only in runtime cache; save to source bundle instead")
+        if not map_json.exists() or not map_json.is_file():
+            raise ValueError(f"map.json not found: {map_json}")
+
+        try:
+            raw = json.loads(map_json.read_text(encoding="utf-8"))
+        except Exception as e:
+            raise ValueError(f"failed to parse map.json: {e}") from e
+        if not isinstance(raw, dict):
+            raise ValueError("map.json root must be an object")
+
+        payload = dict(raw)
+        changed = False
+        if include_fog:
+            fog_pending = getattr(scene, "_pending_map_fog", None)
+            if not isinstance(fog_pending, dict):
+                fog_pending = getattr(scene, "_runtime_fog_override", None)
+            if isinstance(fog_pending, dict):
+                payload["fog"] = dict(fog_pending)
+                setattr(scene, "_pending_map_fog", None)
+                changed = True
+
+        if not changed:
+            return {"ok": True, "saved": [], "map_json": str(map_json), "note": "no pending map changes"}
+
+        map_json.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        setattr(scene, "_map_payload", dict(payload))
+        return {
+            "ok": True,
+            "saved": ["fog"] if include_fog else [],
+            "map_json": str(map_json),
+            "fog": payload.get("fog"),
+        }
 
     def set_world_skybox(self, *, skyname: str) -> dict[str, Any]:
         scene = getattr(self._runner, "scene", None)

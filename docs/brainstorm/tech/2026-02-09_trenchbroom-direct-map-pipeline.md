@@ -84,7 +84,7 @@ We revisited how maps work in IVAN with the goal of making TrenchBroom the prima
 - Standalone Dear PyGui desktop app (`python -m launcher`).
 - **Settings panel**: TrenchBroom exe, WAD dir, materials dir, Steam/HL root, ericw-tools, maps dir, Python exe — all persisted to `~/.irun/launcher/config.json`.
 - **Map browser**: recursive `.map` scan under maps dir, sorted by mtime, auto-refresh every 5s.
-- **Actions**: Play Map (`--watch`), Stop Game, Edit in TrenchBroom, Create Map, Import WAD, Pack .irunmap, Bake Lightmaps.
+- **Actions**: Play Map (`--watch`), Stop Game, Edit in TrenchBroom, Create Map, Import WAD, Pack .irunmap.
 - **Import WAD**: scans Steam/HL root for `.wad` files, shows checklist dialog with already-imported detection, copies selected WADs to `assets/textures/`. Also supports manual file browse.
 - **Create Map**: modal dialog for name input, generates minimal Valve 220 `.map` template with worldspawn + floor brush + info_player_start, auto-opens in TrenchBroom.
 - **Log panel**: captures stdout/stderr from all spawned subprocesses, timestamped, scrollable.

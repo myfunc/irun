@@ -135,6 +135,8 @@ MCP console control:
 ```bash
 ivan-mcp --control-host 127.0.0.1 --control-port 7779
 ```
+- Cursor project MCP config lives in `../../.cursor/mcp.json` (relative to `apps/ivan`).
+- Full console/MCP command reference: `../../docs/console-control-and-mcp.md`.
 
 ## Main Menu
 Booting without `--map` starts in the main menu:
