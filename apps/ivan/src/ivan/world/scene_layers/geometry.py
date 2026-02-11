@@ -47,13 +47,13 @@ void main() {
 """
 
 
-def _configure_base_texture_sampling(tex: Texture, *, masked: bool) -> None:
+def _configure_base_texture_sampling(tex: Texture, *, masked: bool, pixelated: bool) -> None:
     """
     Use stable sampling for map materials to reduce fine-angle aliasing artifacts.
     """
     tex.setWrapU(Texture.WM_repeat)
     tex.setWrapV(Texture.WM_repeat)
-    if masked:
+    if masked or pixelated:
         tex.setMinfilter(Texture.FT_nearest)
         tex.setMagfilter(Texture.FT_nearest)
         return
@@ -257,7 +257,11 @@ def attach_triangle_map_geometry_v2_unlit(
             if tex_path and tex_path.exists():
                 tex = loader.loadTexture(Filename.fromOsSpecific(str(tex_path)))
                 if tex is not None:
-                    _configure_base_texture_sampling(tex, masked=mat_name.startswith("{"))
+                    _configure_base_texture_sampling(
+                        tex,
+                        masked=mat_name.startswith("{"),
+                        pixelated=bool(scene._pixelated_textures),
+                    )
                 tex_cache[mat_name] = tex
             else:
                 missing_cache.add(mat_name)
@@ -407,7 +411,11 @@ def attach_triangle_map_geometry_v2(scene: SceneLayerContract, *, loader, render
             if tex_path and tex_path.exists():
                 tex = loader.loadTexture(Filename.fromOsSpecific(str(tex_path)))
                 if tex is not None:
-                    _configure_base_texture_sampling(tex, masked=mat_name.startswith("{"))
+                    _configure_base_texture_sampling(
+                        tex,
+                        masked=mat_name.startswith("{"),
+                        pixelated=bool(scene._pixelated_textures),
+                    )
                 base_tex_cache[mat_name] = tex
             else:
                 base_tex_missing.add(mat_name)

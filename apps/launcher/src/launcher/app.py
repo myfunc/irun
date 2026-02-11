@@ -9,10 +9,32 @@ from pathlib import Path
 
 import dearpygui.dearpygui as dpg
 
-from launcher.actions import ProcessHandle, spawn_game, spawn_pack, spawn_trenchbroom
-from launcher.commands import CommandBus, EditMapCommand, PackMapCommand, PlayCommand, StopGameCommand
+from launcher.actions import (
+    ProcessHandle,
+    create_template_map,
+    spawn_generate_tb_textures,
+    spawn_game,
+    spawn_pack,
+    spawn_trenchbroom,
+    spawn_validate_pack,
+    sync_trenchbroom_profile,
+)
+from launcher.commands import (
+    AssignPackToMapCommand,
+    BuildPackCommand,
+    CommandBus,
+    CreateTemplateMapCommand,
+    DiscoverPacksCommand,
+    EditMapCommand,
+    GenerateTBTexturesCommand,
+    PlayCommand,
+    StopGameCommand,
+    SyncTBProfileCommand,
+    ValidatePackCommand,
+)
 from launcher.config import LauncherConfig, load_config, save_config
 from launcher.map_browser import MapEntry, scan_maps
+from launcher.pack_browser import PackEntry, scan_packs
 from launcher.runflow import (
     AdvancedOverrides,
     resolve_launch_plan,
@@ -21,6 +43,9 @@ from launcher.runflow import (
 _cfg: LauncherConfig = LauncherConfig()
 _map_entries: list[MapEntry] = []
 _selected_map: MapEntry | None = None
+_pack_entries: list[PackEntry] = []
+_selected_pack: PackEntry | None = None
+_assigned_pack: Path | None = None  # Pack path assigned to selected map for launch
 _processes: list[ProcessHandle] = []
 _log_lines: deque[str] = deque(maxlen=3000)
 _log_lock = threading.Lock()
@@ -28,10 +53,18 @@ _log_lock = threading.Lock()
 _TAG_LOG = "log_text"
 _TAG_MAP_LIST = "map_listbox"
 _TAG_SELECTED_LABEL = "selected_map_label"
+_TAG_PACK_LIST = "pack_listbox"
+_TAG_SELECTED_PACK_LABEL = "selected_pack_label"
+_TAG_ASSIGNED_LABEL = "assigned_pack_label"
 _TAG_BTN_PLAY = "btn_play"
-_TAG_BTN_PACK = "btn_pack"
 _TAG_BTN_STOP = "btn_stop"
 _TAG_BTN_EDIT = "btn_edit"
+_TAG_BTN_BUILD = "btn_build"
+_TAG_BTN_VALIDATE = "btn_validate"
+_TAG_BTN_ASSIGN = "btn_assign"
+_TAG_BTN_SYNC_TB = "btn_sync_tb"
+_TAG_BTN_GEN_TB_TEX = "btn_gen_tb_tex"
+_TAG_BTN_CREATE_TEMPLATE_MAP = "btn_create_template_map"
 
 _TAG_TB_EXE = "inp_tb_exe"
 _TAG_WAD_DIR = "inp_wad_dir"
@@ -77,25 +110,70 @@ def _refresh_maps() -> None:
     _update_buttons()
 
 
+def _refresh_packs() -> None:
+    global _pack_entries, _selected_pack
+    _pack_entries = scan_packs(_cfg.effective_maps_dir())
+    items = [f"{entry.name}  ({entry.age_label})" for entry in _pack_entries]
+    if dpg.does_item_exist(_TAG_PACK_LIST):
+        dpg.configure_item(_TAG_PACK_LIST, items=items)
+    if _pack_entries and _selected_pack is None:
+        _select_pack(0)
+    elif _selected_pack is not None:
+        for idx, entry in enumerate(_pack_entries):
+            if entry.path == _selected_pack.path:
+                if dpg.does_item_exist(_TAG_PACK_LIST):
+                    dpg.set_value(_TAG_PACK_LIST, items[idx] if items else "")
+                break
+    _update_buttons()
+
+
 def _select_map(idx: int) -> None:
-    global _selected_map
+    global _selected_map, _assigned_pack
     if 0 <= idx < len(_map_entries):
         _selected_map = _map_entries[idx]
         dpg.set_value(_TAG_SELECTED_LABEL, f"Selected: {_selected_map.name}")
+        _assigned_pack = None
+        _update_assigned_label()
     else:
         _selected_map = None
         dpg.set_value(_TAG_SELECTED_LABEL, "No map selected")
+        _assigned_pack = None
+        _update_assigned_label()
     _update_buttons()
+
+
+def _select_pack(idx: int) -> None:
+    global _selected_pack
+    if 0 <= idx < len(_pack_entries):
+        _selected_pack = _pack_entries[idx]
+        dpg.set_value(_TAG_SELECTED_PACK_LABEL, f"Selected: {_selected_pack.name}")
+    else:
+        _selected_pack = None
+        dpg.set_value(_TAG_SELECTED_PACK_LABEL, "No pack selected")
+    _update_buttons()
+
+
+def _update_assigned_label() -> None:
+    if not dpg.does_item_exist(_TAG_ASSIGNED_LABEL):
+        return
+    if _assigned_pack:
+        dpg.set_value(_TAG_ASSIGNED_LABEL, f"Launch pack: {Path(_assigned_pack).name}")
+    else:
+        dpg.set_value(_TAG_ASSIGNED_LABEL, "Launch: source .map")
 
 
 def _update_buttons() -> None:
     has_map = _selected_map is not None
+    has_pack = _selected_pack is not None
     has_tb = bool(_cfg.trenchbroom_exe) and Path(_cfg.trenchbroom_exe).is_file()
     game_running = any(p.alive and p.label == "IVAN Game" for p in _processes)
     dpg.configure_item(_TAG_BTN_PLAY, enabled=has_map and not game_running)
-    dpg.configure_item(_TAG_BTN_PACK, enabled=has_map)
     dpg.configure_item(_TAG_BTN_EDIT, enabled=has_map and has_tb)
     dpg.configure_item(_TAG_BTN_STOP, enabled=game_running)
+    if dpg.does_item_exist(_TAG_BTN_BUILD):
+        dpg.configure_item(_TAG_BTN_BUILD, enabled=has_map)
+    if dpg.does_item_exist(_TAG_BTN_ASSIGN):
+        dpg.configure_item(_TAG_BTN_ASSIGN, enabled=has_map and has_pack)
 
 
 def _save_settings_from_ui() -> None:
@@ -157,6 +235,7 @@ def _handle_play(cmd: PlayCommand) -> None:
     try:
         plan = resolve_launch_plan(
             selected_map=_selected_map.path if _selected_map is not None else None,
+            assigned_pack=_assigned_pack,
             use_advanced=cmd.use_advanced,
             advanced=_advanced_overrides_from_ui(),
         )
@@ -192,7 +271,7 @@ def _handle_stop_game(cmd: StopGameCommand) -> None:
     _update_buttons()
 
 
-def _handle_pack_map(cmd: PackMapCommand) -> None:
+def _handle_build_pack(cmd: BuildPackCommand) -> None:
     if _selected_map is None:
         return
     _save_settings_from_ui()
@@ -208,6 +287,78 @@ def _handle_pack_map(cmd: PackMapCommand) -> None:
         on_line=_on_process_line,
     )
     _processes.append(handle)
+    _update_buttons()
+
+
+def _handle_discover_packs(cmd: DiscoverPacksCommand) -> None:
+    _save_settings_from_ui()
+    _refresh_packs()
+    _log("Pack list refreshed.")
+
+
+def _handle_validate_pack(cmd: ValidatePackCommand) -> None:
+    _save_settings_from_ui()
+    _log("Running scope05 validation (demo pipeline)...")
+    handle = spawn_validate_pack(
+        python=_cfg.effective_python(),
+        ivan_root=_cfg.effective_ivan_root(),
+        on_line=_on_process_line,
+    )
+    _processes.append(handle)
+    _update_buttons()
+
+
+def _handle_assign_pack(cmd: AssignPackToMapCommand) -> None:
+    if _selected_map is None or _selected_pack is None:
+        return
+    global _assigned_pack
+    _assigned_pack = _selected_pack.path
+    _update_assigned_label()
+    _log(f"Assigned pack {_selected_pack.name} to map {_selected_map.name} for launch.")
+    _update_buttons()
+
+
+def _handle_sync_tb_profile(cmd: SyncTBProfileCommand) -> None:
+    _save_settings_from_ui()
+    msgs = sync_trenchbroom_profile(_cfg.effective_ivan_root())
+    for msg in msgs:
+        _log(msg)
+    _update_buttons()
+
+
+def _handle_generate_tb_textures(cmd: GenerateTBTexturesCommand) -> None:
+    _save_settings_from_ui()
+    _log("Generating TrenchBroom textures/manifest from assets...")
+    handle = spawn_generate_tb_textures(
+        python=_cfg.effective_python(),
+        ivan_root=_cfg.effective_ivan_root(),
+        on_line=_on_process_line,
+    )
+    _processes.append(handle)
+    _update_buttons()
+
+
+def _handle_create_template_map(cmd: CreateTemplateMapCommand) -> None:
+    _save_settings_from_ui()
+    if not _cfg.trenchbroom_exe or not Path(_cfg.trenchbroom_exe).is_file():
+        _log("Set a valid TrenchBroom executable path in Settings.")
+        _update_buttons()
+        return
+    try:
+        map_path = create_template_map(maps_dir=_cfg.effective_maps_dir())
+    except Exception as exc:
+        _log(f"Failed to create template map: {exc}")
+        _update_buttons()
+        return
+    _log(f"Created template map: {map_path}")
+    _refresh_maps()
+    handle = spawn_trenchbroom(
+        trenchbroom_exe=_cfg.trenchbroom_exe,
+        map_path=str(map_path),
+        on_line=_on_process_line,
+    )
+    _processes.append(handle)
+    _update_buttons()
 
 
 def _handle_edit_map(cmd: EditMapCommand) -> None:
@@ -244,7 +395,7 @@ def _cb_stop(sender, app_data) -> None:
 
 
 def _cb_pack(sender, app_data) -> None:
-    _dispatch(PackMapCommand())
+    _dispatch(BuildPackCommand())
 
 
 def _cb_edit(sender, app_data) -> None:
@@ -254,6 +405,43 @@ def _cb_edit(sender, app_data) -> None:
 def _cb_refresh(sender, app_data) -> None:
     _refresh_maps()
     _log("Map list refreshed.")
+
+
+def _cb_refresh_packs(sender, app_data) -> None:
+    _dispatch(DiscoverPacksCommand())
+
+
+def _cb_build(sender, app_data) -> None:
+    _dispatch(BuildPackCommand())
+
+
+def _cb_validate(sender, app_data) -> None:
+    _dispatch(ValidatePackCommand())
+
+
+def _cb_assign(sender, app_data) -> None:
+    _dispatch(AssignPackToMapCommand())
+
+
+def _cb_sync_tb(sender, app_data) -> None:
+    _dispatch(SyncTBProfileCommand())
+
+
+def _cb_generate_tb_textures(sender, app_data) -> None:
+    _dispatch(GenerateTBTexturesCommand())
+
+
+def _cb_create_template_map(sender, app_data) -> None:
+    _dispatch(CreateTemplateMapCommand())
+
+
+def _cb_pack_selected(sender, app_data) -> None:
+    items = dpg.get_item_configuration(_TAG_PACK_LIST).get("items", [])
+    try:
+        idx = items.index(app_data)
+    except (ValueError, IndexError):
+        idx = -1
+    _select_pack(idx)
 
 
 def _cb_clear_log(sender, app_data) -> None:
@@ -293,6 +481,7 @@ def _frame_update() -> None:
     if now - _last_refresh_time > _REFRESH_INTERVAL:
         _last_refresh_time = now
         _refresh_maps()
+        _refresh_packs()
 
     for process in list(_processes):
         if not process.alive:
@@ -316,38 +505,58 @@ def _build_ui() -> None:
                 dpg.add_table_column(width_stretch=True)
                 dpg.add_table_column(width_fixed=True, init_width_or_weight=36)
                 _settings_row("TrenchBroom exe", _TAG_TB_EXE, _cfg.trenchbroom_exe, directory=False)
-                _settings_row("WAD directory", _TAG_WAD_DIR, _cfg.wad_dir, directory=True)
-                _settings_row("Steam/HL root", _TAG_HL_ROOT, _cfg.hl_root, directory=True)
                 _settings_row("Maps directory", _TAG_MAPS_DIR, _cfg.maps_dir, directory=True)
                 _settings_row("Python exe", _TAG_PYTHON, _cfg.python_exe, directory=False)
+                _settings_row("Steam/HL root", _TAG_HL_ROOT, _cfg.hl_root, directory=True)
+                _settings_row("WAD dir (optional)", _TAG_WAD_DIR, _cfg.wad_dir, directory=True)
             dpg.add_spacer(height=4)
             dpg.add_button(label="Save Settings", callback=_cb_save_settings)
 
         dpg.add_spacer(height=6)
+        with dpg.collapsing_header(label="Pack Browser", default_open=True):
+            dpg.add_text("Pack-centric workflow: discover, build, validate, assign, sync.")
+            with dpg.group(horizontal=True):
+                dpg.add_text("Packs in: " + _cfg.effective_maps_dir())
+                dpg.add_button(label="Discover", callback=_cb_refresh_packs)
+            dpg.add_listbox(tag=_TAG_PACK_LIST, items=[], num_items=5, callback=_cb_pack_selected, width=-1)
+            dpg.add_text("No pack selected", tag=_TAG_SELECTED_PACK_LABEL)
+            dpg.add_text("Launch: source .map", tag=_TAG_ASSIGNED_LABEL)
+
+        dpg.add_spacer(height=4)
         with dpg.collapsing_header(label="Map Browser", default_open=True):
             with dpg.group(horizontal=True):
                 dpg.add_text("Maps in: " + _cfg.effective_maps_dir())
                 dpg.add_button(label="Refresh", callback=_cb_refresh)
-            dpg.add_listbox(tag=_TAG_MAP_LIST, items=[], num_items=8, callback=_cb_map_selected, width=-1)
+            dpg.add_listbox(tag=_TAG_MAP_LIST, items=[], num_items=5, callback=_cb_map_selected, width=-1)
             dpg.add_text("No map selected", tag=_TAG_SELECTED_LABEL)
 
         dpg.add_spacer(height=6)
-        with dpg.collapsing_header(label="Runflow", default_open=True):
-            dpg.add_text("1) Choose map, 2) launch.")
-            dpg.add_text("- One runtime path only: source .map + runtime lighting support.")
-            dpg.add_text("- Map lights and skybox are resolved at runtime (no launcher bake flow).")
-
-        dpg.add_spacer(height=4)
-        with dpg.collapsing_header(label="Primary Actions", default_open=True):
+        with dpg.collapsing_header(label="Primary Actions (pack-centric)", default_open=True):
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Build Pack", tag=_TAG_BTN_BUILD, callback=_cb_build)
+                _add_help_tooltip("Build selected .map into sibling .irunmap (dev-fast).")
+                dpg.add_button(label="Validate Pack", tag=_TAG_BTN_VALIDATE, callback=_cb_validate)
+                _add_help_tooltip("Run scope05 demo pipeline validation.")
+                dpg.add_button(label="Assign Pack", tag=_TAG_BTN_ASSIGN, callback=_cb_assign)
+                _add_help_tooltip("Use selected pack for launch instead of source .map.")
+                dpg.add_button(label="Sync TB Profile", tag=_TAG_BTN_SYNC_TB, callback=_cb_sync_tb)
+                _add_help_tooltip("Copy IVAN game config to TrenchBroom preferences.")
+                dpg.add_button(label="Generate Textures", tag=_TAG_BTN_GEN_TB_TEX, callback=_cb_generate_tb_textures)
+                _add_help_tooltip("Run sync_trenchbroom_profile.py to regenerate editor textures/manifest.")
+                dpg.add_button(
+                    label="New Map (Template)",
+                    tag=_TAG_BTN_CREATE_TEMPLATE_MAP,
+                    callback=_cb_create_template_map,
+                )
+                _add_help_tooltip("Create a short-named template map under assets/maps and open it in TrenchBroom.")
+            dpg.add_spacer(height=2)
             with dpg.group(horizontal=True):
                 dpg.add_button(label="  Launch  ", tag=_TAG_BTN_PLAY, callback=_cb_play)
-                _add_help_tooltip("Launch selected .map with runtime-first options.")
+                _add_help_tooltip("Launch selected map or assigned pack with runtime options.")
                 dpg.add_button(label="  Edit in TrenchBroom  ", tag=_TAG_BTN_EDIT, callback=_cb_edit)
                 _add_help_tooltip("Open selected .map in TrenchBroom.")
-                dpg.add_button(label="  Pack  ", tag=_TAG_BTN_PACK, callback=_cb_pack)
-                _add_help_tooltip("Build selected .map into sibling .irunmap.")
                 dpg.add_button(label="  Stop Game  ", tag=_TAG_BTN_STOP, callback=_cb_stop)
-                _add_help_tooltip("Terminate the active IVAN game process from this launcher.")
+                _add_help_tooltip("Terminate the active IVAN game process.")
 
         dpg.add_spacer(height=4)
         with dpg.collapsing_header(label="Launch + Pack Options", default_open=False):
@@ -379,8 +588,14 @@ def run_launcher() -> None:
     _cfg = load_config()
     _command_bus.register(PlayCommand, _handle_play)
     _command_bus.register(StopGameCommand, _handle_stop_game)
-    _command_bus.register(PackMapCommand, _handle_pack_map)
+    _command_bus.register(BuildPackCommand, _handle_build_pack)
     _command_bus.register(EditMapCommand, _handle_edit_map)
+    _command_bus.register(DiscoverPacksCommand, _handle_discover_packs)
+    _command_bus.register(ValidatePackCommand, _handle_validate_pack)
+    _command_bus.register(AssignPackToMapCommand, _handle_assign_pack)
+    _command_bus.register(SyncTBProfileCommand, _handle_sync_tb_profile)
+    _command_bus.register(GenerateTBTexturesCommand, _handle_generate_tb_textures)
+    _command_bus.register(CreateTemplateMapCommand, _handle_create_template_map)
 
     dpg.create_context()
     viewport_kw: dict = {
@@ -401,6 +616,7 @@ def run_launcher() -> None:
 
     _last_refresh_time = time.time()
     _refresh_maps()
+    _refresh_packs()
     _log("IVAN Launcher started.")
 
     while dpg.is_dearpygui_running():

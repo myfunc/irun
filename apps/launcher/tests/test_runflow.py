@@ -1,3 +1,4 @@
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -52,3 +53,32 @@ def test_launch_requires_selected_map() -> None:
 def test_pack_profile_is_fixed_to_dev_fast() -> None:
     assert sanitize_pack_profile("dev-fast") == "dev-fast"
     assert sanitize_pack_profile("prod-baked") == "dev-fast"
+
+
+def test_launch_uses_assigned_pack_when_set() -> None:
+    selected_map = Path("maps/demo/demo.map")
+    with tempfile.NamedTemporaryFile(suffix=".irunmap", delete=False) as f:
+        assigned_pack = Path(f.name)
+    try:
+        plan = resolve_launch_plan(
+            selected_map=selected_map,
+            assigned_pack=assigned_pack,
+            use_advanced=False,
+        )
+        assert str(plan.map_path) == str(assigned_pack)
+        assert plan.map_profile == DEFAULT_MAP_PROFILE
+    finally:
+        assigned_pack.unlink(missing_ok=True)
+
+
+def test_launch_uses_map_when_assigned_pack_missing() -> None:
+    selected_map = Path("maps/demo/demo.map")
+    assigned_pack = Path("maps/demo/missing.irunmap")  # non-existent
+
+    plan = resolve_launch_plan(
+        selected_map=selected_map,
+        assigned_pack=assigned_pack,
+        use_advanced=False,
+    )
+
+    assert plan.map_path.endswith("demo.map")

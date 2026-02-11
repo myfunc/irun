@@ -113,8 +113,9 @@ class RunnerDemo(ShowBase):
         loadPrcFileData("", "textures-power-2 none")
         loadPrcFileData("", "textures-square none")
         loadPrcFileData("", "textures-auto-power-2 0")
-        # Improve angle stability on high-frequency wall textures.
-        loadPrcFileData("", "texture-anisotropic-degree 8")
+        # Keep default mode crisp/pixelated; smooth mode can raise anisotropy.
+        anisotropic_degree = 1 if bool(getattr(cfg, "pixelated_textures", True)) else 8
+        loadPrcFileData("", f"texture-anisotropic-degree {int(anisotropic_degree)}")
         # Allow the user to resize the window by dragging its edges.
         loadPrcFileData("", "win-fixed-size 0")
         if cfg.smoke:
@@ -1290,6 +1291,7 @@ class RunnerDemo(ShowBase):
                 map_json=cfg_map_json,
                 map_profile=profile,
                 runtime_lighting=getattr(self.cfg, "runtime_lighting", None),
+                pixelated_textures=bool(getattr(self.cfg, "pixelated_textures", True)),
                 hl_root=self.cfg.hl_root,
                 hl_mod=self.cfg.hl_mod,
                 lighting=lighting_cfg if isinstance(lighting_cfg, dict) else None,
@@ -2685,6 +2687,7 @@ def run(
     map_json: str | None = None,
     map_profile: str = "auto",
     runtime_lighting: bool = False,
+    pixelated_textures: bool = True,
     hl_root: str | None = None,
     hl_mod: str = "valve",
     net_host: str | None = None,
@@ -2700,6 +2703,7 @@ def run(
             map_json=map_json,
             map_profile=map_profile,
             runtime_lighting=True if runtime_lighting else None,
+            pixelated_textures=bool(pixelated_textures),
             hl_root=hl_root,
             hl_mod=hl_mod,
             net_host=net_host,

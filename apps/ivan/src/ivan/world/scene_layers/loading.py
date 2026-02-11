@@ -7,6 +7,7 @@ from contextlib import nullcontext
 from panda3d.core import LVector3f
 
 from ivan.app_config import MAP_PROFILE_DEV_FAST
+from ivan.maps.resource_pack import MissingResourcePackAssetError, resolve_materials_from_resource_packs
 from ivan.world.loading_report import (
     LOAD_STAGE_GEOMETRY_BUILD_ATTACH,
     LOAD_STAGE_MAP_PARSE_IMPORT,
@@ -123,7 +124,37 @@ def try_load_external_map(scene: SceneLayerContract, *, cfg, map_json: Path, loa
 
     with _stage_timer(scene, LOAD_STAGE_MATERIAL_SKY_FOG_RESOLVE):
         scene._material_texture_index = None
-        scene._material_texture_root = scene._resolve_material_root(map_json=map_json, payload=payload)
+        scene._material_texture_root = None
+        resource_packs = payload.get("resource_packs")
+        asset_bindings = payload.get("asset_bindings")
+        if (
+            isinstance(resource_packs, list)
+            and resource_packs
+            and isinstance(asset_bindings, dict)
+            and asset_bindings
+        ):
+            try:
+                scene._material_texture_index = resolve_materials_from_resource_packs(
+                    resource_packs=resource_packs,
+                    asset_bindings=asset_bindings,
+                    map_json=map_json,
+                )
+                ref_materials = {
+                    str(t.get("m")).replace("\\", "/").casefold()
+                    for t in triangles
+                    if isinstance(t, dict) and isinstance(t.get("m"), str)
+                }
+                missing = ref_materials - set(scene._material_texture_index or ())
+                if missing:
+                    raise MissingResourcePackAssetError(
+                        asset_id="",
+                        missing_materials=sorted(missing),
+                    )
+            except MissingResourcePackAssetError as e:
+                print(f"[IVAN] Map load failed: {e}")
+                return False
+        else:
+            scene._material_texture_root = scene._resolve_material_root(map_json=map_json, payload=payload)
     try:
         s = float(payload.get("scale") or 1.0)
         scene._map_scale = s if s > 0.0 else 1.0
@@ -219,7 +250,11 @@ def try_load_external_map(scene: SceneLayerContract, *, cfg, map_json: Path, loa
 
 
 def try_load_map_file(scene: SceneLayerContract, *, map_file: Path, loader, render, camera) -> bool:
-    """Load source `.map` directly for fast edit->run iteration."""
+    """Load source `.map` directly for fast edit->run iteration (offline tooling).
+
+    WAD is used here only as optional offline tooling input. The runtime map loading
+    path (map.json/.irunmap) never reads WAD textures; it uses resource_packs.
+    """
     from ivan.maps.bundle_io import _default_materials_dirs, _default_wad_search_dirs
     from ivan.maps.map_converter import convert_map_file
     from ivan.state import state_dir

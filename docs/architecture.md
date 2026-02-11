@@ -420,10 +420,12 @@ Bundle storage formats:
 - **Packed bundle** (default): a single `.irunmap` file (zip archive) containing `map.json` at the archive root plus the same folder layout.
   - Runtime extracts `.irunmap` bundles to a local cache under `~/.irun/ivan/cache/bundles/<hash>/` before loading assets.
 
+**Resource packs** (`.irunres`): shared texture packs referenced by maps. When `map.json` has `resource_packs` and `asset_bindings`, runtime resolves assets by stable `asset_id`. Cache: `~/.irun/ivan/cache/resource_packs/<hash>/`. See ADR 0009.
+
 Level editing uses **TrenchBroom** as the external editor. `.map` files (Valve 220 format) are the **primary authoring format** for IVAN-original maps. The engine can load `.map` files directly — no BSP compilation step is needed for development.
 
 TrenchBroom game configuration files live in `apps/ivan/trenchbroom/`:
-- `GameConfig.cfg`: TrenchBroom game definition (Valve 220 format, WAD textures, editor tags)
+- `GameConfig.cfg`: TrenchBroom game definition (Valve 220 format, loose textures in `textures_tb`, editor tags)
 - `ivan.fgd`: Entity definitions (spawns, triggers, lights, light_spot, env_fog, brush entities with `_phong` / `_phong_angle` support)
 - `README.md`: Setup instructions for installing the IVAN game profile into TrenchBroom
 
@@ -477,7 +479,7 @@ Two profiles control the trade-off between fast iteration and production quality
 
 #### Primary Authoring Flow (.map)
 
-1. **Direct .map loading** (fastest): TrenchBroom saves a `.map` file → IVAN loads it directly at runtime (parser → CSG half-plane clipping → triangulated mesh). Textures from WAD files. Lighting is flat ambient (no bake). Save in TrenchBroom, reload in-game; optional steps can be skipped.
+1. **Direct .map loading** (fastest): TrenchBroom saves a `.map` file → IVAN loads it directly at runtime (parser → CSG half-plane clipping → triangulated mesh). Textures from WAD files when present; fallback to loose textures in `assets/textures_tb` and map-local `textures/` folder when WADs are absent (so textures visible in TrenchBroom can appear in-game). Lighting is flat ambient (no bake). Save in TrenchBroom, reload in-game; optional steps can be skipped. Launcher **Sync TB Profile** installs GameConfig/FGD and sets `Games/IVAN/Path` so TrenchBroom does not fallback to defaults.
 2. **Pack workflow**: `.map` → `tools/pack_map.py` → `.irunmap` bundle (no lightmaps). Use `--profile dev-fast` for fast pack, `--profile prod-baked` for compressed archives.
 3. **Bake workflow** (production): `.map` → ericw-tools (qbsp → vis → light) → `.bsp` → GoldSrc importer → `.irunmap` bundle with baked lightmaps. Use `tools/bake_map.py`; `--profile dev-fast` skips vis/light by default, `--profile prod-baked` runs full vis+light.
 4. **Legacy BSP import**: `.bsp` → GoldSrc/Source importer → `.irunmap` bundle (unchanged).

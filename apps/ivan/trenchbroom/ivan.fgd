@@ -8,27 +8,27 @@
 
 @baseclass = BaseEntity
 [
-    "targetname"(string) : "Name"
+    targetname(string) : "Name"
 ]
 
 @baseclass = PhongSupport
 [
-    "_phong"(choices) : "Phong smooth normals" : 0 =
+    _phong(choices) : "Phong smooth normals" : 0 =
     [
         0 : "Disabled"
         1 : "Enabled"
     ]
-    "_phong_angle"(integer) : "Phong angle threshold" : 89
+    _phong_angle(integer) : "Phong angle threshold" : 89
 ]
 
 @baseclass = Targetable
 [
-    "target"(string) : "Target entity"
+    target(string) : "Target entity"
 ]
 
 @baseclass = Angle
 [
-    "angle"(integer) : "Facing angle" : 0
+    angle(integer) : "Facing angle" : 0
 ]
 
 // ---------------------------------------------------------------------------
@@ -37,12 +37,12 @@
 
 @SolidClass base(BaseEntity, PhongSupport) = worldspawn : "World entity"
 [
-    "wad"(string) : "WAD file paths"
-    "skyname"(string) : "Skybox name"
-    "message"(string) : "Map title"
-    "fogstart"(integer) : "Fog start distance" : 64
-    "fogend"(integer) : "Fog end distance" : 1024
-    "fogcolor"(color255) : "Fog color" : "128 128 128"
+    wad(string) : "WAD file paths"
+    skyname(string) : "Skybox name"
+    message(string) : "Map title"
+    fogstart(integer) : "Fog start distance" : 64
+    fogend(integer) : "Fog end distance" : 1024
+    fogcolor(color255) : "Fog color" : "128 128 128"
 ]
 
 // ---------------------------------------------------------------------------
@@ -75,7 +75,7 @@
 
 @SolidClass base(BaseEntity, Targetable) color(255 255 0) = trigger_checkpoint : "Course checkpoint trigger"
 [
-    "order"(integer) : "Checkpoint order" : 0
+    order(integer) : "Checkpoint order" : 0
 ]
 
 @SolidClass base(BaseEntity, Targetable) color(128 0 128) = trigger_teleport : "Teleport trigger"
@@ -104,10 +104,10 @@
 
 @PointClass base(BaseEntity) size(-8 -8 -8, 8 8 8) color(255 255 128) = light : "Point light"
 [
-    "_light"(string) : "R G B I (color + intensity)" : "255 255 255 200"
-    "light"(integer) : "Brightness" : 200
-    "_color"(color255) : "Light color" : "255 255 255"
-    "style"(choices) : "Light style" : 0 =
+    _light(string) : "R G B I (color + intensity)" : "255 255 255 200"
+    light(integer) : "Brightness" : 200
+    _color(color255) : "Light color" : "255 255 255"
+    style(choices) : "Light style" : 0 =
     [
         0 : "Normal"
         1 : "Flicker A"
@@ -126,28 +126,28 @@
 
 @PointClass base(BaseEntity) size(-8 -8 -8, 8 8 8) color(255 255 200) = light_environment : "Directional sun light"
 [
-    "_light"(string) : "R G B I (color + intensity)" : "255 255 255 200"
-    "light"(integer) : "Brightness" : 200
-    "_color"(color255) : "Light color" : "255 255 255"
-    "pitch"(integer) : "Sun pitch angle" : 0
-    "angle"(integer) : "Sun yaw angle" : 0
+    _light(string) : "R G B I (color + intensity)" : "255 255 255 200"
+    light(integer) : "Brightness" : 200
+    _color(color255) : "Light color" : "255 255 255"
+    pitch(integer) : "Sun pitch angle" : 0
+    angle(integer) : "Sun yaw angle" : 0
 ]
 
 @PointClass base(BaseEntity) size(-8 -8 -8, 8 8 8) color(255 220 128) = light_spot : "Spotlight"
 [
-    "_light"(string) : "R G B I (color + intensity)" : "255 255 255 200"
-    "light"(integer) : "Brightness" : 200
-    "_color"(color255) : "Light color" : "255 255 255"
-    "_cone"(integer) : "Inner cone angle" : 0
-    "_cone2"(integer) : "Outer cone angle" : 45
-    "_fade"(float) : "Falloff fade" : 1.0
-    "_falloff"(choices) : "Falloff type" : 0 =
+    _light(string) : "R G B I (color + intensity)" : "255 255 255 200"
+    light(integer) : "Brightness" : 200
+    _color(color255) : "Light color" : "255 255 255"
+    _cone(integer) : "Inner cone angle" : 0
+    _cone2(integer) : "Outer cone angle" : 45
+    _fade(float) : "Falloff fade" : "1.0"
+    _falloff(choices) : "Falloff type" : 0 =
     [
         0 : "Default"
         1 : "Linear"
         2 : "Inverse square"
     ]
-    "style"(choices) : "Light style" : 0 =
+    style(choices) : "Light style" : 0 =
     [
         0 : "Normal"
         1 : "Flicker A"
@@ -166,7 +166,7 @@
 
 @PointClass base(BaseEntity) size(-8 -8 -8, 8 8 8) color(180 200 220) = env_fog : "Distance fog"
 [
-    "fogstart"(integer) : "Fog start distance" : 64
-    "fogend"(integer) : "Fog end distance" : 1024
-    "fogcolor"(color255) : "Fog color" : "128 128 128"
+    fogstart(integer) : "Fog start distance" : 64
+    fogend(integer) : "Fog end distance" : 1024
+    fogcolor(color255) : "Fog color" : "128 128 128"
 ]

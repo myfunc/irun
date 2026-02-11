@@ -36,10 +36,57 @@ class StopGameCommand:
 
 
 @dataclass(frozen=True)
-class PackMapCommand:
+class EditMapCommand:
+    pass
+
+
+# ── Pack-centric commands ─────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class DiscoverPacksCommand:
+    """Refresh pack list from maps directory."""
+
     pass
 
 
 @dataclass(frozen=True)
-class EditMapCommand:
+class BuildPackCommand:
+    """Build selected .map into .irunmap pack."""
+
+    pass
+
+
+@dataclass(frozen=True)
+class ValidatePackCommand:
+    """Run scope05 validation on demo pipeline (builds + validates demo.irunmap)."""
+
+    pass
+
+
+@dataclass(frozen=True)
+class AssignPackToMapCommand:
+    """Assign selected pack to selected map for launch (use pack instead of source)."""
+
+    pass
+
+
+@dataclass(frozen=True)
+class SyncTBProfileCommand:
+    """Copy IVAN game config to TrenchBroom preferences directory."""
+
+    pass
+
+
+@dataclass(frozen=True)
+class GenerateTBTexturesCommand:
+    """Generate TrenchBroom textures/manifest from assets."""
+
+    pass
+
+
+@dataclass(frozen=True)
+class CreateTemplateMapCommand:
+    """Create a new map from template and open it in TrenchBroom."""
+
     pass

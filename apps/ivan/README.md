@@ -32,6 +32,7 @@ python -m ivan
 
 Default boot:
 - `python -m ivan` now boots into the **main menu**.
+- Base texture filtering is **pixelated (nearest)** by default; pass `--smooth-textures` to disable it.
 - The menu includes `Quick Start: Bounce` if either:
   - `assets/imported/halflife/valve/bounce/map.json` (directory bundle), or
   - `assets/imported/halflife/valve/bounce.irunmap` (packed bundle)
@@ -359,6 +360,15 @@ Notes:
   (step + slide with plane clipping) for stable wall/ceiling/slope handling.
 - The Source build step converts `materials/**/*.vtf` into PNG so Panda3D can load them.
 - Map bundles include per-triangle materials, UVs, and optional vertex colors (used as a baked lighting tint/fallback).
+
+### TrenchBroom Profile Sync
+Generate editor-consumable outputs from resource-pack manifests (WADs, maps, PNG textures):
+
+```bash
+python tools/sync_trenchbroom_profile.py
+```
+
+Outputs: `trenchbroom/generated/manifest.json`, `editor_paths.json`, `textures/` (direct-folder PNGs, no WAD generation). See `trenchbroom/README.md` for setup.
 
 ### TrenchBroom `.map` -> GoldSrc BSP -> Bundle
 Use this when you author geometry in TrenchBroom (Half-Life / Valve220 map format) and want one command to compile

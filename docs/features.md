@@ -314,7 +314,7 @@
   - profile-aware visibility culling: dev-fast off (permissive); prod-baked can enable via run.json
   - map payload lights and fog (ADR 0007): pack_map and BSP importer include `lights`; optional `fog` from worldspawn/env_fog; TrenchBroom FGD: light_spot, env_fog
 - Ivan: runtime `light_spot` entities now use Panda3D spotlights in runtime-lighting paths (cone from `outer_cone`, orientation from map angles/pitch) instead of point-light fallback
-- Ivan: TrenchBroom integration — direct `.map` file loading (Valve 220 format), brush CSG-to-mesh conversion, WAD textures
+- Ivan: TrenchBroom integration — direct `.map` file loading (Valve 220 format), brush CSG-to-mesh conversion, WAD textures or fallback loose textures (`assets/textures_tb`, map-local `textures/`)
 - Ivan: Valve 220 UV parity fix for direct `.map` loading — texture shift/align now matches TrenchBroom when per-face texture scale is not 1:1
 - Ivan: Material definition system (`.material.json`) for PBR properties (normal, roughness, metallic, emission) alongside WAD textures
 - Ivan: Phong smooth normals on brush geometry (`_phong` / `_phong_angle` entity properties in FGD)
@@ -325,9 +325,9 @@
   - Settings panel: configure WAD directory, Steam/HL root, maps directory, python executable
   - Map browser: recursive `.map` file discovery sorted by modification time with auto-refresh
   - Guided runtime-first runflow: select map -> launch (selected source `.map`)
-  - Primary actions: `Launch`, `Pack`, `Stop Game` (options are collapsed by default)
+  - Primary actions: Build Pack, Validate Pack, Assign Pack, Sync TB Profile, Generate Textures, New Map (Template), Launch, Edit in TrenchBroom, Stop Game (options are collapsed by default)
   - Launch path is fixed to `dev-fast` runtime mode with optional `watch` and `runtime-lighting` toggles
-  - Pack path is fixed to `dev-fast` profile (no profile selector in launcher)
+  - Build Pack path is fixed to `dev-fast` profile (no profile selector in launcher)
   - Help tooltips on major launcher controls
   - Launcher UI actions route through typed command handlers (single dispatch path)
   - Live log panel capturing subprocess stdout/stderr
