@@ -37,11 +37,16 @@ See: `docs/ui-kit.md`.
   - `apps/ivan/src/ivan/game/tuning_profiles.py`: tuning profile defaults + persistence helpers
   - `apps/ivan/src/ivan/game/input_system.py`: mouse/keyboard sampling + input command helpers
   - `apps/ivan/src/ivan/game/combat_system.py`: offline combat sandbox orchestration (weapon slot state, per-slot cooldowns, and impulse-style firing actions, including travel-scaled blink carry and close-impact slam rebound tuning)
-  - `apps/ivan/src/ivan/game/transport_system.py`: transport mode runtime (`planer` on slot `5`, `skateboard` on slot `6`) and per-tick movement overrides
   - `apps/ivan/src/ivan/game/combat_fx.py`: weapon presentation layer (first-person weapon kick animation, slot-specific weapon view meshes, per-slot particles/tracers, slot-specific world-hit confirm effects, impact shockwaves, and fire/impact view-punch feedback)
+  - `apps/ivan/src/ivan/game/time_trial_markers.py`: world-space checkpoint marker visuals for race/time_trial mode (GTA-style circular rings)
   - `apps/ivan/src/ivan/game/audio_system.py`: synthesized SFX runtime (weapon/grapple/footstep audio + per-slot impact layers, volume controls, local audio asset cache)
   - `apps/ivan/src/ivan/game/feel_diagnostics.py`: rolling frame/tick diagnostics buffer and JSON dump utility for movement feel analysis
   - `apps/ivan/src/ivan/game/determinism.py`: per-tick quantized state hashing + rolling determinism trace buffer
+- `apps/ivan/src/ivan/games/`: game-session framework (race V1 offline + multiplayer authority wiring)
+  - `race_runtime.py`: race session state machine (lobby/intro/countdown/running/finished), ordered checkpoint progression, and shared payload serialization helpers used by client/server
+  - `markers.py`: mission/course ring rendering for editor and runtime states
+  - `mode_picker_ui.py`: UI kit mode picker used by in-world editor flow
+  - `ui_feedback.py`: race notifications and screen-flash feedback layer
 - `apps/ivan/src/ivan/game/camera_observer.py`: read-only camera smoothing observer over solved simulation state
   - Also smooths read-only camera roll targets (used for wallrun engagement tilt) without mutating simulation.
 - `apps/ivan/src/ivan/game/camera_tilt_observer.py`: read-only movement/wallrun camera tilt observer
@@ -173,14 +178,26 @@ See: `docs/ui-kit.md`.
 - Multiplayer networking:
   - TCP bootstrap for join/session token assignment.
   - Bootstrap welcome includes server map reference (`map_json`) so connecting clients can auto-load matching content.
+  - Client connect path normalizes server map references by rebasing host absolute app paths onto local `apps/ivan` roots and searching local asset roots by filename before loading.
+  - If no local map resolution is possible, client rejects the connection with explicit map-availability status (prevents mixed-map simulation/render states).
   - Bootstrap welcome includes per-player authoritative spawn + yaw so clients can align immediately on join.
   - Dedicated/embedded server supports direct `.map` authoring inputs by converting the map for authoritative spawn/collision at startup (same scale/spawn offset parity as client runtime map loading).
   - `.map` host startup is fail-fast: conversion errors or empty collision results raise and abort host startup (no silent empty-world server fallback).
   - Embedded host handoff seeds authoritative spawn from current local player transform when host mode is toggled mid-run (prevents forced map-start respawn on host open).
+  - Embedded-host runtime spawn override is host-only; subsequent joiners spawn from authoritative map/default spawn offsets.
+  - Server validates spawn candidates against finite/bounds checks and falls back to authoritative base spawn when invalid.
   - Per-player spawn assignment applies deterministic small ring offsets for later joins so multiple clients do not overlap one spawn point.
+  - Spawn/teleport assignment also validates local collision support (ground/solid probe) and performs nearby fallback search to avoid join-time or race-intro teleports into unsupported void pockets.
   - Bootstrap welcome also includes tuning ownership (`can_configure`) and initial authoritative tuning snapshot/version.
   - UDP packets for gameplay input and world snapshots.
+  - Input packet includes mission interaction edge (`ip`) for authoritative game-session actions (for example mission marker `F` interactions).
+  - Mission-marker interaction also uses a reliable TCP control message (`interact`) so start/join events are not lost on dropped UDP frames.
   - Snapshot replication runs at `30 Hz` to reduce visible interpolation stutter.
+  - Snapshot payload now carries game-session replication lanes:
+    - `games_v` + `games` (versioned definitions)
+    - `game_state` (authoritative session state)
+    - `game_events` (sequenced event deltas)
+  - Race session authority is on the server; connected clients mirror state/events and do not advance local race authority.
   - Server simulates movement authoritatively at `60 Hz`; clients use prediction + reconciliation for local player and snapshot-buffer interpolation for remote players.
   - Server broadcasts authoritative tuning snapshot/version in UDP snapshots; clients apply updates in-flight.
   - Only server config owner may submit tuning updates; non-owner clients are read-only for runtime config.
@@ -190,10 +207,14 @@ See: `docs/ui-kit.md`.
   - Connected clients skip local kill-plane auto-respawn; death/respawn stays server-authoritative.
   - Player snapshots include respawn sequence (`rs`) to force immediate authoritative client reset after respawn events.
   - Local reconciliation uses sequence-based prediction history: rollback to authoritative acked state, replay unacked inputs, then apply short visual error decay.
+  - Client noclip key toggles are blocked during multiplayer gameplay (outside local host editor flow) to avoid non-authoritative movement divergence.
   - Movement authority stays deterministic and code-first (Bullet remains collision/query layer only), which keeps advanced movement mechanics and multiplayer reconciliation aligned.
   - Replay during reconciliation runs without per-step render snapshot pushes; a single snapshot is captured after replay completes to reduce jitter/perf spikes.
   - Local first-person render path uses a short camera shell smoothing layer in online mode; reconciliation offsets are not applied directly to the camera.
   - Remote interpolation delay is adaptive (derived from observed snapshot interval mean/stddev), and server-tick estimation uses smoothed offset tracking.
+  - Remote player render proxies are white and scaled from player collision hull dimensions for consistent visibility/readability.
+  - Client snapshot ingestion emits one-time join notifications when newly observed remote player IDs appear.
+  - Critical runtime exceptions are persisted to `~/.irun/ivan/logs/critical.log` in addition to in-game error console reporting.
   - Server snapshot replication supports AOI relevance filtering on GoldSrc bundles when visibility cache exists:
     - uses the same `visibility.goldsrc.json`/leaf VIS data model as render culling
     - includes local player unconditionally in each client snapshot stream
@@ -261,7 +282,9 @@ See: `docs/ui-kit.md`.
   - mouse center-snap look capture is automatically suspended when the window is unfocused/minimized and resumes with a one-frame recenter guard on focus return.
   - combat sandbox controls:
     - weapon slot select: `1`, `2`, `3`, `4`
-    - transport slot select: `5` (`planer`), `6` (`skateboard`)
+    - game editor toggle: `V` (enables noclip while editor is active; host/config-owner only in multiplayer)
+    - editor interaction key: `F` (open mode picker / mission marker interact; mission interaction is server-authoritative online)
+    - race editor placement (after selecting race): `1` start, `2` checkpoint, `3` finish
     - fire current slot: `LMB` / `mouse1`
     - grapple action: `RMB` / `mouse3` (edge-triggered attach/detach)
     - slot `1`: blink teleport to aimed line-of-sight point
@@ -271,8 +294,9 @@ See: `docs/ui-kit.md`.
     - slot `1` blink now scales exit carry from teleport travel distance; slide-held fire can bias a lateral exit line
     - slot `2` slam now adds close-surface rebound impulse for high-commit launch/redirection lines
     - short combo window adds temporary movement sustain/burst during rapid chains
-    - slot `5` `planer`: throttle (`W/S`), turn (`A/D`), arrows for pitch/yaw, roll (`Q/E`)
-    - slot `6` `skateboard`: movement-controller-assisted ground glide/boost mode
+    - race HUD helper: hold `Tab` to show best local times while race/time_trial mode is active
+    - race runtime now supports mission marker -> intro -> countdown -> go flow with movement freeze during intro/countdown
+    - race finish requires ordered checkpoint progression before finish trigger is accepted
     - per-slot visuals: first-person kick animation + procedural particle bursts + visible projectile tracers; all slots now have explicit world-hit confirm cues, while heavy impacts add shockwave rings and stronger explosion debris layering
   - pause Settings tab includes keybind controls and volume sliders (`Master`, `SFX`).
   - movement/input key sampling resolves physical lanes via runtime keyboard-map/raw fallback (including `WASD`, `Q/E`, and slot digits), plus common non-US symbol aliases (for example RU/UA/AZERTY), so controls keep working while typing layout changes.
@@ -287,7 +311,7 @@ See: `docs/ui-kit.md`.
   - Route compare can also emit baseline + route-history context files for longer tuning sessions.
   - Replay playback shows a dedicated replay input HUD and keeps gameplay/menu inputs locked until exit (`R`).
   - Replay input HUD prefers explicitly recorded held states (`WASD`, `Q/E`, arrows, mouse buttons) over derived movement axes.
-  - Replay input frames now also store slot switch events (`ws`, range `1-6`) and explicit `Q/E` held flags (`kq`, `ke`) so slot/transport-assisted movement behavior replays deterministically.
+  - Replay input frames store slot switch events (`ws`, range `1-6`) and explicit held-state flags for layout-agnostic troubleshooting/replay HUD.
   - `F2` input debug overlay includes rolling gameplay-feel telemetry (for movement/camera tuning passes).
   - Gameplay UI roots use explicit layer ordering (HUD < overlays < menus < console) configured in `RunnerDemo._configure_ui_layers()`; this avoids creation-order-dependent overlap.
   - Gameplay movement step supports optional noclip mode, optional autojump queueing, surf behavior on configured slanted surfaces, and grapple-rope constraint movement.
@@ -516,9 +540,12 @@ Ivan supports **game modes** as small plugins that define "rules around the move
 the core player controller or rendering loop.
 
 Mode selection is driven by optional per-bundle metadata:
-- File: `<bundle>/run.json` (sits next to `map.json`)
+- Storage:
+  - directory bundle: `<bundle>/run.json` (next to `map.json`)
+  - packed bundle: `<bundle>.run.json` sidecar
+  - `.map` source file: `<map-file>.run.json` sidecar
 - Fields:
-  - `mode`: mode id (`free_run`, `time_trial`, or `some.module:ClassName`)
+  - `mode`: mode id (`free_run`, `time_trial`/`race`, or `some.module:ClassName`)
   - `config`: mode-specific configuration (JSON object)
   - `spawn`: optional spawn override `{ "position": [x, y, z], "yaw": deg }`
   - `visibility`: optional visibility/culling config (JSON object)
@@ -528,20 +555,58 @@ Mode selection is driven by optional per-bundle metadata:
 
 Built-in modes:
 - `free_run`: default "just run around"
-- `time_trial`: local time trial (Start/Finish volumes, restart, local PB + local leaderboard)
+- `time_trial` (alias: `race`): local race mode (Start/Finish checkpoints, restart, local PB + local leaderboard)
 
 ## Time Trial (Local Mode)
 `time_trial` is currently **local-only**:
-- Course is defined by **Start** and **Finish** AABB volumes (provided via `run.json` `config`).
+- Course is defined by **Start** and **Finish** checkpoints.
+  - Preferred format: cylindrical checkpoints in `run.json` as `start_circle` / `finish_circle` (`center`, `radius`, `half_z`).
+  - Backward compatibility: legacy `start_aabb` / `finish_aabb` are still accepted.
 - Runs are persisted in the user state file (`~/.irun/ivan/state.json`) keyed by `map_id`.
 - Optional dev helper: if a bundle does not provide Start/Finish yet, the player can set them locally:
   - `Shift+F4`: restart (respawn + cancel attempt)
-  - `F5`: set Start marker at current player position
-  - `F6`: set Finish marker at current player position
+  - `5`: set Start marker at current player position
+  - `6`: set Finish marker at current player position
+  - `F5` / `F6`: legacy aliases for Start/Finish marker placement
   - `F7`: clear local course markers
   - `F8`: export Start/Finish into `<bundle>/run.json`
   - `F9`: export spawn override into `<bundle>/run.json`
+  - Hold `Tab` while in race mode to display the local best-times leaderboard.
+  - Runtime visuals render checkpoints as translucent GTA-style circular rings for readability.
   - Marker size is controlled by tuning fields (`course_marker_half_extent_xy`, `course_marker_half_extent_z`).
+
+## Games Module (Race V1 Landed)
+
+To support multiple online mission types without growing `RunnerDemo` and `net/server.py` into mode-specific god files,
+the project now has a dedicated `ivan.games` package with clear boundaries:
+
+- `contracts`: shared static/runtime data contracts (definitions, sessions, per-player progress, event stream).
+- `serialization`: `run.json` read/write for `games.definitions` plus legacy conversion from `time_trial` course metadata.
+- `editor`: in-world authoring flow (`V` editor toggle, `F` mode picker, `1/2/3` marker placement for race).
+- `runtime`: authoritative game-session state machine (idle/lobby/intro/countdown/running/finished).
+- `race`: ordered-checkpoint race logic (start, checkpoints, finish, timer semantics).
+- `markers` and UI adapters: mission/checkpoint visuals and mode-picker UI wiring via `apps/ui_kit`.
+
+Current implementation scope:
+
+- race session runtime is implemented and wired into `RunnerDemo` (`V` editor flow, mission marker interaction, intro/countdown/go, ordered checkpoints, and feedback hooks).
+- multiplayer authority for race sessions is implemented:
+  - server owns race state transitions and ordered checkpoint progression.
+  - clients send mission interact edge (`F`) and render mirrored authoritative state/events.
+  - snapshots replicate versioned game definitions/state/event deltas.
+  - countdown freeze is authoritative; race timer starts only on `GO`.
+  - active races keep a stable participant set; late mission interaction does not inject new racers mid-run.
+  - finished-session restart begins from a fresh lobby starter set to the interacting player (no stale participant carry-over).
+- editor mutation authority is host/config-owner only in multiplayer.
+
+Next steps:
+
+- add additional mission/game types on top of the same contracts/runtime boundaries.
+- harden multiplayer game-session UX and abuse resistance (interaction cooldowns, reconnect behavior, lobby feedback).
+
+Design and rollout details are tracked in:
+
+- `docs/brainstorm/tech/2026-02-11_networked-games-module-editor-race-v1.md`
 
 ## Competitive Integrity (Planned)
 For speedrun/time-trial workflows we want runs to be comparable and verifiable across map updates.

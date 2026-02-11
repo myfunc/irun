@@ -9,7 +9,7 @@
 - Ivan: debug profile manager with default presets (`surf_bhop_c2`, `surf_bhop`, `bhop`, `surf`, `surf_sky2_server`), immediate per-profile setting restore on switch, and persistent custom profile saves
 - Ivan: in-game menu on `Esc` (Resume, Map Selector, Settings, Back to Main Menu, Quit)
 - Ivan: debug/admin panel moved to `` ` `` (tilde/backtick)
-- Ivan: rebindable noclip toggle (default `V`) via in-game Settings tab
+- Ivan: rebindable noclip toggle (default `N`) via in-game Settings tab
 - Ivan: in-game menu/debug UI block gameplay input but keep simulation running (no pause)
 - Ivan: classic center crosshair (Half-Life/CS style) visible during active gameplay
 - Ivan: layout-agnostic movement/input lane detection (runtime keyboard-map/raw fallback for physical lanes including `WASD` and `Q/E`, with non-US symbol aliases and arrow fallback)
@@ -165,7 +165,7 @@
 - Ivan: wall-jump is gated to airborne state (grounded wall contact cannot trigger wall-jump)
 - Ivan: autojump queues only while grounded (prevents airborne corner wall-jump retriggers)
 - Ivan: input-only demo recording/replay pipeline
-  - recording starts on spawn/respawn and can be saved with `F`
+  - recording starts on spawn/respawn and can be saved with `K`
   - saved demos are stored in-repo under `apps/ivan/replays/`
   - replay browser available from `Esc -> Replays`
   - playback re-simulates recorded per-tick input at fixed `60 Hz`
@@ -215,13 +215,22 @@
   - if the local host port is already in use, host-toggle now fails fast and does not auto-connect to an unknown existing local server
   - ESC menu `Multiplayer` tab supports runtime server join via host/port input plus Connect/Disconnect controls
   - joining a server auto-loads the server map on the client before multiplayer session starts
+  - client map resolution now rebases host absolute map paths (for example `.../apps/ivan/assets/...`) into local app paths and falls back to local asset filename search
+  - if server map cannot be resolved locally, connect now fails with explicit status instead of silently continuing with mismatched map state
   - client now applies welcome spawn/yaw immediately on successful connect to avoid large first-frame correction teleports
   - when opening local host mode mid-run (`Open To Network`), embedded server now seeds local-player spawn from current live player position/yaw to avoid forced teleport back to map start
   - additional joining players spawn with small offsets around the authoritative spawn base (prevents all players overlapping one point when map spawn fallback is used)
+  - runtime host spawn override is host-only; newly joining players always use authoritative map/default spawn offsets instead of host transient position (prevents out-of-bounds joins)
+  - server-side spawn safety checks now reject non-finite/out-of-bounds spawn candidates and fallback to authoritative base spawn
+  - server spawn safety now also validates collision support under spawn/teleport targets and searches nearby safe fallbacks before assigning late-join/race-teleport positions
   - hosting while running a direct TrenchBroom `.map` now uses converted `.map` spawn/collision data on the authoritative server (prevents empty-world respawn loops/void teleports in host mode)
   - direct `.map` host startup now fails explicitly if conversion cannot produce a valid collision mesh (no silent broken-world fallback)
   - host-opened server starts with host client tuning (no config reset on open-to-network)
   - dedicated server defaults to `surf_bhop_c2` tuning (same movement baseline as client default profile)
+  - multiplayer gameplay blocks noclip key toggles (except local editor flow), reducing client/server movement desync and rubber-banding
+  - clients now show a join notification when a new player appears in the session
+  - remote player avatars are rendered as high-visibility white character-sized proxies
+  - critical runtime errors are now persisted to `~/.irun/ivan/logs/critical.log` for post-crash diagnostics
   - server tuning is authoritative: only config owner (host client) can change it; other clients receive live updates and apply them in-session
   - profile switches from the debug menu now follow multiplayer ownership rules:
     - host/config owner profile switches are sent to server as full tuning snapshots and wait for authoritative `cfg_v` acknowledgement
@@ -262,14 +271,30 @@
   - combat view-punch feedback now reacts to weapon fire and scales up on nearby heavy impacts
   - synthesized weapon and movement SFX are now present (per-slot weapon sounds, grapple attach/detach, walk/run footsteps) with impact-layer sounds for all combat slots (`1-4`)
   - in-game Settings tab (ESC menu) now includes audio controls (`Master Volume`, `SFX Volume`) and keybinding controls
-  - replay input format records weapon/transport slot switch events (`ws`, now `1-6`) for deterministic playback of slot-assisted movement lines
+  - replay input format records slot switch events (`ws`, range `1-6`) for deterministic playback/telemetry
   - multiplayer note: combat actions are currently local/offline-only; networked sessions keep server-authoritative movement without local combat impulses
-- Ivan: transport sandbox add-on (movement-first extensions)
-  - slot `5`: `planer` flight mode
-  - slot `6`: `skateboard` ground mode
-  - `planer` controls: `W/S` throttle, `A/D` turn, arrows for pitch/yaw, `Q/E` roll
-  - `skateboard` keeps normal movement controls but adds higher sustained ground speed/glide
-  - replay input now stores explicit `Q/E` held states (`kq`/`ke`) for transport-aware playback/debugging
+- Ivan: race/time-trial checkpoint workflow refresh
+  - start/finish checkpoints support vertical cylinder markers (`start_circle` / `finish_circle`) for GTA-style ring checkpoints
+  - marker placement controls in race/time_trial mode: `5` set start, `6` set finish (`F5/F6` kept as legacy aliases)
+  - timer starts on crossing start marker and stops on crossing finish marker (edge-triggered enter events)
+  - hold `Tab` during a race run to display the local best-times leaderboard
+  - world-space checkpoint visuals render as translucent circular rings for stronger readability
+- Ivan: race mission editor/runtime foundation (network-authoritative V1)
+  - `V` toggles in-world game editor mode and enables noclip while editing
+  - in multiplayer, editor mutations are restricted to host/config-owner; non-owner clients are read-only
+  - `F` opens game-mode picker in editor mode (currently `race`)
+  - after choosing `race`, marker placement is mapped to `1` start, `2` checkpoint append, `3` finish
+  - exiting editor with `V` publishes a mission marker ring at the selection anchor and syncs definitions to server in multiplayer
+  - mission marker `F` interaction is replicated to server and drives authoritative lobby/intro/countdown/go flow
+  - mission `F` interaction now uses a reliable network control message path (not one-frame UDP edge only), improving start consistency
+  - starter pressing `F` again in lobby begins intro; participants are teleported to start and frozen through countdown
+  - lobby join notifications are deduplicated per player (repeated `F` spam does not re-emit join events)
+  - late mission-marker `F` interaction during active race does not enroll new participants into the running session
+  - restarting from finished state opens a fresh lobby from the initiating player (stale participants are not carried across runs)
+  - race timer starts at authoritative `GO` (freeze release), not at lobby join
+  - race progression enforces ordered checkpoint collection before finish is accepted
+  - event feedback hooks are active: countdown/go notifications, checkpoint yellow flash/sfx, finish green flash/sfx
+  - multiplayer snapshots now replicate versioned game definitions/state/events (`games_v`, `games`, `game_state`, `game_events`)
 - Ivan: vault is enabled by default (runtime toggle in debug menu)
 - Ivan: surf prototype on slanted surfaces (strafe-held surf with live tuning controls)
 - Ivan: legacy-style surf preset (`surf_sky2_server`) approximating public surf_ski_2/surf_sky_2 server cvars
@@ -279,7 +304,7 @@
 - Ivan: debug/admin tuning UI now explicitly includes course marker extents (`course_marker_half_extent_xy/z`) in grouped controls
 - Game modes: maps can declare how they should run via bundle metadata (`run.json`)
   - `free_run`: default "just run around"
-  - `time_trial`: local time trial with restart and local PB/leaderboard (per `map_id`)
+  - `time_trial` (alias: `race`): local race mode with circular checkpoints, restart, and local PB/leaderboard (per `map_id`)
 - Baker: viewer MVP (`python -m baker --map ...`) reusing Ivan scene builder for WYSIWYG preview
   - Fly camera: WASD + mouse/trackpad look (Q/E vertical, Shift faster)
   - Preview view transforms: `1` gamma-only, `2` Reinhard, `3` ACES approx
@@ -351,6 +376,8 @@
 - Movement: iterate wallrun from toggleable prototype hooks
 - Camera: follow camera with collision avoidance and smoothing
 - Levels: modular blocks, checkpoints, hazards, collectibles
+- Games module: additional game types beyond race plus stronger authority hardening (anti-spam/cooldowns, reconnect recovery, richer host tooling)
+- Race mission multiplayer polish: reconnect edge cases, lobby UX, and abuse-resistant interaction flow
 - Maps: TrenchBroom integration for level editing — ~~game config + FGD entity definitions created~~ **done** (direct .map loading, game config, FGD shipped)
 - Time trial: portal/leaderboards (plus ghosts/replays; map_hash binding)
 - Rendering: retro texture filtering options (nearest-neighbor, mipmap strategy)

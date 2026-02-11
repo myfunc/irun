@@ -239,6 +239,27 @@ def get_time_trial_pb_seconds(*, map_id: str) -> float | None:
     return None
 
 
+def get_time_trial_leaderboard(*, map_id: str, limit: int = 10) -> list[float]:
+    s = load_state()
+    maps = _tt_maps(s)
+    entry = maps.get(map_id)
+    if not isinstance(entry, dict):
+        return []
+    lb = entry.get("leaderboard")
+    if not isinstance(lb, list):
+        return []
+    out: list[float] = []
+    for row in lb:
+        if not isinstance(row, dict):
+            continue
+        sec = row.get("seconds")
+        if isinstance(sec, (int, float)) and float(sec) >= 0:
+            out.append(float(sec))
+        if len(out) >= max(1, int(limit)):
+            break
+    return out
+
+
 def set_time_trial_course_override(*, map_id: str, course: dict | None) -> None:
     s = load_state()
     root = dict(s.time_trials) if isinstance(s.time_trials, dict) else {}

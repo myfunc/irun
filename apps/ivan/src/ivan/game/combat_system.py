@@ -405,6 +405,9 @@ def _switch_weapon(st: CombatRuntimeState, *, slot: int) -> bool:
 def tick(host, *, cmd, dt: float) -> CombatFireEvent | None:
     st = _state(host)
     _cooldowns_tick(st=st, dt=dt)
+    can_use_weapons = getattr(host, "are_weapons_enabled", None)
+    if callable(can_use_weapons) and not bool(can_use_weapons()):
+        return None
     selected_slot = int(getattr(cmd, "weapon_slot_select", 0) or 0)
     if _switch_weapon(st, slot=selected_slot):
         _set_event(st, text=f"slot {st.active_slot}: {WEAPON_SPECS[st.active_slot].name}", hold_s=0.65)

@@ -81,33 +81,30 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
   - while replay playback is active, input is locked; press `R` to exit replay and respawn
   - replay playback shows an input HUD (movement/jump/slide/mouse directions)
 - `` ` `` (tilde/backtick): opens the debug/admin tuning menu
-- `F`: save current demo recording (recording window starts on respawn and ends when saved)
+- `K`: save current demo recording (recording window starts on respawn and ends when saved)
 - `F4`: toggle the in-game console
-- `Shift+F4`: restart run (time trial mode)
-- `F5`: set Start marker at current position (time trial mode dev helper)
-- `F6`: set Finish marker at current position (time trial mode dev helper)
-- `F7`: clear local course markers (time trial mode dev helper)
-- `F8`: export course to run.json (time trial mode dev helper)
-- `F9`: export spawn to run.json (time trial mode dev helper)
+- `Shift+F4`: restart run (race/time_trial mode)
+- `5`: set Start marker at current position (race/time_trial mode)
+- `6`: set Finish marker at current position (race/time_trial mode)
+- `F5` / `F6`: legacy aliases for Start/Finish marker placement
+- `F7`: clear local course markers (race/time_trial mode dev helper)
+- `F8`: export course to run.json (race/time_trial mode dev helper)
+- `F9`: export spawn to run.json (race/time_trial mode dev helper)
+- `Tab` (hold): show race leaderboard while playing a race/time_trial map
 - `F2`: toggle input debug overlay (useful when keyboard/mouse don't seem to register)
 - `F3`: toggle error console overlay (shows recent errors without crashing)
 - `F12`: cycle debug HUD overlay (off → minimal → render → streaming → graph; compact fps/frametime view)
-- Combat/transport slots:
+- Combat slots:
   - `1-4`: weapon slots (`blink`, `slam`, `rocket`, `pulse`)
-  - `5`: `planer` transport mode
-  - `6`: `skateboard` transport mode
 - `LMB`: fire active weapon slot
 - `RMB`: grapple hook primary
   - click (not attached): fire grapple to aimed surface
   - click (attached): detach
-- `planer` controls:
-  - `W/S`: speed up/down
-  - `A/D`: turn left/right
-  - `Arrow Up/Down`: pitch
-  - `Arrow Left/Right`: yaw
-  - `Q/E`: roll
 - In multiplayer, grapple hit on another player deals `20` damage.
-- `V` (default): toggle noclip (rebindable from `Esc -> Key Bindings`)
+- `V`: toggle game editor mode (enables noclip while editor mode is active; host/config-owner only in multiplayer)
+- `F`: editor interaction key (open mode picker) and mission marker interaction key (server-authoritative in multiplayer)
+- `1/2/3` in race editor mode: place start/checkpoint/finish markers
+- `N` (default): toggle noclip (rebindable from `Esc -> Key Bindings`)
 
 Menu/input behavior:
 - When `Esc` menu or debug menu is open, gameplay input (mouse look / movement keys) is ignored.
@@ -168,7 +165,7 @@ Notes:
 - Ivan records input demos automatically from each spawn/respawn window.
 - A demo stores per-tick input commands (look deltas, movement axes, action presses) and replay telemetry
   snapshots (position/velocity/speeds/camera angles/state/buttons) for feel tuning/diagnostics.
-- Press `F` to save the current demo to `apps/ivan/replays/` in this repository.
+- Press `K` to save the current demo to `apps/ivan/replays/` in this repository.
 - Replays can be loaded in-game from `Esc -> Replays`.
 - Replay playback re-simulates movement through the normal engine/controller path at fixed `60 Hz`.
 
@@ -274,6 +271,7 @@ geometry manifest.
 Storage:
 - Directory bundle: `<bundle>/run.json` next to `map.json`
 - Packed bundle (`.irunmap`): `<bundle>.run.json` sidecar next to the archive
+- `.map` source file: `<map-file>.run.json` sidecar next to the `.map`
 
 Example:
 ```json
@@ -281,8 +279,8 @@ Example:
   "mode": "time_trial",
   "spawn": { "position": [0, 0, 3], "yaw": 90 },
   "config": {
-    "start_aabb": { "min": [-2, -2, 0], "max": [2, 2, 4] },
-    "finish_aabb": { "min": [98, -2, 0], "max": [102, 2, 4] }
+    "start_circle": { "center": [0, 0, 2], "radius": 2.0, "half_z": 2.0 },
+    "finish_circle": { "center": [100, 0, 2], "radius": 2.0, "half_z": 2.0 }
   }
 }
 ```
