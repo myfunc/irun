@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -19,6 +19,7 @@ class InputCommand:
     jump_held: bool
     slide_pressed: bool
     grapple_pressed: bool
+    interact_pressed: bool = False
 
 
 def encode_json(obj: dict) -> bytes:
@@ -60,6 +61,7 @@ def decode_input_packet(payload: bytes) -> tuple[str, InputCommand] | None:
         jump_held=bool(obj.get("jh")),
         slide_pressed=bool(obj.get("sp")) or bool(obj.get("dp")),
         grapple_pressed=bool(obj.get("gp")),
+        interact_pressed=bool(obj.get("ip")),
     )
     return (token, cmd)
 
@@ -70,6 +72,10 @@ def encode_snapshot_packet(
     players: list[dict],
     cfg_v: int | None = None,
     tuning: dict[str, float | bool] | None = None,
+    games_v: int | None = None,
+    games: dict | None = None,
+    game_state: dict | None = None,
+    game_events: list[dict] | None = None,
 ) -> bytes:
     obj = {
         "t": "snap",
@@ -81,4 +87,12 @@ def encode_snapshot_packet(
         obj["cfg_v"] = int(cfg_v)
     if isinstance(tuning, dict):
         obj["tuning"] = tuning
+    if games_v is not None:
+        obj["games_v"] = int(games_v)
+    if isinstance(games, dict):
+        obj["games"] = games
+    if isinstance(game_state, dict):
+        obj["game_state"] = game_state
+    if isinstance(game_events, list):
+        obj["game_events"] = game_events
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=True).encode("utf-8")

@@ -3,16 +3,19 @@ from __future__ import annotations
 import json
 import math
 from collections import deque
+from pathlib import Path
 from types import SimpleNamespace
 
 from ivan.game import RunnerDemo
 from ivan.game import app as app_mod
 from ivan.game import netcode as netcode_mod
 from ivan.game import tuning_profiles as profiles_mod
-from ivan.net.protocol import InputCommand
+from ivan.net.protocol import InputCommand, decode_input_packet
 from ivan.net.relevance import GoldSrcPvsRelevance
 from ivan.physics.tuning import PhysicsTuning
 from ivan.net.server import MultiplayerServer
+from ivan.games import RaceCourse, RaceEvent
+from ivan.course.time_trial import make_marker_cylinder
 from ivan.world.goldsrc_visibility import GoldSrcBspVis
 from panda3d.core import LVector3f
 
@@ -32,9 +35,13 @@ class _FakeUI:
 class _FakeNetClient:
     def __init__(self) -> None:
         self.respawn_calls = 0
+        self.interact_calls = 0
 
     def send_respawn(self) -> None:
         self.respawn_calls += 1
+
+    def send_interact(self) -> None:
+        self.interact_calls += 1
 
 
 class _FakePauseUI:
@@ -68,6 +75,56 @@ class _FakeNoclipPlayer:
         self.vel = LVector3f(vel)
 
 
+class _FakeNode:
+    def __init__(self, name: str = "node") -> None:
+        self.name = str(name)
+        self.parent: _FakeNode | None = None
+        self.children: list[_FakeNode] = []
+        self.scale: tuple[float, float, float] | None = None
+        self.color: tuple[float, float, float, float] | None = None
+        self.pos: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self.hpr: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self.removed = False
+
+    def attachNewNode(self, name: str) -> "_FakeNode":
+        child = _FakeNode(name=name)
+        child.parent = self
+        self.children.append(child)
+        return child
+
+    def reparentTo(self, parent: "_FakeNode") -> None:
+        self.parent = parent
+        parent.children.append(self)
+
+    def setScale(self, x: float, y: float, z: float) -> None:
+        self.scale = (float(x), float(y), float(z))
+
+    def setColor(self, r: float, g: float, b: float, a: float) -> None:
+        self.color = (float(r), float(g), float(b), float(a))
+
+    def setPos(self, x: float | LVector3f, y: float | None = None, z: float | None = None) -> None:
+        if isinstance(x, LVector3f):
+            self.pos = (float(x.x), float(x.y), float(x.z))
+            return
+        self.pos = (float(x), float(y or 0.0), float(z or 0.0))
+
+    def setHpr(self, h: float, p: float, r: float) -> None:
+        self.hpr = (float(h), float(p), float(r))
+
+    def removeNode(self) -> None:
+        self.removed = True
+
+
+class _FakeLoader:
+    def __init__(self) -> None:
+        self.models: list[_FakeNode] = []
+
+    def loadModel(self, _path: str) -> _FakeNode:
+        node = _FakeNode(name="model")
+        self.models.append(node)
+        return node
+
+
 class _FakeWindowProps:
     def __init__(self, *, fullscreen: bool) -> None:
         self._fullscreen = bool(fullscreen)
@@ -99,6 +156,13 @@ class _FakeWindow:
             self._w = int(get_x())
             self._h = int(get_y())
             self.requested_sizes.append((self._w, self._h))
+
+
+def _sample_race_course() -> RaceCourse:
+    mission = make_marker_cylinder(pos=LVector3f(0.0, 0.0, 1.0), radius=2.5, half_z=2.0)
+    start = make_marker_cylinder(pos=LVector3f(8.0, 0.0, 1.0), radius=2.2, half_z=2.0)
+    finish = make_marker_cylinder(pos=LVector3f(16.0, 0.0, 1.0), radius=2.2, half_z=2.0)
+    return RaceCourse(mission_marker=mission, start=start, checkpoints=(), finish=finish)
 
 
 def test_network_respawn_button_sends_server_request() -> None:
@@ -153,6 +217,26 @@ def test_respawn_button_ignored_while_feel_capture_open() -> None:
 
     assert calls["count"] == 0
     assert "Feel capture is open" in demo.ui.last_status
+
+
+def test_interact_button_network_path_uses_reliable_client_message() -> None:
+    demo = RunnerDemo.__new__(RunnerDemo)
+    demo._mode = "game"
+    demo.player = SimpleNamespace(pos=LVector3f(0.0, 0.0, 1.0))
+    demo._net_connected = True
+    demo._net_client = _FakeNetClient()
+    demo._race_editor_enabled = False
+    demo._pause_menu_open = False
+    demo._debug_menu_open = False
+    demo._replay_browser_open = False
+    demo._console_open = False
+    demo._feel_capture_open = False
+    demo._net_interact_pending = True
+
+    RunnerDemo._on_interact_pressed(demo)
+
+    assert demo._net_client.interact_calls == 1
+    assert demo._net_interact_pending is False
 
 
 def test_embedded_server_receives_host_tuning_snapshot(monkeypatch) -> None:
@@ -366,6 +450,119 @@ def test_connect_multiplayer_applies_server_welcome_spawn(monkeypatch) -> None:
     assert snap_calls["count"] == 1
 
 
+def test_resolve_server_map_reference_rebases_apps_ivan_path(monkeypatch, tmp_path: Path) -> None:
+    app_root = tmp_path / "repo" / "apps" / "ivan"
+    target = app_root / "assets" / "maps" / "demo" / "demo_alt.map"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("// map", encoding="utf-8")
+
+    monkeypatch.setattr(app_mod, "ivan_app_root", lambda: app_root)
+
+    demo = RunnerDemo.__new__(RunnerDemo)
+    resolved = RunnerDemo._resolve_server_map_reference(
+        demo,
+        server_map_json="/Users/host-user/repo/apps/ivan/assets/maps/demo/demo_alt.map",
+    )
+    assert resolved is not None
+    assert Path(str(resolved)).resolve() == target.resolve()
+
+
+def test_connect_multiplayer_loads_resolved_server_map_path(monkeypatch, tmp_path: Path) -> None:
+    app_root = tmp_path / "repo" / "apps" / "ivan"
+    target = app_root / "assets" / "maps" / "demo" / "demo_alt.map"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("// map", encoding="utf-8")
+    monkeypatch.setattr(app_mod, "ivan_app_root", lambda: app_root)
+
+    class _FakeClient:
+        def __init__(self, *, host: str, tcp_port: int, name: str) -> None:
+            self.host = host
+            self.tcp_port = tcp_port
+            self.name = name
+            self.server_map_json = "/Users/host-user/repo/apps/ivan/assets/maps/demo/demo_alt.map"
+            self.can_configure = True
+            self.player_id = 1
+            self.server_tuning_version = 0
+            self.server_tuning = None
+            self.server_spawn = (0.0, 0.0, 2.0)
+            self.server_spawn_yaw = 0.0
+
+        def close(self) -> None:
+            return
+
+    monkeypatch.setattr(app_mod, "MultiplayerClient", _FakeClient)
+
+    demo = RunnerDemo.__new__(RunnerDemo)
+    demo._disconnect_multiplayer = lambda: None
+    demo._embedded_server = None
+    demo._open_to_network = False
+    demo._runtime_connect_host = "127.0.0.1"
+    demo._runtime_connect_port = 7777
+    demo.cfg = SimpleNamespace(net_name="tester")
+    demo._current_map_json = "/different/local/path.map"
+    demo._net_client = None
+    demo._net_connected = False
+    demo._net_player_id = 0
+    demo._net_interact_pending = False
+    demo.pause_ui = _FakePauseUI()
+    demo.ui = _FakeUI()
+    demo.error_log = SimpleNamespace(log_message=lambda **_kwargs: None)
+    demo.error_console = SimpleNamespace(refresh=lambda **_kwargs: None)
+    started: dict[str, str] = {}
+    demo._start_game = lambda *, map_json, lighting=None: started.__setitem__("map_json", str(map_json))
+
+    RunnerDemo._connect_multiplayer_if_requested(demo)
+
+    assert Path(started["map_json"]).resolve() == target.resolve()
+
+
+def test_connect_multiplayer_fails_if_server_map_is_unavailable(monkeypatch) -> None:
+    class _FakeClient:
+        def __init__(self, *, host: str, tcp_port: int, name: str) -> None:
+            self.host = host
+            self.tcp_port = tcp_port
+            self.name = name
+            self.server_map_json = "/missing/host/path/unavailable.map"
+            self.can_configure = True
+            self.player_id = 1
+            self.server_tuning_version = 0
+            self.server_tuning = None
+            self.server_spawn = (0.0, 0.0, 2.0)
+            self.server_spawn_yaw = 0.0
+
+        def close(self) -> None:
+            return
+
+    monkeypatch.setattr(app_mod, "MultiplayerClient", _FakeClient)
+    monkeypatch.setattr(app_mod, "ivan_app_root", lambda: Path("/nonexistent/app/root"))
+
+    demo = RunnerDemo.__new__(RunnerDemo)
+    demo._disconnect_multiplayer = lambda: None
+    demo._embedded_server = None
+    demo._open_to_network = False
+    demo._runtime_connect_host = "127.0.0.1"
+    demo._runtime_connect_port = 7777
+    demo.cfg = SimpleNamespace(net_name="tester")
+    demo._current_map_json = "/different/local/path.map"
+    demo._net_client = None
+    demo._net_connected = False
+    demo._net_player_id = 0
+    demo._net_interact_pending = False
+    demo.pause_ui = _FakePauseUI()
+    demo.ui = _FakeUI()
+    msgs: list[str] = []
+    demo.error_log = SimpleNamespace(log_message=lambda **kwargs: msgs.append(str(kwargs.get("message") or "")))
+    demo.error_console = SimpleNamespace(refresh=lambda **_kwargs: None)
+    demo._start_game = lambda *, map_json, lighting=None: (_ for _ in ()).throw(AssertionError("must not start game"))
+
+    RunnerDemo._connect_multiplayer_if_requested(demo)
+
+    assert demo._net_client is None
+    assert demo._net_connected is False
+    assert "server map" in demo.pause_ui.multiplayer_status.lower()
+    assert any("server map is unavailable locally" in m.lower() for m in msgs)
+
+
 def test_connect_multiplayer_host_mode_does_not_fallback_when_port_is_busy(monkeypatch) -> None:
     class _ShouldNotConnectClient:
         def __init__(self, **_kwargs) -> None:
@@ -465,6 +662,155 @@ def test_noclip_forward_uses_view_pitch_direction() -> None:
     assert demo.player.vel.z > 0.0
     assert demo.player.pos.y > 0.0
     assert demo.player.pos.z > 0.0
+
+
+def test_noclip_toggle_is_blocked_in_multiplayer_gameplay() -> None:
+    demo = RunnerDemo.__new__(RunnerDemo)
+    demo._net_connected = True
+    demo._race_editor_enabled = False
+    demo.tuning = PhysicsTuning(noclip_enabled=True)
+    demo.ui = _FakeUI()
+
+    RunnerDemo._toggle_noclip(demo)
+
+    assert bool(demo.tuning.noclip_enabled) is False
+    assert "disabled in multiplayer" in demo.ui.last_status.lower()
+
+
+def test_remote_player_visual_is_white_and_character_sized() -> None:
+    host = SimpleNamespace(
+        _remote_players={},
+        world_root=_FakeNode(name="world-root"),
+        loader=_FakeLoader(),
+        tuning=PhysicsTuning(player_radius=0.42, player_half_height=1.05),
+    )
+
+    rp = netcode_mod.ensure_remote_player_visual(host, player_id=2, name="friend")
+
+    assert rp.player_id == 2
+    assert len(host.loader.models) == 2
+    body = host.loader.models[0]
+    head = host.loader.models[1]
+    assert body.scale is not None
+    assert abs(float(body.scale[0]) - 0.84) < 1e-6
+    assert abs(float(body.scale[1]) - 0.84) < 1e-6
+    assert abs(float(body.scale[2]) - 2.10) < 1e-6
+    assert body.color == (1.0, 1.0, 1.0, 1.0)
+    assert head.color is not None
+    assert min(head.color[:3]) >= 0.9
+
+
+def test_poll_network_snapshot_notifies_when_new_remote_player_joins(monkeypatch) -> None:
+    class _FakeSnapshotClient:
+        def __init__(self, snapshots: list[dict]) -> None:
+            self._snapshots = list(snapshots)
+
+        def poll(self) -> dict | None:
+            if not self._snapshots:
+                return None
+            return dict(self._snapshots.pop(0))
+
+    def _row(*, pid: int, name: str) -> dict:
+        return {
+            "id": int(pid),
+            "n": str(name),
+            "x": 0.0,
+            "y": 0.0,
+            "z": 1.0,
+            "yaw": 0.0,
+            "pitch": 0.0,
+            "vx": 0.0,
+            "vy": 0.0,
+            "vz": 0.0,
+            "ack": 0,
+            "hp": 100,
+            "rs": 0,
+        }
+
+    # Avoid graphics setup in this test; keep only join-notification behavior.
+    def _fake_ensure(host_obj, *, player_id: int, name: str):
+        rp = host_obj._remote_players.get(int(player_id))
+        if rp is not None:
+            return rp
+        node = _FakeNode(name=f"remote-{int(player_id)}")
+        rp = netcode_mod._RemotePlayerVisual(
+            player_id=int(player_id),
+            root_np=node,
+            head_np=node,
+            name=str(name),
+        )
+        host_obj._remote_players[int(player_id)] = rp
+        return rp
+
+    monkeypatch.setattr(netcode_mod, "ensure_remote_player_visual", _fake_ensure)
+
+    statuses: list[str] = []
+    notices: list[str] = []
+    host = SimpleNamespace(
+        _net_connected=True,
+        _net_client=_FakeSnapshotClient(
+            snapshots=[
+                {"tick": 1, "players": [_row(pid=1, name="self"), _row(pid=2, name="buddy")]},
+                {"tick": 2, "players": [_row(pid=1, name="self"), _row(pid=2, name="buddy")]},
+            ]
+        ),
+        _net_last_server_tick=0,
+        _net_last_snapshot_local_time=0.0,
+        _net_perf=SimpleNamespace(
+            snapshot_count=0,
+            snapshot_dt_sum=0.0,
+            snapshot_dt_max=0.0,
+            reconcile_count=0,
+            reconcile_pos_err_sum=0.0,
+            reconcile_pos_err_max=0.0,
+            replay_input_sum=0,
+            replay_input_max=0,
+            replay_time_sum_ms=0.0,
+            replay_time_max_ms=0.0,
+        ),
+        _net_snapshot_intervals=[],
+        _net_interp_delay_ticks=6.0,
+        _sim_tick_rate_hz=60,
+        _net_cfg_apply_pending_version=0,
+        _net_cfg_apply_sent_at=0.0,
+        _net_server_tick_offset_ready=False,
+        _net_server_tick_offset_ticks=0.0,
+        _net_server_tick_offset_smooth=0.12,
+        _net_authoritative_tuning_version=0,
+        _apply_authoritative_tuning=lambda **_kwargs: None,
+        _net_games_version=0,
+        _net_player_id=1,
+        _local_hp=100,
+        player=SimpleNamespace(pos=LVector3f(0.0, 0.0, 1.0), vel=LVector3f(0.0, 0.0, 0.0)),
+        _playback_active=False,
+        _net_local_respawn_seq=0,
+        _net_pending_inputs=[],
+        _net_predicted_states=[],
+        _net_last_acked_seq=0,
+        _yaw=0.0,
+        _pitch=0.0,
+        _net_reconcile_pos_offset=LVector3f(0.0, 0.0, 0.0),
+        _net_reconcile_yaw_offset=0.0,
+        _net_reconcile_pitch_offset=0.0,
+        _camera_observer=SimpleNamespace(reset=lambda: None),
+        _camera_tilt_observer=SimpleNamespace(reset=lambda: None),
+        _camera_height_observer=SimpleNamespace(reset=lambda: None),
+        _camera_feedback_observer=SimpleNamespace(reset=lambda: None),
+        _start_new_demo_recording=lambda: None,
+        _reconcile_local_from_server=lambda **_kwargs: None,
+        _remote_players={},
+        _net_seen_remote_players=set(),
+        ui=SimpleNamespace(set_status=lambda msg: statuses.append(str(msg))),
+        race_ui_feedback=SimpleNamespace(notice=lambda **kwargs: notices.append(str(kwargs.get("text") or ""))),
+    )
+
+    netcode_mod.poll_network_snapshot(host)
+    netcode_mod.poll_network_snapshot(host)
+
+    join_statuses = [s for s in statuses if "joined the server." in s]
+    join_notices = [s for s in notices if "joined the server." in s]
+    assert join_statuses == ["buddy joined the server."]
+    assert join_notices == ["buddy joined the server."]
 
 
 def test_window_resize_event_persists_window_size_on_windows(monkeypatch) -> None:
@@ -745,6 +1091,312 @@ def test_server_snapshot_uses_per_client_relevance_filter(monkeypatch) -> None:
         srv.close()
 
 
+def test_decode_input_packet_reads_interact_pressed_flag() -> None:
+    payload = json.dumps(
+        {
+            "t": "in",
+            "token": "abc123",
+            "seq": 7,
+            "st": 100,
+            "dx": 0,
+            "dy": 0,
+            "ls": 256,
+            "mf": 0,
+            "mr": 0,
+            "jp": False,
+            "jh": False,
+            "sp": False,
+            "gp": False,
+            "ip": True,
+        },
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    parsed = decode_input_packet(payload)
+    assert parsed is not None
+    _, cmd = parsed
+    assert cmd.interact_pressed is True
+
+
+def test_server_snapshot_includes_games_payload_and_event_ring(monkeypatch) -> None:
+    class _FakeSock:
+        def __init__(self) -> None:
+            self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+        def setsockopt(self, *_args) -> None:
+            return
+
+        def bind(self, *_args) -> None:
+            return
+
+        def listen(self, *_args) -> None:
+            return
+
+        def setblocking(self, *_args) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+        def sendto(self, payload: bytes, addr: tuple[str, int]) -> None:
+            self.sent.append((bytes(payload), (str(addr[0]), int(addr[1]))))
+
+    import ivan.net.server as server_mod
+
+    monkeypatch.setattr(server_mod.socket, "socket", lambda *_a, **_kw: _FakeSock())
+    srv = MultiplayerServer(
+        host="127.0.0.1",
+        tcp_port=0,
+        udp_port=0,
+        map_json=None,
+        initial_race_course=_sample_race_course(),
+    )
+    try:
+        st = server_mod._ClientState(
+            player_id=1,
+            token="t1",
+            name="p1",
+            tcp_sock=_FakeSock(),
+            udp_addr=("127.0.0.1", 7001),
+            ctrl=SimpleNamespace(pos=LVector3f(0.0, 0.0, 1.0), vel=LVector3f(0.0, 0.0, 0.0)),
+            yaw=0.0,
+            pitch=0.0,
+            hp=100,
+            respawn_seq=0,
+            last_input=InputCommand(
+                seq=1,
+                server_tick_hint=0,
+                look_dx=0,
+                look_dy=0,
+                look_scale=1,
+                move_forward=0,
+                move_right=0,
+                jump_pressed=False,
+                jump_held=False,
+                slide_pressed=False,
+                grapple_pressed=False,
+            ),
+            rewind_history=deque(maxlen=8),
+        )
+        srv._clients_by_token = {"t1": st}
+        srv._append_race_events([RaceEvent(kind="race_intro")])
+        srv._broadcast_snapshot()
+
+        assert srv._udp_sock.sent
+        raw, _addr = srv._udp_sock.sent[-1]
+        packet = json.loads(raw.decode("utf-8"))
+        assert int(packet.get("games_v") or 0) >= 1
+        games = packet.get("games")
+        assert isinstance(games, dict)
+        defs = games.get("definitions")
+        assert isinstance(defs, list) and defs and defs[0].get("type") == "race"
+        game_state = packet.get("game_state")
+        assert isinstance(game_state, dict) and isinstance(game_state.get("race"), dict)
+        evs = packet.get("game_events")
+        assert isinstance(evs, list) and evs and evs[-1].get("kind") == "race_intro"
+    finally:
+        srv.close()
+
+
+def test_server_interact_during_running_race_does_not_enroll_late_player(monkeypatch) -> None:
+    class _FakeSock:
+        def __init__(self) -> None:
+            self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+        def setsockopt(self, *_args) -> None:
+            return
+
+        def bind(self, *_args) -> None:
+            return
+
+        def listen(self, *_args) -> None:
+            return
+
+        def setblocking(self, *_args) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+        def sendto(self, payload: bytes, addr: tuple[str, int]) -> None:
+            self.sent.append((bytes(payload), (str(addr[0]), int(addr[1]))))
+
+    import ivan.net.server as server_mod
+
+    class _FakeCtrl:
+        def __init__(self, pos: LVector3f) -> None:
+            self.pos = LVector3f(pos)
+            self.vel = LVector3f(0.0, 0.0, 0.0)
+            self.grounded = True
+
+        def step_with_intent(self, *, dt, intent, yaw_deg, pitch_deg) -> None:
+            _ = (dt, intent, yaw_deg, pitch_deg)
+
+        def detach_grapple(self) -> None:
+            return
+
+        def respawn(self) -> None:
+            self.pos = LVector3f(0.0, 0.0, 1.0)
+            self.vel = LVector3f(0.0, 0.0, 0.0)
+
+    monkeypatch.setattr(server_mod.socket, "socket", lambda *_a, **_kw: _FakeSock())
+    srv = MultiplayerServer(host="127.0.0.1", tcp_port=0, udp_port=0, map_json=None, initial_race_course=_sample_race_course())
+    try:
+        st1 = server_mod._ClientState(
+            player_id=1,
+            token="t1",
+            name="p1",
+            tcp_sock=_FakeSock(),
+            udp_addr=("127.0.0.1", 7001),
+            ctrl=_FakeCtrl(LVector3f(0.0, 0.0, 1.0)),
+            yaw=0.0,
+            pitch=0.0,
+            hp=100,
+            respawn_seq=0,
+            last_input=InputCommand(
+                seq=1,
+                server_tick_hint=0,
+                look_dx=0,
+                look_dy=0,
+                look_scale=1,
+                move_forward=0,
+                move_right=0,
+                jump_pressed=False,
+                jump_held=False,
+                slide_pressed=False,
+                grapple_pressed=False,
+            ),
+            rewind_history=deque(maxlen=8),
+        )
+        st2 = server_mod._ClientState(
+            player_id=2,
+            token="t2",
+            name="p2",
+            tcp_sock=_FakeSock(),
+            udp_addr=("127.0.0.1", 7002),
+            ctrl=_FakeCtrl(LVector3f(0.0, 0.0, 1.0)),
+            yaw=0.0,
+            pitch=0.0,
+            hp=100,
+            respawn_seq=0,
+            last_input=InputCommand(
+                seq=1,
+                server_tick_hint=0,
+                look_dx=0,
+                look_dy=0,
+                look_scale=1,
+                move_forward=0,
+                move_right=0,
+                jump_pressed=False,
+                jump_held=False,
+                slide_pressed=False,
+                grapple_pressed=False,
+                interact_pressed=True,
+            ),
+            rewind_history=deque(maxlen=8),
+        )
+        srv._clients_by_token = {"t1": st1, "t2": st2}
+
+        # Start race with player 1 only.
+        _ = srv._race_runtime.interact(player_id=1, pos=LVector3f(0.0, 0.0, 1.0), now=0.0)
+        _ = srv._race_runtime.interact(player_id=1, pos=LVector3f(0.0, 0.0, 1.0), now=0.1)
+        _ = srv._race_runtime.tick(now=1.1, player_positions={1: LVector3f(0.0, 0.0, 1.0)})
+        _ = srv._race_runtime.tick(now=2.1, player_positions={1: LVector3f(0.0, 0.0, 1.0)})
+        _ = srv._race_runtime.tick(now=3.1, player_positions={1: LVector3f(0.0, 0.0, 1.0)})
+        _ = srv._race_runtime.tick(now=4.1, player_positions={1: LVector3f(0.0, 0.0, 1.0)})
+        assert srv._race_runtime.status == "running"
+        assert srv._race_runtime.participants == {1}
+
+        # Player 2 pressing interact inside mission marker during running should be ignored.
+        srv._simulate_tick()
+        assert srv._race_runtime.status == "running"
+        assert srv._race_runtime.participants == {1}
+    finally:
+        srv.close()
+
+
+def test_server_process_tcp_interact_message_joins_race_lobby(monkeypatch) -> None:
+    class _FakeSock:
+        def __init__(self) -> None:
+            self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+        def setsockopt(self, *_args) -> None:
+            return
+
+        def bind(self, *_args) -> None:
+            return
+
+        def listen(self, *_args) -> None:
+            return
+
+        def setblocking(self, *_args) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+        def sendto(self, payload: bytes, addr: tuple[str, int]) -> None:
+            self.sent.append((bytes(payload), (str(addr[0]), int(addr[1]))))
+
+    class _FakeClientSock:
+        def __init__(self, payload: bytes) -> None:
+            self._payload = bytes(payload)
+            self._sent_once = False
+
+        def recv(self, _n: int) -> bytes:
+            if not self._sent_once:
+                self._sent_once = True
+                return bytes(self._payload)
+            raise BlockingIOError()
+
+        def close(self) -> None:
+            return
+
+    import ivan.net.server as server_mod
+
+    monkeypatch.setattr(server_mod.socket, "socket", lambda *_a, **_kw: _FakeSock())
+    srv = MultiplayerServer(host="127.0.0.1", tcp_port=0, udp_port=0, map_json=None, initial_race_course=_sample_race_course())
+    try:
+        client_sock = _FakeClientSock(b'{"t":"interact"}\n')
+        st = server_mod._ClientState(
+            player_id=1,
+            token="t1",
+            name="p1",
+            tcp_sock=client_sock,
+            udp_addr=("127.0.0.1", 7001),
+            ctrl=SimpleNamespace(pos=LVector3f(0.0, 0.0, 1.0), vel=LVector3f(0.0, 0.0, 0.0)),
+            yaw=0.0,
+            pitch=0.0,
+            hp=100,
+            respawn_seq=0,
+            last_input=InputCommand(
+                seq=1,
+                server_tick_hint=0,
+                look_dx=0,
+                look_dy=0,
+                look_scale=1,
+                move_forward=0,
+                move_right=0,
+                jump_pressed=False,
+                jump_held=False,
+                slide_pressed=False,
+                grapple_pressed=False,
+            ),
+            rewind_history=deque(maxlen=8),
+        )
+        srv._clients_by_token = {"t1": st}
+        srv._tcp_clients = {client_sock: b""}
+
+        srv._process_tcp()
+
+        assert srv._race_runtime.status == "lobby"
+        assert srv._race_runtime.participants == {1}
+        assert list(srv._race_event_ring)
+        assert list(srv._race_event_ring)[-1]["kind"] == "race_lobby_join"
+    finally:
+        srv.close()
+
+
 def test_server_loads_direct_map_spawn_and_kill_plane(monkeypatch, tmp_path) -> None:
     class _FakeSock:
         def setsockopt(self, *_args) -> None:
@@ -829,7 +1481,7 @@ def test_server_load_direct_map_raises_when_conversion_fails(monkeypatch, tmp_pa
         assert "failed to convert .map" in str(exc).lower()
 
 
-def test_server_initial_spawn_override_takes_priority(monkeypatch) -> None:
+def test_server_initial_spawn_override_is_host_only(monkeypatch) -> None:
     class _FakeSock:
         def setsockopt(self, *_args) -> None:
             return
@@ -858,10 +1510,118 @@ def test_server_initial_spawn_override_takes_priority(monkeypatch) -> None:
         initial_spawn_yaw=270.0,
     )
     try:
-        assert abs(float(srv.spawn_point.x) - 7.0) < 1e-9
-        assert abs(float(srv.spawn_point.y) - (-3.5)) < 1e-9
-        assert abs(float(srv.spawn_point.z) - 2.25) < 1e-9
-        assert abs(float(srv.spawn_yaw) - 270.0) < 1e-9
+        assert srv._host_spawn_override is not None
+        sp_host = srv._spawn_point_for_player(player_id=1)
+        assert abs(float(sp_host.x) - 7.0) < 1e-9
+        assert abs(float(sp_host.y) - (-3.5)) < 1e-9
+        assert abs(float(sp_host.z) - 2.25) < 1e-9
+        # Base spawn remains authoritative for non-host players.
+        assert abs(float(srv.spawn_point.x) - 0.0) < 1e-9
+        assert abs(float(srv.spawn_point.y) - 35.0) < 1e-9
+        assert abs(float(srv.spawn_point.z) - 1.9) < 1e-6
+        assert abs(float(srv._spawn_yaw_for_player(player_id=1)) - 270.0) < 1e-9
+        assert abs(float(srv.spawn_yaw) - 0.0) < 1e-9
+    finally:
+        srv.close()
+
+
+def test_server_map_sessions_apply_initial_spawn_only_to_host_player(monkeypatch) -> None:
+    class _FakeSock:
+        def setsockopt(self, *_args) -> None:
+            return
+
+        def bind(self, *_args) -> None:
+            return
+
+        def listen(self, *_args) -> None:
+            return
+
+        def setblocking(self, *_args) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+    import ivan.net.server as server_mod
+
+    monkeypatch.setattr(server_mod.socket, "socket", lambda *_a, **_kw: _FakeSock())
+    srv = MultiplayerServer(
+        host="127.0.0.1",
+        tcp_port=0,
+        udp_port=0,
+        map_json="maps/test_map.json",
+        initial_spawn=(10.0, 20.0, 3.0),
+        initial_spawn_yaw=135.0,
+    )
+    try:
+        base = LVector3f(srv.spawn_point)
+        sp1 = srv._spawn_point_for_player(player_id=1)
+        sp2 = srv._spawn_point_for_player(player_id=2)
+        assert abs(float(sp1.x) - 10.0) < 1e-6
+        assert abs(float(sp1.y) - 20.0) < 1e-6
+        assert abs(float(sp1.z) - 3.0) < 1e-6
+        # Non-host players should use map/server base spawn, not host runtime override.
+        d2_from_base = math.hypot(float(sp2.x - base.x), float(sp2.y - base.y))
+        d2_from_host_override = math.hypot(float(sp2.x - sp1.x), float(sp2.y - sp1.y))
+        assert d2_from_base < d2_from_host_override
+        assert abs(float(srv._spawn_yaw_for_player(player_id=1)) - 135.0) < 1e-6
+        assert abs(float(srv._spawn_yaw_for_player(player_id=2)) - float(srv.spawn_yaw)) < 1e-6
+    finally:
+        srv.close()
+
+
+def test_server_spawn_falls_back_when_host_override_is_out_of_bounds(monkeypatch, tmp_path) -> None:
+    class _FakeSock:
+        def setsockopt(self, *_args) -> None:
+            return
+
+        def bind(self, *_args) -> None:
+            return
+
+        def listen(self, *_args) -> None:
+            return
+
+        def setblocking(self, *_args) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+    import ivan.net.server as server_mod
+
+    map_json = tmp_path / "map.json"
+    map_json.write_text(
+        json.dumps(
+            {
+                "triangles": [[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]],
+                "spawn": {"position": [1.0, 2.0, 0.0], "yaw": 45.0},
+                "bounds": {"min": [-10.0, -10.0, -2.0], "max": [10.0, 10.0, 6.0]},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(server_mod.socket, "socket", lambda *_a, **_kw: _FakeSock())
+    monkeypatch.setattr(
+        server_mod,
+        "resolve_bundle_handle",
+        lambda _m: SimpleNamespace(map_json=map_json),
+    )
+
+    srv = MultiplayerServer(
+        host="127.0.0.1",
+        tcp_port=0,
+        udp_port=0,
+        map_json=str(map_json),
+        initial_spawn=(999999.0, 999999.0, 999999.0),
+        initial_spawn_yaw=90.0,
+    )
+    try:
+        sp1 = srv._spawn_point_for_player(player_id=1)
+        # Host override is rejected as out-of-bounds, so fallback uses authoritative map spawn.
+        assert abs(float(sp1.x) - 1.0) < 1e-6
+        assert abs(float(sp1.y) - 2.0) < 1e-6
+        assert abs(float(sp1.z) - 1.2) < 1e-6
     finally:
         srv.close()
 
@@ -912,9 +1672,95 @@ def test_server_assigns_small_spawn_offsets_for_additional_players(monkeypatch) 
         # Second player should be offset from base spawn to avoid overlap.
         assert abs(float(sp2.x) - float(sp1.x)) > 1e-6 or abs(float(sp2.y) - float(sp1.y)) > 1e-6
         # Ring grows after six offset slots.
-        d2 = math.hypot(float(sp2.x - sp1.x), float(sp2.y - sp1.y))
-        d7 = math.hypot(float(sp7.x - sp1.x), float(sp7.y - sp1.y))
+        base = srv.spawn_point
+        d2 = math.hypot(float(sp2.x - base.x), float(sp2.y - base.y))
+        d7 = math.hypot(float(sp7.x - base.x), float(sp7.y - base.y))
         assert d7 > d2
+    finally:
+        srv.close()
+
+
+def test_server_falls_back_to_base_spawn_when_offset_slot_has_no_ground(monkeypatch) -> None:
+    class _FakeSock:
+        def setsockopt(self, *_args) -> None:
+            return
+
+        def bind(self, *_args) -> None:
+            return
+
+        def listen(self, *_args) -> None:
+            return
+
+        def setblocking(self, *_args) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+    import ivan.net.server as server_mod
+
+    monkeypatch.setattr(server_mod.socket, "socket", lambda *_a, **_kw: _FakeSock())
+    srv = MultiplayerServer(
+        host="127.0.0.1",
+        tcp_port=0,
+        udp_port=0,
+        map_json=None,
+        initial_spawn=(10.0, 20.0, 3.0),
+        initial_spawn_yaw=0.0,
+    )
+    try:
+        base = LVector3f(srv.spawn_point)
+
+        def _support_only_base(*, pos: LVector3f) -> bool:
+            return abs(float(pos.x) - float(base.x)) < 1e-6 and abs(float(pos.y) - float(base.y)) < 1e-6
+
+        monkeypatch.setattr(srv, "_spawn_has_ground_support", _support_only_base)
+        sp2 = srv._spawn_point_for_player(player_id=2)
+        assert abs(float(sp2.x) - float(base.x)) < 1e-6
+        assert abs(float(sp2.y) - float(base.y)) < 1e-6
+        assert abs(float(sp2.z) - float(base.z)) < 1e-6
+    finally:
+        srv.close()
+
+
+def test_server_find_safe_spawn_near_uses_fallback_when_candidate_is_unsupported(monkeypatch) -> None:
+    class _FakeSock:
+        def setsockopt(self, *_args) -> None:
+            return
+
+        def bind(self, *_args) -> None:
+            return
+
+        def listen(self, *_args) -> None:
+            return
+
+        def setblocking(self, *_args) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+    import ivan.net.server as server_mod
+
+    monkeypatch.setattr(server_mod.socket, "socket", lambda *_a, **_kw: _FakeSock())
+    srv = MultiplayerServer(
+        host="127.0.0.1",
+        tcp_port=0,
+        udp_port=0,
+        map_json=None,
+    )
+    try:
+        fallback = LVector3f(5.0, 6.0, 1.9)
+        candidate = LVector3f(100.0, 200.0, -20.0)
+
+        def _support_only_fallback(*, pos: LVector3f) -> bool:
+            return abs(float(pos.x) - float(fallback.x)) < 1e-6 and abs(float(pos.y) - float(fallback.y)) < 1e-6
+
+        monkeypatch.setattr(srv, "_spawn_has_ground_support", _support_only_fallback)
+        safe = srv._find_safe_spawn_near(candidate=candidate, fallback=fallback, reason="test-unsupported")
+        assert abs(float(safe.x) - float(fallback.x)) < 1e-6
+        assert abs(float(safe.y) - float(fallback.y)) < 1e-6
+        assert abs(float(safe.z) - float(fallback.z)) < 1e-6
     finally:
         srv.close()
 
