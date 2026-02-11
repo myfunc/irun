@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from direct.gui import DirectGuiGlobals as DGG
 from direct.gui.DirectGui import DirectFrame, DirectLabel
 from direct.showbase import ShowBaseGlobal
-from panda3d.core import TextNode
+from panda3d.core import TextNode, TransparencyAttrib
 
 from irun_ui_kit.theme import Theme
 from irun_ui_kit.widgets.button import Button
@@ -183,9 +183,9 @@ class DebugUI:
         # Bottom status bar (movement state summary). Kept visible during gameplay and hidden while debug menu is open.
         bar_pad = 0.06
         bar_w = max(0.60, (aspect_ratio * 2.0) - (bar_pad * 2.0))
-        bar_h = 0.11
+        bar_h = 0.09
         bar_x = -aspect_ratio + bar_pad
-        bar_y = -0.97
+        bar_y = -0.94
         self.status_root = DirectFrame(
             parent=aspect2d,
             frameColor=theme.outline,
@@ -193,21 +193,23 @@ class DebugUI:
             frameSize=(0.0, bar_w, 0.0, bar_h),
             pos=(bar_x, 0.0, bar_y),
         )
-        DirectFrame(
+        self.status_root.setTransparency(TransparencyAttrib.M_alpha)
+        status_inner = DirectFrame(
             parent=self.status_root,
-            frameColor=(theme.panel[0], theme.panel[1], theme.panel[2], 0.86),
+            frameColor=(theme.panel[0], theme.panel[1], theme.panel[2], 0.62),
             relief=DGG.FLAT,
             frameSize=(theme.outline_w, bar_w - theme.outline_w, theme.outline_w, bar_h - theme.outline_w),
         )
+        status_inner.setTransparency(TransparencyAttrib.M_alpha)
         self.status_label = DirectLabel(
             parent=self.status_root,
             text="",
-            text_scale=0.036,
+            text_scale=0.029,
             text_align=TextNode.ALeft,
             text_fg=theme.text,
             frameColor=(0, 0, 0, 0),
-            pos=(theme.outline_w + theme.pad * 0.50, 0, bar_h * 0.34),
-            text_wordwrap=70,
+            pos=(theme.outline_w + theme.pad * 0.45, 0, bar_h * 0.34),
+            text_wordwrap=160,
         )
 
         # Layout inside the window (local coordinates 0..w/0..h).

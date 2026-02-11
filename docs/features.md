@@ -314,10 +314,11 @@
 - Launcher Toolbox: standalone Dear PyGui desktop app (`apps/launcher`, `python -m launcher`) for one-click map editing workflow
   - Settings panel: configure WAD directory, Steam/HL root, maps directory, python executable
   - Map browser: recursive `.map` file discovery sorted by modification time with auto-refresh
-  - Guided runtime-first runflow: select map -> select preset -> launch (selected source `.map`)
+  - Guided runtime-first runflow: select map -> launch (selected source `.map`)
   - Primary actions: `Launch`, `Pack`, `Stop Game` (options are collapsed by default)
-  - Launch presets: `Fast Iterate`, `Runtime Visual QA`
-  - Help tooltips on major launcher controls and preset profiles
+  - Launch path is fixed to `dev-fast` runtime mode with optional `watch` and `runtime-lighting` toggles
+  - Pack path is fixed to `dev-fast` profile (no profile selector in launcher)
+  - Help tooltips on major launcher controls
   - Launcher UI actions route through typed command handlers (single dispatch path)
   - Live log panel capturing subprocess stdout/stderr
   - Persistent settings in `~/.irun/launcher/config.json`

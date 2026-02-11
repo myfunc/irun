@@ -28,6 +28,7 @@ python -m launcher
 
 ### Settings Panel (collapsible)
 Configure and persist paths used by the launcher:
+- **TrenchBroom executable** — path to editor executable for opening selected maps.
 - **WAD directory** — where `.wad` texture files live (default: `apps/ivan/assets/textures/`).
 - **Steam/HL root** — optional Half-Life install root/runtime resource root.
 - **Maps directory** — where `.map` source files are scanned (default: `apps/ivan/assets/maps/`).
@@ -42,21 +43,19 @@ Settings are saved to `~/.irun/launcher/config.json`.
 - Auto-refreshes every 5 seconds.
 
 ### Guided Runflow
-Top section now uses a guided flow:
+Top section now uses a single runtime flow:
 - **Map selection** from Map Browser.
-- **Preset selection**:
-  - `Fast Iterate`
-  - `Runtime Visual QA`
 - **Runtime-first launch** always targets the selected source `.map`.
-- **Launch + Pack Options** (collapsed by default): optional overrides for watch/runtime-lighting and pack profile.
+- **Launch + Pack Options** (collapsed by default): optional overrides for watch/runtime-lighting.
 
-Major controls and profile references include tooltips with expected behavior and command-line effect.
+Major controls include tooltips with expected behavior and command-line effect.
 
 ### Primary Actions
 | Button | What it does |
 |---|---|
 | **Launch** | Launches selected source `.map` with runtime-first options |
-| **Pack** | Runs `tools/pack_map.py --profile <selected>` |
+| **Edit in TrenchBroom** | Opens selected `.map` in the editor |
+| **Pack** | Runs `tools/pack_map.py` in `dev-fast` mode |
 | **Stop Game** | Terminates the running IVAN game process |
 
 Launch is disabled until a source `.map` is selected.
@@ -68,7 +67,7 @@ Launch is disabled until a source `.map` is selected.
 ### Launch + Pack Options
 - Collapsed by default to keep the first-run launch path clean.
 - Controls launch overrides (`--watch`, `--runtime-lighting`).
-- Controls Pack profile for `pack_map.py`.
+- Pack always uses the runtime-first `dev-fast` profile.
 
 ## Dependencies
 
@@ -81,9 +80,9 @@ Launch is disabled until a source `.map` is selected.
 1. Open the launcher: `python -m launcher`
 2. Confirm maps directory in Settings (first time only).
 3. Select a `.map` file in the Map Browser.
-4. Select a preset (`Fast Iterate` is default recommendation).
+4. Click **Edit in TrenchBroom** to continue editing in the external editor.
 5. Click **Launch**.
-6. Optionally tune Launch + Pack options when preset defaults are not enough.
+6. Optionally tune Launch + Pack options (`watch`, `runtime-lighting`).
 7. When ready to share, click **Pack**.
 
 ## Migration Notes

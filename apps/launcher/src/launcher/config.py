@@ -46,14 +46,10 @@ class LauncherConfig:
     maps_dir: str = ""
     # Python executable used to run ivan / tools (defaults to sys.executable).
     python_exe: str = ""
-    # Guided launch preset.
-    launch_preset: str = "fast-iterate"
     # Enable --watch for Play Map.
     play_watch: bool = True
     # Force runtime lighting at launch.
     play_runtime_lighting: bool = False
-    # Pack pipeline profile.
-    pack_profile: str = "dev-fast"
     # Window geometry (persisted between sessions).
     window_width: int = 720
     window_height: int = 700

@@ -19,10 +19,10 @@ See: `docs/ui-kit.md`.
 ## Code Layout
 - Monorepo: apps are under `apps/`
 - `apps/launcher/src/launcher/__main__.py`: Launcher Toolbox entrypoint (`python -m launcher`) — Dear PyGui desktop app for runtime-first map launch and packing
-- `apps/launcher/src/launcher/app.py`: Dear PyGui window with map browser, runtime-first preset runflow (selected source `.map`), primary launch/pack actions, and render loop
-- `apps/launcher/src/launcher/config.py`: Persistent launcher settings (`~/.irun/launcher/config.json`) — WAD dir, Steam/HL root, maps dir, python path, launch/pack defaults
+- `apps/launcher/src/launcher/app.py`: Dear PyGui window with map browser, single runtime-first runflow (selected source `.map`), primary launch/pack actions, and render loop
+- `apps/launcher/src/launcher/config.py`: Persistent launcher settings (`~/.irun/launcher/config.json`) — WAD dir, Steam/HL root, maps dir, python path, and launch toggles (`watch`, `runtime-lighting`)
 - `apps/launcher/src/launcher/actions.py`: Subprocess spawning for game and `pack_map.py` (output captured to log)
-- `apps/launcher/src/launcher/runflow.py`: Single source of truth for runtime-first launch presets and resolved launch plans
+- `apps/launcher/src/launcher/runflow.py`: Single source of truth for fixed runtime launch plan (`dev-fast`) and resolved launch options
 - `apps/launcher/src/launcher/commands.py`: Typed command bus used by launcher UI actions to avoid duplicated behavior paths
 - `apps/launcher/src/launcher/map_browser.py`: Recursive `.map` file discovery sorted by modification time
 - `apps/baker/src/baker/__main__.py`: Baker entrypoint (`python -m baker`)
