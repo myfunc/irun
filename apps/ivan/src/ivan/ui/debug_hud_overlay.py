@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from direct.gui import DirectGuiGlobals as DGG
 from direct.gui.DirectGui import DirectFrame, DirectLabel
-from direct.showbase import ShowBaseGlobal
 from panda3d.core import LineSegs, TextNode, TransparencyAttrib
 
 from irun_ui_kit.theme import Theme
+from ivan.ui.ui_layout import DEBUG_HUD_Y, SCREEN_PAD_X, aspect_ratio
 
 
 DEBUG_HUD_MODES = ("minimal", "render", "streaming", "graph")
@@ -29,11 +29,11 @@ class DebugHudOverlay:
         self._enabled = False
 
         # Compact box: top-right, below speed chip; avoid overlap with speed/health HUD.
-        self._pad = 0.04
+        self._pad = SCREEN_PAD_X - 0.02
         self._w = 0.32
         self._h = 0.18
         x = 0.0
-        y = 0.80
+        y = DEBUG_HUD_Y
 
         self._root = DirectFrame(
             parent=self._aspect2d,
@@ -87,28 +87,18 @@ class DebugHudOverlay:
         self._relayout()
         self._root.hide()
 
-    @staticmethod
-    def _current_aspect_ratio() -> float:
-        aspect_ratio = 16.0 / 9.0
-        if getattr(ShowBaseGlobal, "base", None) is not None:
-            try:
-                aspect_ratio = float(ShowBaseGlobal.base.getAspectRatio())
-            except Exception:
-                pass
-        return float(aspect_ratio)
-
     def _relayout(self) -> None:
         # Anchor to the right edge every time aspect ratio changes.
-        aspect_ratio = self._current_aspect_ratio()
-        if self._last_aspect_ratio is not None and abs(float(aspect_ratio) - float(self._last_aspect_ratio)) <= 1e-5:
+        screen_ar = aspect_ratio()
+        if self._last_aspect_ratio is not None and abs(float(screen_ar) - float(self._last_aspect_ratio)) <= 1e-5:
             return
-        self._last_aspect_ratio = float(aspect_ratio)
-        x = float(aspect_ratio) - float(self._pad) - float(self._w)
+        self._last_aspect_ratio = float(screen_ar)
+        x = float(screen_ar) - float(self._pad) - float(self._w)
         try:
             p = self._root.getPos()
             self._root.setPos(float(x), float(p[1]), float(p[2]))
         except Exception:
-            self._root.setPos(float(x), 0.0, 0.80)
+            self._root.setPos(float(x), 0.0, DEBUG_HUD_Y)
 
     def cycle_mode(self) -> None:
         """F12: cycle off -> minimal -> render -> streaming -> graph -> off."""
@@ -133,6 +123,10 @@ class DebugHudOverlay:
 
     def mode(self) -> str:
         return DEBUG_HUD_MODES[self._mode_index]
+
+    @property
+    def root(self):
+        return self._root
 
     def is_visible(self) -> bool:
         return self._enabled

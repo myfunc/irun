@@ -4,11 +4,11 @@ from collections import deque
 
 from direct.gui import DirectGuiGlobals as DGG
 from direct.gui.DirectGui import DirectFrame, DirectLabel
-from direct.showbase import ShowBaseGlobal
 from panda3d.core import TextNode
 
 from irun_ui_kit.theme import Theme
 from irun_ui_kit.widgets.text_input import TextInput
+from ivan.ui.ui_layout import SCREEN_PAD_X, aspect_ratio
 
 
 class ConsoleUI:
@@ -19,19 +19,14 @@ class ConsoleUI:
     """
 
     def __init__(self, *, aspect2d, theme: Theme, on_submit) -> None:
-        aspect_ratio = 16.0 / 9.0
-        if getattr(ShowBaseGlobal, "base", None) is not None:
-            try:
-                aspect_ratio = float(ShowBaseGlobal.base.getAspectRatio())
-            except Exception:
-                pass
+        screen_ar = aspect_ratio()
 
         self._theme = theme
         self._on_submit = on_submit
 
         # Console occupies a bottom band (like classic drop-down console, but from the bottom).
-        left = -aspect_ratio + 0.05
-        right = aspect_ratio - 0.05
+        left = -screen_ar + (SCREEN_PAD_X - 0.01)
+        right = screen_ar - (SCREEN_PAD_X - 0.01)
         width = right - left
         top = 0.15
         bottom = -0.85
@@ -100,6 +95,10 @@ class ConsoleUI:
         self._hint.setTransparency(True)
 
         self._root.hide()
+
+    @property
+    def root(self):
+        return self._root
 
     @property
     def visible(self) -> bool:

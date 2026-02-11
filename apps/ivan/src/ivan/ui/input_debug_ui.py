@@ -4,20 +4,15 @@ import math
 
 from direct.gui import DirectGuiGlobals as DGG
 from direct.gui.DirectGui import DirectFrame, DirectLabel
-from direct.showbase import ShowBaseGlobal
 from panda3d.core import TextNode, TransparencyAttrib
 
 from irun_ui_kit.theme import Theme
+from ivan.ui.ui_layout import INPUT_DEBUG_TOP_ANCHOR, SCREEN_PAD_X, aspect_ratio
 
 
 class InputDebugUI:
     def __init__(self, *, aspect2d, theme: Theme) -> None:
-        aspect_ratio = 16.0 / 9.0
-        if getattr(ShowBaseGlobal, "base", None) is not None:
-            try:
-                aspect_ratio = float(ShowBaseGlobal.base.getAspectRatio())
-            except Exception:
-                pass
+        screen_ar = aspect_ratio()
 
         self._theme = theme
         self._last_text = ""
@@ -28,11 +23,11 @@ class InputDebugUI:
         self._wordwrap = 112
 
         # Boxed overlay anchored top-left to avoid overlapping the bottom status bar and menus.
-        pad = 0.06
-        w = min(2.45, (aspect_ratio * 2.0) - (pad * 2.0))
+        pad = SCREEN_PAD_X
+        w = min(2.45, (screen_ar * 2.0) - (pad * 2.0))
         h = 0.34
-        x = -aspect_ratio + pad
-        self._top_anchor = 0.90
+        x = -screen_ar + pad
+        self._top_anchor = INPUT_DEBUG_TOP_ANCHOR
         y = self._top_anchor - h
         self._panel_width = float(w)
         self._panel_height = float(h)
@@ -70,6 +65,10 @@ class InputDebugUI:
         self._label.setTransparency(TransparencyAttrib.M_alpha)
         self._root.hide()
         self._enabled = False
+
+    @property
+    def root(self):
+        return self._root
 
     def show(self) -> None:
         self._enabled = True

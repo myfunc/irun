@@ -199,6 +199,10 @@ class ReplayInputUI:
     def is_visible(self) -> bool:
         return self._visible
 
+    @property
+    def root(self):
+        return self._root
+
     def set_input(
         self,
         *,

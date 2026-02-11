@@ -70,6 +70,7 @@ from ivan.ui.pause_menu_ui import PauseMenuUI
 from ivan.ui.feel_capture_ui import FeelCaptureUI
 from ivan.ui.replay_browser_ui import ReplayBrowserUI, ReplayListItem
 from ivan.ui.replay_input_ui import ReplayInputUI
+from ivan.ui.ui_layout import UILayers
 from ivan.world.scene import WorldScene
 from irun_ui_kit.renderer import UIRenderer
 from irun_ui_kit.theme import Theme
@@ -104,6 +105,7 @@ MIN_WINDOW_ASPECT = 16.0 / 9.0
 
 class RunnerDemo(ShowBase):
     def __init__(self, cfg: RunConfig) -> None:
+        pixelated_textures_runtime = bool(getattr(cfg, "pixelated_textures", True))
         if cfg.smoke:
             # Smoke runs are intentionally silent/offscreen.
             loadPrcFileData("", "audio-library-name null")
@@ -114,7 +116,7 @@ class RunnerDemo(ShowBase):
         loadPrcFileData("", "textures-square none")
         loadPrcFileData("", "textures-auto-power-2 0")
         # Keep default mode crisp/pixelated; smooth mode can raise anisotropy.
-        anisotropic_degree = 1 if bool(getattr(cfg, "pixelated_textures", True)) else 8
+        anisotropic_degree = 1 if bool(pixelated_textures_runtime) else 8
         loadPrcFileData("", f"texture-anisotropic-degree {int(anisotropic_degree)}")
         # Allow the user to resize the window by dragging its edges.
         loadPrcFileData("", "win-fixed-size 0")
@@ -124,6 +126,7 @@ class RunnerDemo(ShowBase):
         super().__init__()
 
         self.cfg = cfg
+        self._pixelated_textures_runtime: bool = bool(pixelated_textures_runtime)
         # Centralized UI theme + font/background defaults for all non-HUD UI.
         self.ui_renderer = UIRenderer(base=self, theme=Theme())
         self.ui_renderer.set_background()
@@ -298,6 +301,8 @@ class RunnerDemo(ShowBase):
             on_tuning_change=self._on_tuning_change,
             on_profile_select=self._apply_profile,
             on_profile_save=self._save_active_profile,
+            pixelated_textures=bool(self._pixelated_textures_runtime),
+            on_pixelated_textures_change=self._on_pixelated_textures_toggle,
         )
         self.ui.set_profiles(self._profile_names(), self._active_profile_name)
         self.error_console = ErrorConsoleUI(aspect2d=self.aspect2d, theme=self.ui_theme, error_log=self.error_log)
@@ -362,6 +367,7 @@ class RunnerDemo(ShowBase):
         self.console_ui = ConsoleUI(aspect2d=self.aspect2d, theme=self.ui_theme, on_submit=self._console_submit_line)
         self.input_debug = InputDebugUI(aspect2d=self.aspect2d, theme=self.ui_theme)
         self.debug_hud = DebugHudOverlay(aspect2d=self.aspect2d, theme=self.ui_theme)
+        self._configure_ui_layers()
         _audio.init_runtime(self, master_volume=float(self._master_volume), sfx_volume=float(self._sfx_volume))
         self._setup_input()
 
@@ -399,6 +405,36 @@ class RunnerDemo(ShowBase):
         if cfg.smoke:
             self._smoke_frames = 10
             self.taskMgr.add(self._smoke_exit, "smoke-exit")
+
+    @staticmethod
+    def _set_ui_bin(node: Any, order: int) -> None:
+        """Apply stable render order to a UI root node."""
+        if node is None:
+            return
+        try:
+            node.setBin("fixed", int(order))
+        except Exception:
+            pass
+
+    def _configure_ui_layers(self) -> None:
+        layers = UILayers()
+        # HUD widgets sit below overlays/menus.
+        self._set_ui_bin(getattr(self.ui, "health_hud_root", None), layers.HUD)
+        self._set_ui_bin(getattr(self.ui, "speed_hud_root", None), layers.HUD)
+        self._set_ui_bin(getattr(self.ui, "status_root", None), layers.HUD)
+        self._set_ui_bin(getattr(self.ui, "time_trial_hud_label", None), layers.HUD)
+        # Small telemetry overlays.
+        self._set_ui_bin(getattr(self.input_debug, "root", None), layers.OVERLAY)
+        self._set_ui_bin(getattr(self.debug_hud, "root", None), layers.OVERLAY)
+        self._set_ui_bin(getattr(self.error_console, "root", None), layers.OVERLAY)
+        # Menus and tuning windows.
+        self._set_ui_bin(getattr(self.ui, "debug_root", None), layers.MENU)
+        self._set_ui_bin(getattr(self.pause_ui, "root", None), layers.MENU)
+        self._set_ui_bin(getattr(self.feel_capture_ui, "root", None), layers.MENU)
+        self._set_ui_bin(getattr(self.replay_input_ui, "root", None), layers.MENU)
+        self._set_ui_bin(getattr(self.replay_browser_ui, "root", None), layers.MENU)
+        # Console should always be on top.
+        self._set_ui_bin(getattr(self.console_ui, "root", None), layers.CONSOLE)
 
     def _setup_window(self) -> None:
         if self.cfg.smoke:
@@ -548,7 +584,7 @@ class RunnerDemo(ShowBase):
         self.accept("f4", lambda: self._safe_call("input.console", self._toggle_console))
         self.accept("g", lambda: self._safe_call("input.feel_capture", self._toggle_feel_capture))
         self.accept("r", lambda: self._safe_call("input.respawn", self._on_respawn_pressed))
-        self.accept("f2", self.input_debug.toggle)
+        self.accept("f2", lambda: self._safe_call("input.input_debug", self._toggle_input_debug))
         self.accept("f3", self.error_console.toggle)
         self.accept("f12", lambda: self._safe_call("input.debug_hud", self._cycle_debug_hud))
         self.accept("f10", lambda: self._safe_call("feel.dump", self._dump_feel_rolling_log))
@@ -581,6 +617,60 @@ class RunnerDemo(ShowBase):
 
     def _on_tuning_change(self, field: str) -> None:
         _profiles.on_tuning_change(self, field)
+
+    def _on_pixelated_textures_toggle(self, enabled: bool) -> None:
+        payload = self._set_pixelated_textures_enabled(enabled=enabled, reload_scene=True)
+        if bool(payload.get("ok")):
+            self.ui.set_status(
+                "Texture mode: "
+                + ("pixelated (nearest)." if bool(payload.get("pixelated_textures")) else "smooth filtering.")
+            )
+            return
+        self.ui.set_status(f"Texture mode update failed: {payload.get('error', 'unknown error')}")
+
+    def _set_pixelated_textures_enabled(self, *, enabled: bool, reload_scene: bool = True) -> dict[str, object]:
+        wanted = bool(enabled)
+        previous = bool(self._pixelated_textures_runtime)
+        self._pixelated_textures_runtime = wanted
+        if getattr(self, "ui", None) is not None:
+            try:
+                self.ui.set_pixelated_textures_enabled(wanted)
+            except Exception:
+                pass
+        try:
+            # Keep global anisotropy aligned with the active sampling mode for newly loaded textures.
+            anisotropic_degree = 1 if wanted else 8
+            loadPrcFileData("", f"texture-anisotropic-degree {int(anisotropic_degree)}")
+        except Exception:
+            pass
+        payload: dict[str, object] = {
+            "ok": True,
+            "pixelated_textures": bool(wanted),
+            "reload_requested": bool(reload_scene),
+            "reloaded": False,
+        }
+        should_reload = bool(reload_scene) and (self._mode == "game") and bool(self._current_map_json)
+        if not should_reload:
+            return payload
+        try:
+            active_cfg = self._active_run_cfg
+            self._start_game(
+                map_json=self._current_map_json,
+                lighting=active_cfg.lighting if isinstance(active_cfg, RunConfig) else None,
+                visibility=active_cfg.visibility if isinstance(active_cfg, RunConfig) else None,
+            )
+            payload["reloaded"] = True
+            return payload
+        except Exception as e:
+            self._pixelated_textures_runtime = previous
+            if getattr(self, "ui", None) is not None:
+                try:
+                    self.ui.set_pixelated_textures_enabled(previous)
+                except Exception:
+                    pass
+            payload["ok"] = False
+            payload["error"] = str(e)
+            return payload
 
     def _on_arrow_up(self) -> None:
         if self._console_open:
@@ -734,6 +824,7 @@ class RunnerDemo(ShowBase):
             self.console_ui.hide()
         except Exception:
             pass
+        self.error_console.set_suppressed(False)
         self._set_pointer_lock(True)
 
     def _open_pause_menu(self) -> None:
@@ -757,6 +848,8 @@ class RunnerDemo(ShowBase):
             self.console_ui.hide()
         except Exception:
             pass
+        self.error_console.set_suppressed(False)
+        self.input_debug.hide()
         self.pause_ui.show_main()
         self.pause_ui.set_keybind_status("")
         if hasattr(self.pause_ui, "set_audio_levels"):
@@ -786,6 +879,15 @@ class RunnerDemo(ShowBase):
             return
         self.debug_hud.cycle_mode()
 
+    def _toggle_input_debug(self) -> None:
+        if self._mode != "game":
+            return
+        # Keep input-debug focused on active gameplay to reduce overlap noise.
+        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open or self._feel_capture_open:
+            self.input_debug.hide()
+            return
+        self.input_debug.toggle()
+
     def _toggle_debug_menu(self) -> None:
         if self._mode != "game":
             return
@@ -811,6 +913,8 @@ class RunnerDemo(ShowBase):
                 self.console_ui.hide()
             except Exception:
                 pass
+            self.error_console.set_suppressed(False)
+            self.input_debug.hide()
             self.ui.show()
             self._set_pointer_lock(False)
             return
@@ -865,11 +969,14 @@ class RunnerDemo(ShowBase):
         if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._feel_capture_open:
             self._close_all_game_menus()
         self._console_open = True
+        self.input_debug.hide()
+        self.error_console.set_suppressed(True)
         self.console_ui.show()
         self._set_pointer_lock(False)
 
     def _close_console(self) -> None:
         self._console_open = False
+        self.error_console.set_suppressed(False)
         try:
             self.console_ui.hide()
         except Exception:
@@ -1291,7 +1398,7 @@ class RunnerDemo(ShowBase):
                 map_json=cfg_map_json,
                 map_profile=profile,
                 runtime_lighting=getattr(self.cfg, "runtime_lighting", None),
-                pixelated_textures=bool(getattr(self.cfg, "pixelated_textures", True)),
+                pixelated_textures=bool(self._pixelated_textures_runtime),
                 hl_root=self.cfg.hl_root,
                 hl_mod=self.cfg.hl_mod,
                 lighting=lighting_cfg if isinstance(lighting_cfg, dict) else None,
@@ -1299,6 +1406,7 @@ class RunnerDemo(ShowBase):
                 fog=fog_cfg,
             )
             self._active_run_cfg = cfg
+            self.ui.set_pixelated_textures_enabled(bool(self._pixelated_textures_runtime))
             _mark_stage("resolve_run_config")
             self.scene = WorldScene()
             self.scene.build(cfg=cfg, loader=self.loader, render=self.world_root, camera=self.camera)

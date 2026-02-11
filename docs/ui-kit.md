@@ -18,6 +18,22 @@ Panels/windows provide a **local coordinate space** for children:
 
 Mixing global coordinates into child `frameSize`/`pos` tends to cause overlapping and giant-rect bugs.
 
+## Runtime Overlay Lanes (Ivan)
+For gameplay-facing HUD/overlays in `apps/ivan/src/ivan/ui/`, we keep a shared lane model in
+`ivan/ui/ui_layout.py`:
+- shared safe-area anchors (`SCREEN_PAD_X`, `PANEL_TOP/PANEL_BOTTOM`, top lanes)
+- explicit render layers (`UILayers`) for stable z-order
+- centralized aspect-ratio helper for consistent positioning
+
+Layer policy:
+- HUD baseline (speed/HP/status) below overlays
+- overlays (F2/F3/F12) below menus
+- menus above overlays
+- console above everything else
+
+When adding a new in-game UI root, wire it through the layer configuration in
+`apps/ivan/src/ivan/game/app.py` to avoid creation-order-dependent overlap bugs.
+
 ## Theme
 Core token type: `irun_ui_kit.theme.Theme`.
 

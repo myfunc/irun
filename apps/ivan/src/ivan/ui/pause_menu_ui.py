@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from direct.gui import DirectGuiGlobals as DGG
 from direct.gui.DirectGui import DirectFrame, DirectLabel
-from direct.showbase import ShowBaseGlobal
 from panda3d.core import TextNode
 
 from irun_ui_kit.theme import Theme
@@ -11,6 +10,7 @@ from irun_ui_kit.widgets.checkbox import Checkbox
 from irun_ui_kit.widgets.panel import Panel
 from irun_ui_kit.widgets.tabs import Tabs
 from irun_ui_kit.widgets.text_input import TextInput
+from ivan.ui.ui_layout import PANEL_BOTTOM, PANEL_TOP, SCREEN_PAD_X, aspect_ratio
 from .pause_menu_settings_section import PauseMenuSettingsSection
 
 
@@ -40,17 +40,11 @@ class PauseMenuUI:
         master_volume: float = 0.85,
         sfx_volume: float = 0.90,
     ) -> None:
-        aspect_ratio = 16.0 / 9.0
-        if getattr(ShowBaseGlobal, "base", None) is not None:
-            try:
-                aspect_ratio = float(ShowBaseGlobal.base.getAspectRatio())
-            except Exception:
-                pass
-
-        panel_top = 0.95
-        panel_bottom = -0.86
-        panel_width = min(1.28, max(0.96, aspect_ratio * 0.70))
-        right = aspect_ratio - 0.02
+        screen_ar = aspect_ratio()
+        panel_top = PANEL_TOP
+        panel_bottom = PANEL_BOTTOM
+        panel_width = min(1.38, max(1.04, screen_ar * 0.74))
+        right = screen_ar - 0.02
         left = right - panel_width
 
         w = panel_width
@@ -91,7 +85,8 @@ class PauseMenuUI:
             text_align=TextNode.ALeft,
             text_fg=theme.text_muted,
             frameColor=(0, 0, 0, 0),
-            pos=(-aspect_ratio + 0.06, 0, 0.93),
+            # Keep hint below the top HUD lane to avoid collisions with chips.
+            pos=(-screen_ar + SCREEN_PAD_X, 0, 0.82),
         )
         self._hint.hide()
 
@@ -105,7 +100,7 @@ class PauseMenuUI:
             w=content_w,
             tab_h=tab_h,
             page_h=page_h,
-            labels=["Menu", "Settings", "Net", "Feel"],
+            labels=["Menu", "Options", "Online", "Feel"],
             active=0,
         )
         self._multiplayer_status = DirectLabel(

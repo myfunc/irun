@@ -17,6 +17,10 @@
   - modes: minimal (fps + frame ms) → render (fps, p95, sim steps) → streaming (fps, p95, net perf) → graph (fps, spike count, frametime bars) → off
   - top-right placement to avoid overlap with speed/health HUD
 - Ivan: input debug overlay (`F2`) for keyboard/mouse troubleshooting
+- Ivan: in-game UI layer/safe-zone pass
+  - unified screen-lane constants for gameplay UI roots (`ivan/ui/ui_layout.py`) to reduce hardcoded coordinate drift
+  - explicit UI z-order bands (HUD < overlays < menus < console) to remove creation-order overlap artifacts
+  - console now suppresses error-feed overlay while open, and `F2` input-debug is gameplay-only (auto-hidden while menus/console are open)
 - Ivan: gameplay feel telemetry in `F2` overlay (rolling jump success, landing speed loss, ground flicker, camera jerk proxies)
 - Ivan: staged invariant-motion refactor foundation
   - added invariant fields for run/stop/jump/air/slide/wallrun timing windows (`run_t90`, `ground_stop_t90`, `jump_apex_time`, `air_speed_mult`, `air_gain_t90`, `wallrun_sink_t90`, `slide_stop_t90`, `grace_period`)

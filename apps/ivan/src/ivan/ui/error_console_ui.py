@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from direct.gui import DirectGuiGlobals as DGG
 from direct.gui.DirectGui import DirectFrame, DirectLabel
-from direct.showbase import ShowBaseGlobal
 from panda3d.core import TextNode
 
 from ivan.common.error_log import ErrorLog
 from irun_ui_kit.theme import Theme
+from ivan.ui.ui_layout import ERROR_CONSOLE_Y, SCREEN_PAD_X, aspect_ratio
 
 
 class ErrorConsoleUI:
@@ -24,20 +24,15 @@ class ErrorConsoleUI:
         self._theme = theme
         # 0=hidden, 1=collapsed, 2=expanded
         self._mode = 0
+        self._suppressed = False
 
-        aspect_ratio = 16.0 / 9.0
-        if getattr(ShowBaseGlobal, "base", None) is not None:
-            try:
-                aspect_ratio = float(ShowBaseGlobal.base.getAspectRatio())
-            except Exception:
-                pass
-
-        pad = 0.06
-        w = min(1.80, (aspect_ratio * 2.0) - (pad * 2.0))
+        screen_ar = aspect_ratio()
+        pad = SCREEN_PAD_X
+        w = min(1.80, (screen_ar * 2.0) - (pad * 2.0))
         h = 0.13
-        x = -aspect_ratio + pad
+        x = -screen_ar + pad
         # Sit above the bottom status bar.
-        y = -0.82
+        y = ERROR_CONSOLE_Y
 
         self._root = DirectFrame(
             parent=aspect2d,
@@ -72,6 +67,10 @@ class ErrorConsoleUI:
         except Exception:
             pass
 
+    @property
+    def root(self):
+        return self._root
+
     def toggle(self) -> None:
         # Cycle: hidden -> collapsed -> expanded -> hidden
         self._mode = (self._mode + 1) % 3
@@ -81,7 +80,18 @@ class ErrorConsoleUI:
         self._mode = 0
         self.refresh(auto_reveal=False)
 
+    def set_suppressed(self, suppressed: bool) -> None:
+        self._suppressed = bool(suppressed)
+        if self._suppressed:
+            self._root.hide()
+        else:
+            self.refresh(auto_reveal=False)
+
     def refresh(self, *, auto_reveal: bool) -> None:
+        if self._suppressed:
+            self._label["text"] = ""
+            self._root.hide()
+            return
         items = self._log.items()
         if not items:
             self._label["text"] = ""
