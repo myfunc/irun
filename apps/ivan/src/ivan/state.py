@@ -31,6 +31,9 @@ class IvanState:
     # Audio settings.
     master_volume: float = 0.85
     sfx_volume: float = 0.90
+    # MCP/console control bridge settings.
+    mcp_control_enabled: bool = True
+    mcp_control_port: int = 7779
 
 
 def state_dir() -> Path:
@@ -105,6 +108,8 @@ def load_state() -> IvanState:
     wh = payload.get("window_height")
     mv = payload.get("master_volume")
     sv = payload.get("sfx_volume")
+    mcp_enabled = payload.get("mcp_control_enabled")
+    mcp_port = payload.get("mcp_control_port")
 
     return IvanState(
         last_map_json=str(lm) if isinstance(lm, str) and lm.strip() else None,
@@ -121,6 +126,8 @@ def load_state() -> IvanState:
         window_height=int(wh) if isinstance(wh, int) and 240 <= int(wh) <= 4320 else DEFAULT_WINDOW_HEIGHT,
         master_volume=max(0.0, min(1.0, float(mv))) if isinstance(mv, (int, float)) else 0.85,
         sfx_volume=max(0.0, min(1.0, float(sv))) if isinstance(sv, (int, float)) else 0.90,
+        mcp_control_enabled=bool(mcp_enabled) if isinstance(mcp_enabled, bool) else True,
+        mcp_control_port=int(mcp_port) if isinstance(mcp_port, int) and 1 <= int(mcp_port) <= 65535 else 7779,
     )
 
 
@@ -147,6 +154,8 @@ def save_state(state: IvanState) -> None:
                 "window_height": int(state.window_height),
                 "master_volume": float(state.master_volume),
                 "sfx_volume": float(state.sfx_volume),
+                "mcp_control_enabled": bool(state.mcp_control_enabled),
+                "mcp_control_port": int(state.mcp_control_port),
             },
             indent=2,
             sort_keys=True,
@@ -172,6 +181,8 @@ def update_state(
     window_height: int | None = None,
     master_volume: float | None = None,
     sfx_volume: float | None = None,
+    mcp_control_enabled: bool | None = None,
+    mcp_control_port: int | None = None,
 ) -> None:
     s = load_state()
     merged_tuning = dict(s.tuning_overrides)
@@ -204,6 +215,12 @@ def update_state(
                 max(0.0, min(1.0, float(sfx_volume)))
                 if isinstance(sfx_volume, (int, float))
                 else s.sfx_volume
+            ),
+            mcp_control_enabled=bool(mcp_control_enabled) if mcp_control_enabled is not None else s.mcp_control_enabled,
+            mcp_control_port=(
+                int(mcp_control_port)
+                if isinstance(mcp_control_port, int) and 1 <= int(mcp_control_port) <= 65535
+                else s.mcp_control_port
             ),
         )
     )
@@ -264,6 +281,8 @@ def set_time_trial_course_override(*, map_id: str, course: dict | None) -> None:
             window_height=s.window_height,
             master_volume=s.master_volume,
             sfx_volume=s.sfx_volume,
+            mcp_control_enabled=s.mcp_control_enabled,
+            mcp_control_port=s.mcp_control_port,
         )
     )
 
@@ -339,6 +358,8 @@ def record_time_trial_run(
             window_height=s.window_height,
             master_volume=s.master_volume,
             sfx_volume=s.sfx_volume,
+            mcp_control_enabled=s.mcp_control_enabled,
+            mcp_control_port=s.mcp_control_port,
         )
     )
     return (new_pb, last, rank_info)

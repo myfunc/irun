@@ -417,6 +417,140 @@ def build_client_console(runner: Any) -> Console:
             return lines
         return [json.dumps({"error": "diagnostics-unavailable"}, ensure_ascii=True)]
 
+    def _parse_bool_token(raw: Any, *, default: bool | None = None) -> bool:
+        if isinstance(raw, bool):
+            return bool(raw)
+        token = str(raw or "").strip().lower()
+        if token in ("1", "true", "on", "yes", "y", "pixelated", "nearest"):
+            return True
+        if token in ("0", "false", "off", "no", "n", "smooth", "linear"):
+            return False
+        if default is not None:
+            return bool(default)
+        raise ValueError(f"invalid bool token: {raw!r}")
+
+    def _cmd_world_textures(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        if not argv:
+            return ["usage: world_textures <pixelated|smooth|on|off|1|0> [reload:true|false]"]
+        try:
+            pixelated = _parse_bool_token(argv[0])
+            reload_scene = _parse_bool_token(argv[1], default=True) if len(argv) >= 2 else True
+        except Exception as e:
+            return [f"error: {e}"]
+        setter = getattr(runner, "_set_pixelated_textures_enabled", None)
+        if not callable(setter):
+            return ["error: runtime texture toggle is unavailable"]
+        payload = setter(enabled=bool(pixelated), reload_scene=bool(reload_scene))
+        return [json.dumps(payload, ensure_ascii=True)]
+
+    def _vm_rpg_state_lines(state: dict[str, object]) -> list[str]:
+        return [
+            f"vm_rpg.pos={json.dumps(state.get('pos'), ensure_ascii=True)}",
+            f"vm_rpg.hpr={json.dumps(state.get('hpr'), ensure_ascii=True)}",
+            f"vm_rpg.model_hpr={json.dumps(state.get('model_hpr'), ensure_ascii=True)}",
+            f"vm_rpg.model_scale={json.dumps(state.get('model_scale'), ensure_ascii=True)}",
+            f"vm_rpg.size={json.dumps(state.get('target_longest'), ensure_ascii=True)}",
+        ]
+
+    def _cmd_vm_rpg_print(_ctx: CommandContext, _argv: list[str]) -> list[str]:
+        from ivan.game import combat_fx as _combat_fx
+
+        try:
+            state = _combat_fx.imported_rpg_debug_state()
+        except Exception as e:
+            return [f"error: {e}"]
+        return _vm_rpg_state_lines(state)
+
+    def _parse_triplet(argv: list[str]) -> tuple[float, float, float] | None:
+        if len(argv) != 3:
+            return None
+        try:
+            return (float(argv[0]), float(argv[1]), float(argv[2]))
+        except Exception:
+            return None
+
+    def _cmd_vm_rpg_pos(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        from ivan.game import combat_fx as _combat_fx
+
+        if not argv:
+            return _vm_rpg_state_lines(_combat_fx.imported_rpg_debug_state())
+        triplet = _parse_triplet(argv)
+        if triplet is None:
+            return ["usage: vm_rpg_pos <x> <y> <z>"]
+        try:
+            state = _combat_fx.set_imported_rpg_debug_state(runner, pos=triplet)
+        except Exception as e:
+            return [f"error: {e}"]
+        return _vm_rpg_state_lines(state)
+
+    def _cmd_vm_rpg_hpr(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        from ivan.game import combat_fx as _combat_fx
+
+        if not argv:
+            return _vm_rpg_state_lines(_combat_fx.imported_rpg_debug_state())
+        triplet = _parse_triplet(argv)
+        if triplet is None:
+            return ["usage: vm_rpg_hpr <h> <p> <r>"]
+        try:
+            state = _combat_fx.set_imported_rpg_debug_state(runner, hpr=triplet)
+        except Exception as e:
+            return [f"error: {e}"]
+        return _vm_rpg_state_lines(state)
+
+    def _cmd_vm_rpg_model_hpr(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        from ivan.game import combat_fx as _combat_fx
+
+        if not argv:
+            return _vm_rpg_state_lines(_combat_fx.imported_rpg_debug_state())
+        triplet = _parse_triplet(argv)
+        if triplet is None:
+            return ["usage: vm_rpg_model_hpr <h> <p> <r>"]
+        try:
+            state = _combat_fx.set_imported_rpg_debug_state(runner, model_hpr=triplet)
+        except Exception as e:
+            return [f"error: {e}"]
+        return _vm_rpg_state_lines(state)
+
+    def _cmd_vm_rpg_size(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        from ivan.game import combat_fx as _combat_fx
+
+        if not argv:
+            return _vm_rpg_state_lines(_combat_fx.imported_rpg_debug_state())
+        if len(argv) != 1:
+            return ["usage: vm_rpg_size <value>"]
+        try:
+            value = float(argv[0])
+        except Exception:
+            return ["error: size must be a number"]
+        try:
+            state = _combat_fx.set_imported_rpg_debug_state(runner, target_longest=value)
+        except Exception as e:
+            return [f"error: {e}"]
+        return _vm_rpg_state_lines(state)
+
+    def _cmd_vm_rpg_model_scale(_ctx: CommandContext, argv: list[str]) -> list[str]:
+        from ivan.game import combat_fx as _combat_fx
+
+        if not argv:
+            return _vm_rpg_state_lines(_combat_fx.imported_rpg_debug_state())
+        triplet = _parse_triplet(argv)
+        if triplet is None:
+            return ["usage: vm_rpg_model_scale <x> <y> <z>"]
+        try:
+            state = _combat_fx.set_imported_rpg_debug_state(runner, model_scale=triplet)
+        except Exception as e:
+            return [f"error: {e}"]
+        return _vm_rpg_state_lines(state)
+
+    def _cmd_vm_rpg_reset(_ctx: CommandContext, _argv: list[str]) -> list[str]:
+        from ivan.game import combat_fx as _combat_fx
+
+        try:
+            state = _combat_fx.reset_imported_rpg_debug_state(runner)
+        except Exception as e:
+            return [f"error: {e}"]
+        return _vm_rpg_state_lines(state)
+
     def _bus_help(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
         cmd = str(args.get("command") or "").strip()
         if cmd:
@@ -576,6 +710,20 @@ def build_client_console(runner: Any) -> Console:
             payload = scene_runtime.save_world_map(include_fog=bool(args.get("include_fog", True)))
         except Exception as e:
             return CommandResult.failure(str(e), error_code="world-map-save")
+        return CommandResult.success(out=[json.dumps(payload, ensure_ascii=True)], data=payload)
+
+    def _bus_world_textures_set(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+        setter = getattr(runner, "_set_pixelated_textures_enabled", None)
+        if not callable(setter):
+            return CommandResult.failure("runtime texture toggle is unavailable", error_code="world-textures")
+        try:
+            pixelated = _parse_bool_token(args.get("pixelated"), default=True)
+            reload_scene = _parse_bool_token(args.get("reload"), default=True)
+            payload = setter(enabled=bool(pixelated), reload_scene=bool(reload_scene))
+        except Exception as e:
+            return CommandResult.failure(str(e), error_code="world-textures")
+        if not bool(payload.get("ok", True)):
+            return CommandResult.failure(str(payload.get("error") or "failed to update texture mode"), error_code="world-textures")
         return CommandResult.success(out=[json.dumps(payload, ensure_ascii=True)], data=payload)
 
     con.register_bus_command(
@@ -793,6 +941,31 @@ def build_client_console(runner: Any) -> Console:
         ),
         handler=_bus_world_map_save,
     )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="world_textures_set",
+            summary="Toggle runtime pixelated/smooth base texture sampling mode.",
+            route="game-thread",
+            tags=("world", "render", "textures", "mcp"),
+            args=(
+                CommandArgSpec(
+                    name="pixelated",
+                    typ="bool",
+                    required=False,
+                    default=True,
+                    help="True = nearest/pixelated, False = smooth filtering.",
+                ),
+                CommandArgSpec(
+                    name="reload",
+                    typ="bool",
+                    required=False,
+                    default=True,
+                    help="When true, reload current map to apply to all textures.",
+                ),
+            ),
+        ),
+        handler=_bus_world_textures_set,
+    )
 
     # Legacy/compat commands remain available for existing scripts.
     con.register_command(name="help", help="List commands and cvars.", handler=_cmd_help)
@@ -845,6 +1018,46 @@ def build_client_console(runner: Any) -> Console:
         name="world_runtime",
         help="Dump world runtime path + sky/fog diagnostics as JSON.",
         handler=_cmd_world_runtime,
+    )
+    con.register_command(
+        name="world_textures",
+        help="Toggle world texture filtering mode (pixelated/smooth), optionally reloading the map.",
+        handler=_cmd_world_textures,
+    )
+    con.register_command(
+        name="vm_rpg_print",
+        help="Print imported RPG viewmodel debug transform state.",
+        handler=_cmd_vm_rpg_print,
+    )
+    con.register_command(
+        name="vm_rpg_pos",
+        help="Get/set imported RPG weapon root position (x y z).",
+        handler=_cmd_vm_rpg_pos,
+    )
+    con.register_command(
+        name="vm_rpg_hpr",
+        help="Get/set imported RPG weapon root rotation (h p r).",
+        handler=_cmd_vm_rpg_hpr,
+    )
+    con.register_command(
+        name="vm_rpg_model_hpr",
+        help="Get/set imported RPG model-pivot rotation (h p r).",
+        handler=_cmd_vm_rpg_model_hpr,
+    )
+    con.register_command(
+        name="vm_rpg_size",
+        help="Get/set imported RPG viewmodel size scalar.",
+        handler=_cmd_vm_rpg_size,
+    )
+    con.register_command(
+        name="vm_rpg_model_scale",
+        help="Get/set imported RPG model-pivot scale vector (x y z).",
+        handler=_cmd_vm_rpg_model_scale,
+    )
+    con.register_command(
+        name="vm_rpg_reset",
+        help="Reset imported RPG debug transform to defaults.",
+        handler=_cmd_vm_rpg_reset,
     )
 
     for field, anno in PhysicsTuning.__annotations__.items():

@@ -23,6 +23,9 @@ If you prefer running apps from the repo root (and passing through args), use:
 ./runapp baker
 ```
 
+On Windows, prefer invoking the repository helper directly (for example `.\runapp.cmd ivan` or `.\runapp.ps1 ivan`) so you do not accidentally hit a global `runapp` alias from another environment.
+For `ivan`, `runapp` now verifies that import resolution points to this workspace `apps/ivan/src/ivan` tree before launch and refuses stale module paths.
+
 List apps:
 ```bash
 ./runapp list

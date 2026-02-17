@@ -100,6 +100,13 @@ Project includes MCP config at `ivan/.cursor/mcp.json`:
 - `ent_dir <name> [path]`
 - `ent_pos <name> [x y z]`
 - `world_runtime`
+- `vm_rpg_print`
+- `vm_rpg_pos <x> <y> <z>`
+- `vm_rpg_hpr <h> <p> <r>`
+- `vm_rpg_model_hpr <h> <p> <r>`
+- `vm_rpg_model_scale <x> <y> <z>`
+- `vm_rpg_size <value>`
+- `vm_rpg_reset`
 
 ### Replay/Telemetry/Tuning Workflows (client runtime)
 

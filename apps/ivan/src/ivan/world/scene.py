@@ -553,6 +553,7 @@ class WorldScene:
             "fog_cull_far": float(self._fog_cull_far),
             "fog_pending_save": bool(isinstance(self._pending_map_fog, dict)),
             "runtime_only_lighting": bool(self._runtime_only_lighting),
+            "pixelated_textures": bool(self._pixelated_textures),
         }
         if isinstance(self._visibility_cache_report, dict) and self._visibility_cache_report:
             diag["visibility_cache"] = dict(self._visibility_cache_report)

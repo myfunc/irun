@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from panda3d.core import Filename
+
 from ivan.state import state_dir
 
 
@@ -151,9 +153,10 @@ def _ensure_assets() -> dict[str, Path]:
 
 def _load_channel_voices(host, *, key: str, path: Path, voices: int) -> list[Any]:
     out: list[Any] = []
+    panda_path = Filename.fromOsSpecific(str(path))
     for _ in range(max(1, int(voices))):
         try:
-            snd = host.loader.loadSfx(path.as_posix())
+            snd = host.loader.loadSfx(panda_path)
         except Exception:
             snd = None
         if snd is not None:

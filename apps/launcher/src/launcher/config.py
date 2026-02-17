@@ -18,6 +18,13 @@ def _default_ivan_root() -> str:
     return str(_repo_root() / "apps" / "ivan")
 
 
+def _default_ivan_python() -> str:
+    ivan_root = Path(_default_ivan_root())
+    if os.name == "nt":
+        return str(ivan_root / ".venv" / "Scripts" / "python.exe")
+    return str(ivan_root / ".venv" / "bin" / "python")
+
+
 def _default_maps_dir() -> str:
     return str(Path(_default_ivan_root()) / "assets" / "maps")
 
@@ -74,6 +81,9 @@ class LauncherConfig:
     def effective_python(self) -> str:
         if self.python_exe and Path(self.python_exe).is_file():
             return self.python_exe
+        default_ivan_py = Path(_default_ivan_python())
+        if default_ivan_py.is_file():
+            return str(default_ivan_py)
         import sys
         return sys.executable
 
