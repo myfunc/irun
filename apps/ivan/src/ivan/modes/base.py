@@ -5,6 +5,7 @@ from typing import Callable, Protocol
 
 from panda3d.core import LVector3f
 
+from ivan.course.volumes import AABBVolume, CylinderVolume
 from ivan.physics.tuning import PhysicsTuning
 from ivan.ui.debug_ui import DebugUI
 
@@ -30,6 +31,13 @@ class ModeHost(Protocol):
     def player_pos(self) -> LVector3f: ...
     def player_yaw_deg(self) -> float: ...
     def now(self) -> float: ...
+    def race_leaderboard_held(self) -> bool: ...
+    def set_time_trial_markers(
+        self,
+        *,
+        start: AABBVolume | CylinderVolume | None,
+        finish: AABBVolume | CylinderVolume | None,
+    ) -> None: ...
 
 
 @dataclass(frozen=True)

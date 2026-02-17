@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ivan.maps.run_metadata import load_run_metadata
+from ivan.maps.run_metadata import load_run_metadata, set_run_metadata_games
 
 
 def test_load_run_metadata_returns_defaults_when_bundle_ref_none() -> None:
@@ -57,3 +57,45 @@ def test_load_run_metadata_parses_fog(tmp_path: Path) -> None:
     assert md.fog["enabled"] is True
     assert md.fog["start"] == 50.0
     assert md.fog["end"] == 180.0
+
+
+def test_load_run_metadata_parses_games_section(tmp_path: Path) -> None:
+    (tmp_path / "run.json").write_text(
+        json.dumps(
+            {
+                "games": {
+                    "definitions": [
+                        {
+                            "id": "race_001",
+                            "type": "race",
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    md = load_run_metadata(bundle_ref=tmp_path)
+    assert isinstance(md.games, dict)
+    defs = md.games.get("definitions")
+    assert isinstance(defs, list)
+    assert defs[0]["id"] == "race_001"
+
+
+def test_set_run_metadata_games_persists_payload(tmp_path: Path) -> None:
+    set_run_metadata_games(
+        bundle_ref=tmp_path,
+        games={
+            "definitions": [
+                {
+                    "id": "race_001",
+                    "type": "race",
+                }
+            ]
+        },
+    )
+    md = load_run_metadata(bundle_ref=tmp_path)
+    assert isinstance(md.games, dict)
+    defs = md.games.get("definitions")
+    assert isinstance(defs, list)
+    assert defs[0]["type"] == "race"

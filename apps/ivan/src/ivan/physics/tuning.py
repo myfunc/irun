@@ -78,7 +78,7 @@ class PhysicsTuning:
     player_half_height: float = 1.05
     player_eye_height: float = 0.625
 
-    # Time-trial course marker placement (F5/F6): half extents for the AABB volumes.
+    # Race/time-trial marker placement (5/6, legacy F5/F6): radius/height for circular checkpoints.
     course_marker_half_extent_xy: float = 2.5
     course_marker_half_extent_z: float = 2.0
 

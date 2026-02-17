@@ -66,7 +66,7 @@ def test_apply_fog_uses_engine_default_when_unset() -> None:
 
     assert scene._fog_source == "engine-default"
     assert scene._fog_enabled is True
-    assert scene._fog_range == (40.0, 220.0)
+    assert scene._fog_range == (120.0, 360.0)
     assert render.fog_node is not None
 
 
@@ -178,4 +178,3 @@ def test_light_spot_uses_spotlight_runtime_path(monkeypatch) -> None:
     assert isinstance(node.node_obj.lens, _LensStub)
     assert node.node_obj.lens.fov == 60.0
     assert node.hpr == (45.0, -20.0, 0.0)
-

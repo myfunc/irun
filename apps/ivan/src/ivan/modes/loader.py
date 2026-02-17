@@ -12,14 +12,14 @@ def load_mode(*, mode: str, config: dict | None) -> Any:
     Load a game mode.
 
     Supported values:
-    - Built-in ids: "free_run", "time_trial"
+    - Built-in ids: "free_run", "time_trial" (alias: "race")
     - Python class path: "some.module:ClassName" (instantiated with config=...)
     """
 
     mode = str(mode or "").strip() or "free_run"
     if mode == "free_run":
         return FreeRunMode(config=config)
-    if mode == "time_trial":
+    if mode in {"time_trial", "race"}:
         return TimeTrialMode(config=config)
 
     if ":" in mode:
@@ -31,4 +31,3 @@ def load_mode(*, mode: str, config: dict | None) -> Any:
         return cls(config=config)
 
     raise RuntimeError(f"Unknown mode: {mode}")
-

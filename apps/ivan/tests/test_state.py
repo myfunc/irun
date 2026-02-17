@@ -6,6 +6,7 @@ from pathlib import Path
 from ivan.state import (
     IvanState,
     get_time_trial_course_override,
+    get_time_trial_leaderboard,
     get_time_trial_pb_seconds,
     load_state,
     record_time_trial_run,
@@ -98,6 +99,7 @@ def test_time_trial_persists_pb_and_last(tmp_path: Path) -> None:
         assert last3 == 11.0
         assert rank3 == (1, 3)
         assert get_time_trial_pb_seconds(map_id="m") == 11.0
+        assert get_time_trial_leaderboard(map_id="m", limit=5) == [11.0, 12.5, 20.0]
     finally:
         if prev is None:
             os.environ.pop("IRUN_IVAN_STATE_DIR", None)

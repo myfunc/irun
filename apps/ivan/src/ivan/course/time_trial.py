@@ -4,13 +4,13 @@ from dataclasses import dataclass
 
 from panda3d.core import LVector3f
 
-from ivan.course.volumes import AABBVolume, aabb_centered
+from ivan.course.volumes import AABBVolume, CylinderVolume, aabb_centered, cylinder_centered
 
 
 @dataclass(frozen=True)
 class CourseSpec:
-    start: AABBVolume | None = None
-    finish: AABBVolume | None = None
+    start: AABBVolume | CylinderVolume | None = None
+    finish: AABBVolume | CylinderVolume | None = None
 
     def is_complete(self) -> bool:
         return self.start is not None and self.finish is not None
@@ -96,3 +96,6 @@ class TimeTrial:
 def make_marker_aabb(*, pos: LVector3f, half_xy: float, half_z: float) -> AABBVolume:
     return aabb_centered(cx=float(pos.x), cy=float(pos.y), cz=float(pos.z), half_xy=float(half_xy), half_z=float(half_z))
 
+
+def make_marker_cylinder(*, pos: LVector3f, radius: float, half_z: float) -> CylinderVolume:
+    return cylinder_centered(cx=float(pos.x), cy=float(pos.y), cz=float(pos.z), radius=float(radius), half_z=float(half_z))

@@ -15,6 +15,12 @@
 - Checkpoints + respawn
 - Hazards + collectibles
 - Simple UI (timer/collect count)
+- Networked games module foundation (authoring + authoritative runtime boundaries)
+  - in-world editor flow (`V` toggle, `F` mode picker, noclip authoring)
+  - race mission authoring controls (`1` start, `2` checkpoint, `3` finish)
+  - mission marker interaction and synchronized intro/countdown/start flow for online play
+  - server-authoritative checkpoint ordering + timer start on `GO`
+  - landed: race/editor runtime with authoritative multiplayer replication (`games_v/games/game_state/game_events`) and host-only network editor mutations
 - UI kit: standardize procedural windows/panels/controls and theme tokens before wiring into runtime UI
   - Near-term: lock down typography + DPI scaling + low-res readability rules, then add focus/keyboard navigation and a scroll container
 - Handcrafted, player-generated map workflow and validation tools
@@ -77,5 +83,5 @@ Items temporarily on hold pending further analysis:
   - landed: combat juice pass for impact readability/feel (heavier rocket explosions, shockwave rings, impact-scaled view punch, and layered rocket/pulse impact audio)
   - landed: slot `1/2` readability/fun pass (blink travel-scaled exit carry, slam close-impact rebound, explicit blink/slam world-hit confirms in VFX, and dedicated impact SFX layers for slots `1/2`)
   - landed: first-person weapon silhouette pass for slot `3` (dedicated RPG-style launcher view model replacing shared generic block mesh)
-  - landed: transport sandbox extension with slot `5` (`planer`) and slot `6` (`skateboard`), plus replay/input plumbing for slot range `1-6` and explicit `Q/E` held-state capture
+  - landed: race/time-trial checkpoint refresh with slot `5/6` marker placement, GTA-style circular checkpoint visuals, and hold-`Tab` local leaderboard display
   - next: move more collision/constraint edge-cases to policy-driven impulse budget hooks
