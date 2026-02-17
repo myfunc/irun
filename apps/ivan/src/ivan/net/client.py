@@ -32,6 +32,8 @@ class MultiplayerClient:
         self.can_configure: bool = False
         self.server_tuning_version: int = 0
         self.server_tuning: dict[str, float | bool] | None = None
+        self.server_games_version: int = 0
+        self.server_games: dict | None = None
 
         self._tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._tcp.settimeout(5.0)
@@ -81,6 +83,10 @@ class MultiplayerClient:
                 elif isinstance(v, (int, float)):
                     out[k] = float(v)
             self.server_tuning = out
+        self.server_games_version = int(obj.get("games_v") or 0)
+        games_val = obj.get("games")
+        if isinstance(games_val, dict):
+            self.server_games = games_val
         udp_port = int(obj.get("udp_port") or 0)
         if not self.token or self.player_id <= 0 or udp_port <= 0:
             raise RuntimeError("Incomplete welcome packet")
@@ -120,6 +126,7 @@ class MultiplayerClient:
             # Backward-compatible alias used by older servers.
             "dp": bool(cmd.get("sp")) or bool(cmd.get("dp")),
             "gp": bool(cmd.get("gp")),
+            "ip": bool(cmd.get("ip")),
         }
         payload = json.dumps(pkt, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
         try:
@@ -161,5 +168,19 @@ class MultiplayerClient:
     def send_respawn(self) -> None:
         try:
             self._tcp.sendall(encode_json({"t": "respawn"}))
+        except Exception:
+            pass
+
+    def send_interact(self) -> None:
+        try:
+            self._tcp.sendall(encode_json({"t": "interact"}))
+        except Exception:
+            pass
+
+    def send_games_definitions(self, *, games: dict) -> None:
+        if not isinstance(games, dict):
+            return
+        try:
+            self._tcp.sendall(encode_json({"t": "games_set", "games": games}))
         except Exception:
             pass
