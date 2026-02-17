@@ -35,6 +35,8 @@ Configure and persist paths used by the launcher:
 - **WAD dir (optional)** — where `.wad` texture files live (legacy; deprioritized).
 
 Settings are saved to `~/.irun/launcher/config.json`.
+If Python executable is empty, launcher now prefers `apps/ivan/.venv` automatically (falls back to current interpreter only when that venv is missing).
+Launcher-spawned IVAN/tool processes prepend repo `apps/ivan/src` (and `apps/ui_kit/src`) to `PYTHONPATH` so workspace code is used instead of stale installed packages.
 
 ### Pack Browser (primary)
 - Recursively scans the maps directory for `.irunmap` pack files.
@@ -61,6 +63,7 @@ Settings are saved to `~/.irun/launcher/config.json`.
 | **Stop Game** | Terminate the running IVAN game process |
 
 Launch uses the assigned pack when one is set; otherwise it uses the selected source `.map`.
+Launcher prevents duplicate game spawns: pressing Launch while IVAN is already running logs a warning and does not start a second process.
 
 ### Log Panel
 - Captures stdout/stderr from all spawned subprocesses.

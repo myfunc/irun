@@ -32,6 +32,7 @@ class PauseMenuUI:
         on_rebind_noclip,
         on_master_volume_change,
         on_sfx_volume_change,
+        on_apply_mcp_control,
         on_toggle_open_network,
         on_connect_server,
         on_disconnect_server,
@@ -39,17 +40,29 @@ class PauseMenuUI:
         on_feel_apply_feedback,
         master_volume: float = 0.85,
         sfx_volume: float = 0.90,
+        mcp_control_enabled: bool = True,
+        mcp_control_port: int = 7779,
     ) -> None:
         screen_ar = aspect_ratio()
-        panel_top = PANEL_TOP
-        panel_bottom = PANEL_BOTTOM
-        panel_width = min(1.38, max(1.04, screen_ar * 0.74))
-        right = screen_ar - 0.02
+        panel_top = min(0.97, PANEL_TOP + 0.01)
+        panel_bottom = max(-0.95, PANEL_BOTTOM - 0.06)
+        panel_width = min(1.52, max(1.18, screen_ar * 0.80))
+        right = screen_ar - 0.018
         left = right - panel_width
 
         w = panel_width
         h = panel_top - panel_bottom
-        self._theme = theme
+        self._theme = theme.with_overrides(
+            outline_w=max(0.004, float(theme.outline_w) * 0.72),
+            header_h=float(theme.header_h) * 0.92,
+            accent_h=max(0.006, float(theme.accent_h) * 0.85),
+            shadow_off_x=float(theme.shadow_off_x) * 0.68,
+            shadow_off_y=float(theme.shadow_off_y) * 0.68,
+            panel=(0.092, 0.088, 0.082, 0.98),
+            panel2=(0.130, 0.122, 0.112, 0.98),
+            outline=(0.43, 0.41, 0.39, 1.0),
+        )
+        theme = self._theme
         self._feel_route_tag: str = "A"
 
         self._panel = Panel.build(
@@ -90,7 +103,7 @@ class PauseMenuUI:
         )
         self._hint.hide()
 
-        tab_h = 0.11
+        tab_h = 0.105
         page_h = max(0.20, content_h - tab_h - theme.gap * 1.5)
         self._tabs = Tabs.build(
             parent=self._content,
@@ -113,7 +126,7 @@ class PauseMenuUI:
             pos=(0.0, 0, theme.pad),
             text_wordwrap=22,
         )
-        btn_h = 0.12
+        btn_h = 0.108
         btn_w = content_w
 
         # Main page buttons (2-column grid to keep everything visible on smaller windows).
@@ -233,9 +246,12 @@ class PauseMenuUI:
             on_rebind_noclip=on_rebind_noclip,
             on_master_volume_change=on_master_volume_change,
             on_sfx_volume_change=on_sfx_volume_change,
+            on_apply_mcp_control=on_apply_mcp_control,
             on_back=self.show_main,
             master_volume=float(master_volume),
             sfx_volume=float(sfx_volume),
+            mcp_control_enabled=bool(mcp_control_enabled),
+            mcp_control_port=int(mcp_control_port),
         )
 
         # Multiplayer page.
@@ -522,6 +538,12 @@ class PauseMenuUI:
     def set_audio_levels(self, *, master_volume: float, sfx_volume: float) -> None:
         self._settings.set_master_volume(master_volume)
         self._settings.set_sfx_volume(sfx_volume)
+
+    def set_mcp_settings(self, *, enabled: bool, port: int) -> None:
+        self._settings.set_mcp_settings(enabled=bool(enabled), port=int(port))
+
+    def set_mcp_status(self, text: str) -> None:
+        self._settings.set_mcp_status(text)
 
     def set_open_to_network(self, value: bool) -> None:
         self._open_network_checkbox.set_checked(bool(value))

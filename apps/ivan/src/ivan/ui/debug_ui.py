@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import secrets
+import string
 
 from direct.gui import DirectGuiGlobals as DGG
 from direct.gui.DirectGui import DirectFrame, DirectLabel
@@ -32,6 +34,11 @@ class _GroupUI:
     panel: CollapsiblePanel
     numeric: dict[str, NumericControl]
     toggles: dict[str, Checkbox]
+
+
+def _make_build_code(length: int = 8) -> str:
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(max(1, int(length))))
 
 
 class DebugUI:
@@ -209,6 +216,19 @@ class DebugUI:
             pos=(theme.outline_w + theme.pad * 0.45, 0, bar_h * 0.34),
             text_wordwrap=160,
         )
+        # Always-visible build marker in the lower-left corner.
+        build_code = _make_build_code(8)
+        build_text = f"build {build_code}"
+        self.build_code_label = DirectLabel(
+            parent=aspect2d,
+            text=build_text,
+            text_scale=0.022,
+            text_align=TextNode.ALeft,
+            text_fg=(0.88, 0.88, 0.88, 0.78),
+            frameColor=(0, 0, 0, 0),
+            pos=(-screen_ar + SCREEN_PAD_X, 0, -0.975),
+        )
+        self.build_code_label.show()
 
         # Layout inside the window (local coordinates 0..w/0..h).
         header_total_h = theme.header_h + (theme.outline_w * 2)

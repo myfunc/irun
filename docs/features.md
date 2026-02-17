@@ -11,12 +11,14 @@
 - Ivan: debug/admin panel moved to `` ` `` (tilde/backtick)
 - Ivan: rebindable noclip toggle (default `V`) via in-game Settings tab
 - Ivan: in-game menu/debug UI block gameplay input but keep simulation running (no pause)
+- Ivan: closing the game window now exits the process and tears down MCP bridge sockets (same as in-game Quit)
 - Ivan: classic center crosshair (Half-Life/CS style) visible during active gameplay
 - Ivan: layout-agnostic movement/input lane detection (runtime keyboard-map/raw fallback for physical lanes including `WASD` and `Q/E`, with non-US symbol aliases and arrow fallback)
 - Ivan: debug HUD overlay (`F12`) — compact FPS/frametime panel with mode cycle
   - modes: minimal (fps + frame ms) → render (fps, p95, sim steps) → streaming (fps, p95, net perf) → graph (fps, spike count, frametime bars) → off
   - top-right placement to avoid overlap with speed/health HUD
 - Ivan: input debug overlay (`F2`) for keyboard/mouse troubleshooting
+- Ivan: always-visible lower-left build marker (`build <8-char code>`), generated per launch (`a-zA-Z0-9`)
 - Ivan: in-game UI layer/safe-zone pass
   - unified screen-lane constants for gameplay UI roots (`ivan/ui/ui_layout.py`) to reduce hardcoded coordinate drift
   - explicit UI z-order bands (HUD < overlays < menus < console) to remove creation-order overlap artifacts
@@ -102,8 +104,10 @@
   - camera observer state resets on map start/respawn/network reconcile paths to avoid stale offset snaps
 - Ivan: pause menu layout refresh for iteration ergonomics
   - ESC menu panel is wider/taller to avoid clipping in gameplay resolutions
+  - pause menu now uses slimmer panel borders/accents for a cleaner visual style
   - top tabs use concise labels to avoid truncation
   - Menu tab action buttons use a two-column grid so all actions remain visible without overlap
+  - Options page spacing was rebalanced so keybind + MCP controls do not collide on common window sizes
 - Ivan: vault leniency and trigger criteria refactor
   - vault is enabled by default for movement iteration
   - vault timing now uses the same `grace_period` invariant used by jump buffering and coyote windows
@@ -157,6 +161,7 @@
   - Default target: windowed 1920x1080 (cross-platform); startup now adaptively fits the window into the active display when the target size is larger than the monitor work area
   - Preset resolutions: 1280x720, 1600x900, 1920x1080, 2560x1440, and fullscreen
   - Window is resizable by dragging edges in windowed mode
+  - Window adaptation now clamps extreme wide-window aspect ratios to keep render and UI composition stable during live resize
   - Settings persist across sessions in user state (`~/.irun/ivan/state.json`)
 - Ivan: CLI prefill for GoldSrc/Xash3D import flow (`--hl-root`, `--hl-mod`)
   - Supports common macOS Steam layout where the game content lives under `<Game>.app/Contents/Resources`
@@ -258,6 +263,7 @@
   - combat visuals now use richer procedural textures for weapon mesh, projectile tracers, and particles
   - each slot now has dedicated first-person weapon kick animation (per-slot recoil timing/shape)
   - slot `3` weapon view model now uses a dedicated RPG-style silhouette (long tube + wood furniture) instead of the shared generic block mesh
+  - slot `3` supports imported Half-Life RPG OBJ viewmodel path with runtime transform tuning (`vm_rpg_*`), including default model-axis mirror baseline to avoid inside-out rendering
   - each slot now has distinct particle VFX (muzzle burst and impact-style particles); slot `1/2` now include explicit world-hit confirm effects, and rocket keeps heavier multi-layer explosion bursts with embers/smoke/shockwave rings
   - combat view-punch feedback now reacts to weapon fire and scales up on nearby heavy impacts
   - synthesized weapon and movement SFX are now present (per-slot weapon sounds, grapple attach/detach, walk/run footsteps) with impact-layer sounds for all combat slots (`1-4`)
@@ -298,6 +304,7 @@
   - runtime world controls (`world_fog_set` with mode/density/color validation, `world_skybox_set` with preset validation, `world_map_save` for explicit map.json persistence)
   - in-game console UX upgrades: Up/Down history, Tab autocomplete, live command hints, metadata discoverability (`help`, `cmd_meta`)
   - MCP stdio server (`ivan-mcp`) exposes `console_exec` and `console_commands`
+  - RPG imported-model alignment commands are available in console control (`vm_rpg_print`, `vm_rpg_pos`, `vm_rpg_hpr`, `vm_rpg_model_hpr`, `vm_rpg_model_scale`, `vm_rpg_size`, `vm_rpg_reset`)
   - command execution from external control is routed to the game thread with bounded per-frame queue drain safeguards
 - Ivan: map pipeline profiles and authoring flow
   - primary authoring: edit `.map` in TrenchBroom → fast edit-run (direct load, optional pack/bake with skipped steps)
@@ -337,6 +344,8 @@
   - Live log panel capturing subprocess stdout/stderr
   - Persistent settings in `~/.irun/launcher/config.json`
   - Launcher window position and size persist between launches
+  - launcher now blocks duplicate `IVAN Game` launches while one game process is still alive
+  - launcher defaults to `apps/ivan/.venv` Python when `python_exe` is unset and injects workspace `PYTHONPATH` for spawned IVAN/tools processes
 - Ivan: Scope 05 demo-map rollout validation framework
   - acceptance baseline locked to `assets/maps/demo/demo.map`
   - cross-path smoke automation for source-map, packed `.irunmap`, and imported-map paths via `apps/ivan/tools/scope05_rollout_validation.py`

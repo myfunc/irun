@@ -1,3 +1,13 @@
+---
+description: 
+alwaysApply: true
+---
+
+---
+description: 
+alwaysApply: false
+---
+
 # IRUN Agent Instructions
 
 ## Language Policy
@@ -56,6 +66,8 @@ Naming convention:
 - When adding dependencies, update:
   - `pyproject.toml`
   - `docs/architecture.md`
+- Complex implementation/refactor/debug tasks must not be delegated to low-capability subagents.
+- Low-capability subagents may be used only for lightweight indexing/search/file discovery.
 
 ## Map Bundles
 - **`.map` files** (Valve 220 format) are the **primary authoring format** for IVAN-original maps. The engine loads them directly during development (no BSP compilation needed).

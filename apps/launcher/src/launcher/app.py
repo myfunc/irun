@@ -232,6 +232,11 @@ def _advanced_overrides_from_ui() -> AdvancedOverrides:
 
 def _handle_play(cmd: PlayCommand) -> None:
     _save_settings_from_ui()
+    game_running = any(p.alive and p.label == "IVAN Game" for p in _processes)
+    if game_running:
+        _log("IVAN game is already running. Stop it first.")
+        _update_buttons()
+        return
     try:
         plan = resolve_launch_plan(
             selected_map=_selected_map.path if _selected_map is not None else None,

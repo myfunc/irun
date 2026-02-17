@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 import time
@@ -63,15 +64,20 @@ def _spawn(
     cmd: list[str],
     *,
     cwd: str | None = None,
+    extra_env: dict[str, str] | None = None,
     on_line: Callable[[str], None] | None = None,
 ) -> ProcessHandle:
     """Launch a subprocess with stdout/stderr captured to a ProcessHandle."""
+    env = dict(os.environ)
+    if isinstance(extra_env, dict):
+        env.update(extra_env)
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         cwd=cwd,
+        env=env,
         bufsize=1,
     )
     handle = ProcessHandle(label=label, proc=proc)
@@ -82,6 +88,26 @@ def _spawn(
     t.start()
     handle._readers.append(t)
     return handle
+
+
+def _with_repo_pythonpath(*, ivan_root: str) -> dict[str, str]:
+    """
+    Force launcher-spawned commands to import workspace sources first.
+    """
+    root = Path(ivan_root).resolve()
+    repo_root = root.parents[1]
+    parts: list[str] = []
+    ivan_src = root / "src"
+    if ivan_src.is_dir():
+        parts.append(str(ivan_src))
+    ui_kit_src = repo_root / "apps" / "ui_kit" / "src"
+    if ui_kit_src.is_dir():
+        parts.append(str(ui_kit_src))
+    if not parts:
+        return {}
+    cur = os.environ.get("PYTHONPATH", "")
+    merged = os.pathsep.join(parts + ([cur] if cur else []))
+    return {"PYTHONPATH": merged}
 
 
 # ── public actions ───────────────────────────────────────────
@@ -110,7 +136,13 @@ def spawn_game(
         cmd.extend(["--hl-root", hl_root])
     if runtime_lighting:
         cmd.append("--runtime-lighting")
-    return _spawn("IVAN Game", cmd, cwd=ivan_root, on_line=on_line)
+    return _spawn(
+        "IVAN Game",
+        cmd,
+        cwd=ivan_root,
+        extra_env=_with_repo_pythonpath(ivan_root=ivan_root),
+        on_line=on_line,
+    )
 
 
 def spawn_pack(
@@ -132,7 +164,13 @@ def spawn_pack(
     if wad_dirs:
         cmd.append("--wad-dirs")
         cmd.extend(wad_dirs)
-    return _spawn("Pack Map", cmd, cwd=ivan_root, on_line=on_line)
+    return _spawn(
+        "Pack Map",
+        cmd,
+        cwd=ivan_root,
+        extra_env=_with_repo_pythonpath(ivan_root=ivan_root),
+        on_line=on_line,
+    )
 
 
 def spawn_trenchbroom(
@@ -157,7 +195,13 @@ def spawn_validate_pack(
     """Run scope05_rollout_validation.py to validate demo pack pipeline."""
     script = str(Path(ivan_root) / "tools" / "scope05_rollout_validation.py")
     cmd = [python, script]
-    return _spawn("Validate Pack", cmd, cwd=ivan_root, on_line=on_line)
+    return _spawn(
+        "Validate Pack",
+        cmd,
+        cwd=ivan_root,
+        extra_env=_with_repo_pythonpath(ivan_root=ivan_root),
+        on_line=on_line,
+    )
 
 
 def spawn_generate_tb_textures(
@@ -169,7 +213,13 @@ def spawn_generate_tb_textures(
     """Generate TrenchBroom texture outputs from current assets."""
     script = str(Path(ivan_root) / "tools" / "sync_trenchbroom_profile.py")
     cmd = [python, script]
-    return _spawn("Generate TB Textures", cmd, cwd=ivan_root, on_line=on_line)
+    return _spawn(
+        "Generate TB Textures",
+        cmd,
+        cwd=ivan_root,
+        extra_env=_with_repo_pythonpath(ivan_root=ivan_root),
+        on_line=on_line,
+    )
 
 
 def create_template_map(*, maps_dir: str) -> Path:

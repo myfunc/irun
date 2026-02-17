@@ -3,8 +3,9 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass, field
+from pathlib import Path
 
-from panda3d.core import LVector3f, NodePath, PNMImage, Texture
+from panda3d.core import CullFaceAttrib, Filename, LVector3f, NodePath, PNMImage, Texture, TransparencyAttrib
 
 from .combat_system import CombatFireEvent
 
@@ -72,6 +73,8 @@ class CombatFxRuntime:
     weapon_np: NodePath | None = None
     weapon_generic_np: NodePath | None = None
     weapon_rocket_np: NodePath | None = None
+    weapon_rocket_import_pivot_np: NodePath | None = None
+    weapon_rocket_import_base_scale: float = 1.0
     weapon_rocket_metal_parts: list[NodePath] = field(default_factory=list)
     weapon_rocket_wood_parts: list[NodePath] = field(default_factory=list)
     weapon_rocket_accent_parts: list[NodePath] = field(default_factory=list)
@@ -95,6 +98,12 @@ _BASE_WEAPON_POS = LVector3f(0.36, 0.98, -0.27)
 _BASE_WEAPON_HPR = (0.0, -2.0, 0.0)
 _BASE_VIEW_POS = LVector3f(0.0, 0.0, 0.0)
 _BASE_VIEW_HPR = (0.0, 0.0, 0.0)
+_IMPORTED_RPG_TARGET_LONGEST = 0.58
+_IMPORTED_RPG_POS = LVector3f(0.18, -0.01, -0.10)
+_IMPORTED_RPG_HPR = (0.0, -6.0, -3.0)
+_IMPORTED_RPG_MODEL_HPR = (90.0, 0.0, 96.0)
+# GoldSrc->OBJ conversion may require one axis mirror to avoid inside-out appearance.
+_IMPORTED_RPG_MODEL_SCALE = (-1.0, 1.0, 1.0)
 
 _ROCKET_METAL_COLOR = _ColorSpec(0.58, 0.56, 0.52)
 _ROCKET_METAL_DARK = _ColorSpec(0.42, 0.37, 0.32)
@@ -278,6 +287,17 @@ def _setup_weapon_piece(np: NodePath, *, texture: Texture | None) -> None:
         np.setTexture(texture)
 
 
+def _setup_imported_rpg_piece(np: NodePath) -> None:
+    # Imported OBJ should stay opaque to avoid alpha-sort artifacts in first-person view.
+    np.setTransparency(TransparencyAttrib.M_none)
+    np.setDepthTest(True)
+    np.setDepthWrite(True)
+    np.setBin("fixed", 35)
+    np.setLightOff(1)
+    np.setTwoSided(True)
+    np.setAttrib(CullFaceAttrib.make(CullFaceAttrib.MCullNone), 1)
+
+
 def _spawn_weapon_piece(
     *,
     template: NodePath,
@@ -310,6 +330,8 @@ def _build_rocket_launcher_view(
     rocket.setPos(0.01, 0.03, -0.004)
     rocket.setHpr(-3.0, 0.0, 0.0)
     st.weapon_rocket_np = rocket
+    st.weapon_rocket_import_pivot_np = None
+    st.weapon_rocket_import_base_scale = 1.0
     st.weapon_rocket_metal_parts.clear()
     st.weapon_rocket_wood_parts.clear()
     st.weapon_rocket_accent_parts.clear()
@@ -394,6 +416,121 @@ def _build_rocket_launcher_view(
     rocket.hide()
 
 
+def _rocket_obj_path() -> Path:
+    app_root = Path(__file__).resolve().parents[3]
+    return app_root / "assets" / "models" / "halflife" / "v_rpg" / "v_rpg_blowpipe.obj"
+
+
+def _apply_imported_rpg_transform(*, st: CombatFxRuntime) -> None:
+    if st.weapon_rocket_np is not None:
+        st.weapon_rocket_np.setPos(_IMPORTED_RPG_POS)
+        st.weapon_rocket_np.setHpr(*_IMPORTED_RPG_HPR)
+    pivot = st.weapon_rocket_import_pivot_np
+    if pivot is not None:
+        pivot.setHpr(*_IMPORTED_RPG_MODEL_HPR)
+        base = max(1e-6, float(st.weapon_rocket_import_base_scale))
+        uniform = float(_IMPORTED_RPG_TARGET_LONGEST) * base
+        pivot.setScale(
+            uniform * float(_IMPORTED_RPG_MODEL_SCALE[0]),
+            uniform * float(_IMPORTED_RPG_MODEL_SCALE[1]),
+            uniform * float(_IMPORTED_RPG_MODEL_SCALE[2]),
+        )
+
+
+def imported_rpg_debug_state() -> dict[str, object]:
+    return {
+        "target_longest": float(_IMPORTED_RPG_TARGET_LONGEST),
+        "pos": [float(_IMPORTED_RPG_POS.x), float(_IMPORTED_RPG_POS.y), float(_IMPORTED_RPG_POS.z)],
+        "hpr": [float(_IMPORTED_RPG_HPR[0]), float(_IMPORTED_RPG_HPR[1]), float(_IMPORTED_RPG_HPR[2])],
+        "model_hpr": [
+            float(_IMPORTED_RPG_MODEL_HPR[0]),
+            float(_IMPORTED_RPG_MODEL_HPR[1]),
+            float(_IMPORTED_RPG_MODEL_HPR[2]),
+        ],
+        "model_scale": [
+            float(_IMPORTED_RPG_MODEL_SCALE[0]),
+            float(_IMPORTED_RPG_MODEL_SCALE[1]),
+            float(_IMPORTED_RPG_MODEL_SCALE[2]),
+        ],
+    }
+
+
+def set_imported_rpg_debug_state(
+    host,
+    *,
+    pos: tuple[float, float, float] | None = None,
+    hpr: tuple[float, float, float] | None = None,
+    model_hpr: tuple[float, float, float] | None = None,
+    model_scale: tuple[float, float, float] | None = None,
+    target_longest: float | None = None,
+) -> dict[str, object]:
+    global _IMPORTED_RPG_POS, _IMPORTED_RPG_HPR, _IMPORTED_RPG_MODEL_HPR, _IMPORTED_RPG_MODEL_SCALE, _IMPORTED_RPG_TARGET_LONGEST
+    if pos is not None:
+        _IMPORTED_RPG_POS = LVector3f(float(pos[0]), float(pos[1]), float(pos[2]))
+    if hpr is not None:
+        _IMPORTED_RPG_HPR = (float(hpr[0]), float(hpr[1]), float(hpr[2]))
+    if model_hpr is not None:
+        _IMPORTED_RPG_MODEL_HPR = (float(model_hpr[0]), float(model_hpr[1]), float(model_hpr[2]))
+    if model_scale is not None:
+        _IMPORTED_RPG_MODEL_SCALE = (float(model_scale[0]), float(model_scale[1]), float(model_scale[2]))
+    if target_longest is not None:
+        _IMPORTED_RPG_TARGET_LONGEST = max(0.01, float(target_longest))
+    st = _runtime(host)
+    _apply_imported_rpg_transform(st=st)
+    return imported_rpg_debug_state()
+
+
+def reset_imported_rpg_debug_state(host) -> dict[str, object]:
+    return set_imported_rpg_debug_state(
+        host,
+        pos=(0.18, -0.01, -0.10),
+        hpr=(0.0, -6.0, -3.0),
+        model_hpr=(90.0, 0.0, 96.0),
+        model_scale=(-1.0, 1.0, 1.0),
+        target_longest=0.58,
+    )
+
+
+def _try_build_rocket_launcher_view_from_obj(*, host, st: CombatFxRuntime, weapon_root: NodePath) -> bool:
+    model_path = _rocket_obj_path()
+    if not model_path.exists():
+        return False
+    try:
+        model = host.loader.loadModel(Filename.fromOsSpecific(str(model_path)))
+    except Exception:
+        return False
+    if model.isEmpty():
+        return False
+
+    rocket = weapon_root.attachNewNode("combat-fx-weapon-rocket")
+    st.weapon_rocket_np = rocket
+    st.weapon_rocket_import_pivot_np = None
+    st.weapon_rocket_import_base_scale = 1.0
+    st.weapon_rocket_metal_parts.clear()
+    st.weapon_rocket_wood_parts.clear()
+    st.weapon_rocket_accent_parts.clear()
+
+    model_pivot = rocket.attachNewNode("combat-fx-weapon-rocket-pivot")
+    model.reparentTo(model_pivot)
+    _setup_imported_rpg_piece(model)
+
+    bounds = model.getTightBounds()
+    if bounds is not None and len(bounds) == 2:
+        mn, mx = bounds
+        center = (mn + mx) * 0.5
+        model.setPos(-center)
+        size = mx - mn
+        longest = max(float(size.x), float(size.y), float(size.z), 1e-6)
+        st.weapon_rocket_import_base_scale = 1.0 / longest
+    else:
+        st.weapon_rocket_import_base_scale = 0.012
+    st.weapon_rocket_import_pivot_np = model_pivot
+
+    _apply_imported_rpg_transform(st=st)
+    rocket.hide()
+    return True
+
+
 def init_runtime(host) -> None:
     st = _runtime(host)
     if st.root_np is not None:
@@ -454,13 +591,14 @@ def init_runtime(host) -> None:
     )
     st.weapon_generic_np = generic_weapon
 
-    _build_rocket_launcher_view(
-        st=st,
-        template=weapon_template,
-        weapon_root=weapon_root,
-        metal_tex=_make_weapon_metal_texture(),
-        wood_tex=_make_weapon_wood_texture(),
-    )
+    if not _try_build_rocket_launcher_view_from_obj(host=host, st=st, weapon_root=weapon_root):
+        _build_rocket_launcher_view(
+            st=st,
+            template=weapon_template,
+            weapon_root=weapon_root,
+            metal_tex=_make_weapon_metal_texture(),
+            wood_tex=_make_weapon_wood_texture(),
+        )
 
     st.view_np.setPos(_BASE_VIEW_POS)
     st.view_np.setHpr(*_BASE_VIEW_HPR)

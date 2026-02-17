@@ -34,3 +34,20 @@
 
 **Open Questions / Risks**
 - Need in-game screenshot validation across multiple resolutions to ensure wider pause panel never collides with edge overlays.
+### 2026-02-15 06:20 (runtime UI overhaul docs update)
+**User Goal**
+- Update project documentation so the pps/ivan-godot runtime UI overhaul is accurately captured and easy to hand off.
+
+**User Motivation**
+- Keep implementation and docs synchronized for collaboration and reduce ambiguity around runtime controls and persistence behavior.
+- Preserve a durable session record in brainstorm notes per repository policy.
+
+**Current Direction**
+- Document runtime UI capabilities explicitly: console autocomplete/hints/history/favorites, movement runtime body controls (gravity_scale, standing_height), persistence layout in user://runtime_ui/..., and overflow/readability handling.
+- Add a concise free/permissive UI asset shortlist (Kenney UI Pack, Kenney UI Pack Sci-Fi, Jamie Cross GUI Kit) with links and fit rationale for rapid iteration.
+- Keep updates scoped to docs only, without changing unrelated implementation files.
+
+**Open Questions / Risks**
+- External asset licenses should be re-verified at integration/release time in case pack metadata or terms change upstream.
+- UI readability/overflow behavior may still need an additional real-device pass across unusual aspect ratios.
+

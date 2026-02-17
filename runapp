@@ -107,6 +107,54 @@ def _with_pythonpath(env: dict[str, str], app_dir: Path) -> dict[str, str]:
     return out
 
 
+def _verify_ivan_local_import(*, py: str, app_dir: Path, env: dict[str, str]) -> tuple[bool, str]:
+    """
+    Ensure `python -m ivan` resolves to this workspace source tree.
+    """
+    probe = [
+        py,
+        "-c",
+        (
+            "import ivan, pathlib; "
+            "print(pathlib.Path(getattr(ivan, '__file__', '')).resolve())"
+        ),
+    ]
+    try:
+        p = subprocess.run(
+            probe,
+            cwd=str(app_dir),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception as e:
+        return (False, f"runapp: failed to verify ivan import path: {e}")
+    resolved = (p.stdout or "").strip()
+    if p.returncode != 0 or not resolved:
+        detail = (p.stderr or p.stdout or "").strip()
+        return (False, f"runapp: failed to import ivan for path verification: {detail or 'unknown error'}")
+    expected_prefix = (app_dir / "src" / "ivan").resolve()
+    resolved_path = Path(resolved).resolve()
+    try:
+        ok = resolved_path.is_relative_to(expected_prefix)
+    except AttributeError:
+        # Python <3.9 fallback; kept for defensive compatibility.
+        ok = str(resolved_path).startswith(str(expected_prefix))
+    if not ok:
+        return (
+            False,
+            (
+                "runapp: refused to launch stale ivan module.\n"
+                f"  resolved: {resolved_path}\n"
+                f"  expected under: {expected_prefix}\n"
+                "  hint: start from this repo root and run `./runapp ivan`, "
+                "or ensure your RunApp alias points to this repository script."
+            ),
+        )
+    return (True, "")
+
+
 def _run(cmd: list[str], *, cwd: Path, extra_env: dict[str, str]) -> int:
     p = subprocess.run(cmd, cwd=str(cwd), env=extra_env)
     return int(p.returncode)
@@ -203,6 +251,11 @@ def main(argv: Iterable[str] | None = None) -> int:
         return 0
 
     env = _with_pythonpath(dict(os.environ), app_dir)
+    if app == "ivan" and module == "ivan":
+        ok, err = _verify_ivan_local_import(py=py, app_dir=app_dir, env=env)
+        if not ok:
+            print(err, file=sys.stderr)
+            return 2
     return _run(cmd, cwd=app_dir, extra_env=env)
 
 

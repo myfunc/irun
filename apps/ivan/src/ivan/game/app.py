@@ -101,6 +101,7 @@ from .netcode import _NetPerfStats, _PredictedInput, _PredictedState, _RemotePla
 MIN_WINDOW_WIDTH = 640
 MIN_WINDOW_HEIGHT = 360
 MIN_WINDOW_ASPECT = 16.0 / 9.0
+MAX_WINDOW_ASPECT = 2.45
 
 
 class RunnerDemo(ShowBase):
@@ -246,6 +247,14 @@ class RunnerDemo(ShowBase):
         st_port = int(self._loaded_state.last_net_port) if isinstance(self._loaded_state.last_net_port, int) else None
         self._runtime_connect_host: str | None = str(self.cfg.net_host).strip() if self.cfg.net_host else None
         self._runtime_connect_port: int = int(self.cfg.net_port) if self.cfg.net_host else int(st_port or self.cfg.net_port)
+        env_mcp_enabled = self._parse_env_bool(os.environ.get("IRUN_IVAN_CONSOLE_ENABLED"))
+        self._mcp_control_enabled: bool = (
+            bool(env_mcp_enabled) if env_mcp_enabled is not None else bool(self._loaded_state.mcp_control_enabled)
+        )
+        env_mcp_port_raw = os.environ.get("IRUN_IVAN_CONSOLE_PORT")
+        env_mcp_port = self._parse_port_str(env_mcp_port_raw) if env_mcp_port_raw else None
+        self._mcp_control_port: int = int(env_mcp_port or int(self._loaded_state.mcp_control_port or 7779))
+        self._mcp_control_status: str = ""
         self._local_hp: int = 100
         self._sim_prev_player_pos = LVector3f(0, 0, 0)
         self._sim_curr_player_pos = LVector3f(0, 0, 0)
@@ -319,6 +328,7 @@ class RunnerDemo(ShowBase):
             on_rebind_noclip=self._start_rebind_noclip,
             on_master_volume_change=self._on_master_volume_changed,
             on_sfx_volume_change=self._on_sfx_volume_changed,
+            on_apply_mcp_control=self._on_apply_mcp_control_settings,
             on_toggle_open_network=self._on_toggle_open_network,
             on_connect_server=self._on_connect_server_from_menu,
             on_disconnect_server=self._on_disconnect_server_from_menu,
@@ -326,10 +336,14 @@ class RunnerDemo(ShowBase):
             on_feel_apply_feedback=self._feel_apply_feedback,
             master_volume=float(self._master_volume),
             sfx_volume=float(self._sfx_volume),
+            mcp_control_enabled=bool(self._mcp_control_enabled),
+            mcp_control_port=int(self._mcp_control_port),
         )
         self.pause_ui.set_noclip_binding(self._noclip_toggle_key)
         if hasattr(self.pause_ui, "set_audio_levels"):
             self.pause_ui.set_audio_levels(master_volume=float(self._master_volume), sfx_volume=float(self._sfx_volume))
+        if hasattr(self.pause_ui, "set_mcp_settings"):
+            self.pause_ui.set_mcp_settings(enabled=bool(self._mcp_control_enabled), port=int(self._mcp_control_port))
         self.pause_ui.set_open_to_network(self._open_to_network)
         self.pause_ui.set_connect_target(
             host=self._runtime_connect_host or "127.0.0.1",
@@ -377,18 +391,8 @@ class RunnerDemo(ShowBase):
         self.console.register_listener(self._console_bus.listener)
         self._console_req_lock = threading.Lock()
         self._console_req_queue: deque[dict[str, Any]] = deque()
-        # Default chosen to be near the multiplayer default (7777) but not collide.
-        self._console_control_port = int(os.environ.get("IRUN_IVAN_CONSOLE_PORT", "7779"))
-        self.console_control = ConsoleControlServer(
-            console=self.console,
-            port=int(self._console_control_port),
-            execute_request=self._queue_console_request,
-        )
-        try:
-            self.console_control.start()
-        except Exception:
-            # Best-effort: if the port is in use, keep running without the control bridge.
-            self.console_control = None
+        self.console_control: ConsoleControlServer | None = None
+        self._configure_console_control_server()
 
         # Boot behavior:
         # - --map: run immediately (useful for fast iteration)
@@ -423,6 +427,7 @@ class RunnerDemo(ShowBase):
         self._set_ui_bin(getattr(self.ui, "speed_hud_root", None), layers.HUD)
         self._set_ui_bin(getattr(self.ui, "status_root", None), layers.HUD)
         self._set_ui_bin(getattr(self.ui, "time_trial_hud_label", None), layers.HUD)
+        self._set_ui_bin(getattr(self.ui, "build_code_label", None), layers.HUD)
         # Small telemetry overlays.
         self._set_ui_bin(getattr(self.input_debug, "root", None), layers.OVERLAY)
         self._set_ui_bin(getattr(self.debug_hud, "root", None), layers.OVERLAY)
@@ -477,6 +482,8 @@ class RunnerDemo(ShowBase):
         h = max(int(MIN_WINDOW_HEIGHT), int(height))
         if float(h) > 0.0 and (float(w) / float(h)) < float(MIN_WINDOW_ASPECT):
             w = int(round(float(h) * float(MIN_WINDOW_ASPECT)))
+        if float(h) > 0.0 and (float(w) / float(h)) > float(MAX_WINDOW_ASPECT):
+            h = max(int(MIN_WINDOW_HEIGHT), int(round(float(w) / float(MAX_WINDOW_ASPECT))))
         try:
             disp_w = int(self.pipe.getDisplayWidth())
             disp_h = int(self.pipe.getDisplayHeight())
@@ -493,16 +500,27 @@ class RunnerDemo(ShowBase):
         out_h = max(int(MIN_WINDOW_HEIGHT), int(round(float(h) * scale)))
         if float(out_h) > 0.0 and (float(out_w) / float(out_h)) < float(MIN_WINDOW_ASPECT):
             out_w = min(max_w, max(int(MIN_WINDOW_WIDTH), int(round(float(out_h) * float(MIN_WINDOW_ASPECT)))))
+        if float(out_h) > 0.0 and (float(out_w) / float(out_h)) > float(MAX_WINDOW_ASPECT):
+            out_h = min(max_h, max(int(MIN_WINDOW_HEIGHT), int(round(float(out_w) / float(MAX_WINDOW_ASPECT)))))
         return out_w, out_h
 
     def _on_window_event(self, window) -> None:
-        if self.cfg.smoke or not self._window_resize_persist_enabled or self.win is None:
+        if self.cfg.smoke or self.win is None:
             return
         if window is not None and window is not self.win:
             return
-        self._refresh_render_resolution_from_window()
+        # Closing the game window should terminate the process (and MCP bridge) reliably.
         try:
             props = self.win.getProperties()
+            if not bool(props.getOpen()):
+                self.userExit()
+                return
+        except Exception:
+            return
+        if not self._window_resize_persist_enabled:
+            return
+        self._refresh_render_resolution_from_window()
+        try:
             width = int(self.win.getXSize())
             height = int(self.win.getYSize())
         except Exception:
@@ -854,6 +872,10 @@ class RunnerDemo(ShowBase):
         self.pause_ui.set_keybind_status("")
         if hasattr(self.pause_ui, "set_audio_levels"):
             self.pause_ui.set_audio_levels(master_volume=float(self._master_volume), sfx_volume=float(self._sfx_volume))
+        if hasattr(self.pause_ui, "set_mcp_settings"):
+            self.pause_ui.set_mcp_settings(enabled=bool(self._mcp_control_enabled), port=int(self._mcp_control_port))
+        if hasattr(self.pause_ui, "set_mcp_status"):
+            self.pause_ui.set_mcp_status(self._mcp_control_status)
         self.pause_ui.set_open_to_network(self._open_to_network)
         self.pause_ui.set_connect_target(
             host=self._runtime_connect_host or "127.0.0.1",
@@ -1047,6 +1069,83 @@ class RunnerDemo(ShowBase):
             if (time.perf_counter() - t0) * 1000.0 >= float(budget_ms):
                 break
 
+    @staticmethod
+    def _parse_env_bool(raw: str | None) -> bool | None:
+        if raw is None:
+            return None
+        token = str(raw).strip().lower()
+        if token in {"1", "true", "on", "yes", "y"}:
+            return True
+        if token in {"0", "false", "off", "no", "n"}:
+            return False
+        return None
+
+    @staticmethod
+    def _parse_port_str(raw: str | None) -> int | None:
+        if raw is None:
+            return None
+        # DirectEntry occasionally leaves caret-like glyphs in text snapshots;
+        # normalize and trim them so valid port numbers still parse.
+        import unicodedata
+
+        s = unicodedata.normalize("NFKC", str(raw)).strip()
+        if s.endswith("|"):
+            s = s[:-1].strip()
+        if not s:
+            return None
+        try:
+            v = int(s)
+        except Exception:
+            return None
+        if not (1 <= int(v) <= 65535):
+            return None
+        return int(v)
+
+    def _configure_console_control_server(self) -> None:
+        if getattr(self, "console_control", None) is not None:
+            try:
+                self.console_control.close()
+            except Exception:
+                pass
+            self.console_control = None
+
+        if not bool(self._mcp_control_enabled):
+            self._mcp_control_status = "MCP control disabled in settings."
+            return
+
+        try:
+            self.console_control = ConsoleControlServer(
+                console=self.console,
+                port=int(self._mcp_control_port),
+                execute_request=self._queue_console_request,
+            )
+            self.console_control.start()
+            self._mcp_control_status = f"MCP control listening on 127.0.0.1:{int(self._mcp_control_port)}."
+        except Exception as e:
+            self.console_control = None
+            self._mcp_control_status = f"MCP control failed to start on port {int(self._mcp_control_port)}: {e}"
+
+    def _on_apply_mcp_control_settings(self, enabled: bool, port_text: str) -> None:
+        parsed_port = self._parse_port_str(port_text)
+        if parsed_port is None:
+            msg = "MCP port must be an integer in range 1..65535."
+            try:
+                self.pause_ui.set_mcp_status(msg)
+            except Exception:
+                pass
+            self.ui.set_status(msg)
+            return
+        self._mcp_control_enabled = bool(enabled)
+        self._mcp_control_port = int(parsed_port)
+        self._configure_console_control_server()
+        update_state(mcp_control_enabled=bool(self._mcp_control_enabled), mcp_control_port=int(self._mcp_control_port))
+        try:
+            self.pause_ui.set_mcp_settings(enabled=bool(self._mcp_control_enabled), port=int(self._mcp_control_port))
+            self.pause_ui.set_mcp_status(self._mcp_control_status)
+        except Exception:
+            pass
+        self.ui.set_status(self._mcp_control_status)
+
     def _open_settings_menu(self) -> None:
         if self._mode != "game":
             return
@@ -1054,6 +1153,10 @@ class RunnerDemo(ShowBase):
         self.pause_ui.set_noclip_binding(self._noclip_toggle_key)
         if hasattr(self.pause_ui, "set_audio_levels"):
             self.pause_ui.set_audio_levels(master_volume=float(self._master_volume), sfx_volume=float(self._sfx_volume))
+        if hasattr(self.pause_ui, "set_mcp_settings"):
+            self.pause_ui.set_mcp_settings(enabled=bool(self._mcp_control_enabled), port=int(self._mcp_control_port))
+        if hasattr(self.pause_ui, "set_mcp_status"):
+            self.pause_ui.set_mcp_status(self._mcp_control_status)
         self.pause_ui.set_keybind_status("")
 
     def _open_keybindings_menu(self) -> None:

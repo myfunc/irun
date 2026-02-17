@@ -21,7 +21,7 @@ See: `docs/ui-kit.md`.
 - `apps/launcher/src/launcher/__main__.py`: Launcher Toolbox entrypoint (`python -m launcher`) — Dear PyGui desktop app for runtime-first map launch and packing
 - `apps/launcher/src/launcher/app.py`: Dear PyGui window with map browser, single runtime-first runflow (selected source `.map`), primary launch/pack actions, and render loop
 - `apps/launcher/src/launcher/config.py`: Persistent launcher settings (`~/.irun/launcher/config.json`) — WAD dir, Steam/HL root, maps dir, python path, launch toggles (`watch`, `runtime-lighting`), and window geometry (position, size)
-- `apps/launcher/src/launcher/actions.py`: Subprocess spawning for game and `pack_map.py` (output captured to log)
+- `apps/launcher/src/launcher/actions.py`: Subprocess spawning for game and `pack_map.py` (output captured to log), with launcher-managed `PYTHONPATH` injection so spawned processes resolve workspace sources first (`apps/ivan/src`, `apps/ui_kit/src`)
 - `apps/launcher/src/launcher/runflow.py`: Single source of truth for fixed runtime launch plan (`dev-fast`) and resolved launch options
 - `apps/launcher/src/launcher/commands.py`: Typed command bus used by launcher UI actions to avoid duplicated behavior paths
 - `apps/launcher/src/launcher/map_browser.py`: Recursive `.map` file discovery sorted by modification time
@@ -87,7 +87,7 @@ See: `docs/ui-kit.md`.
 - `apps/ivan/src/ivan/physics/player_controller_collision.py`: Collision and step-slide mixin (sweep, snap, graybox fallback)
 - `apps/ivan/src/ivan/physics/player_controller_momentum.py`: Momentum helper mixin (targeted speed-floor guards for jump transitions; no global per-tick speed lock)
 - `apps/ivan/src/ivan/physics/collision_world.py`: Bullet collision query world (convex sweeps against static geometry)
-- `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (CS-style grouped boxes, collapsible sections, scrollable content, real-unit sliders/entries, profile dropdown/save)
+- `apps/ivan/src/ivan/ui/debug_ui.py`: Debug/admin menu UI (CS-style grouped boxes, collapsible sections, scrollable content, real-unit sliders/entries, profile dropdown/save) plus always-visible lower-left build marker (`build <8-char code>`) generated per launch
 - `apps/ivan/src/ivan/ui/main_menu.py`: main menu controller (bundle list + import flow + video settings)
 - `apps/ivan/src/ivan/ui/pause_menu_ui.py`: in-game ESC menu (Resume/Map Selector/Settings/Back/Quit) with settings, multiplayer, and feel-session tabs
   - Menu page uses a two-column action layout to keep all actions visible at gameplay resolutions.
@@ -143,6 +143,7 @@ See: `docs/ui-kit.md`.
 ## Runtime
 - Start: `python -m ivan` (from `apps/ivan`)
 - Repo root helper: `./runapp ivan` (recommended for quick iteration)
+- `runapp` and launcher defaults are aligned to prefer `apps/ivan/.venv` Python and workspace imports; startup now guards against stale module path resolution for `ivan`.
 - The game loop is driven by Panda3D's task manager.
 - Movement simulation runs at a fixed `60 Hz` tick to support deterministic input replay.
 - Movement refactor rollout is staged:
@@ -213,6 +214,7 @@ See: `docs/ui-kit.md`.
       - `ok`, `command`, `out`, `elapsed_ms`,
       - per-command `executions[]` (`name`, `ok`, `elapsed_ms`, `error_code`, `data`).
     - Control requests are routed to the game thread via a bounded queue and per-frame budget.
+    - Window-close and in-game Quit paths both tear down the bridge via `RunnerDemo.userExit()` cleanup.
   - Dedicated server process also starts a localhost control bridge on `IRUN_IVAN_SERVER_CONSOLE_PORT` (default `39001`).
   - Typed discoverability commands:
     - `help [command]`
@@ -250,6 +252,7 @@ See: `docs/ui-kit.md`.
   - Default target: windowed 1920x1080 on all platforms (Windows + macOS). Window is user-resizable.
   - Startup/runtime apply path adaptively clamps windowed size to current display bounds when the requested size does not fit.
   - Window resize events now re-apply runtime render resolution/aspect from current framebuffer size (no restart required).
+  - Closing the game window now triggers the same app-exit path as in-game Quit (`userExit`), so process shutdown and MCP bridge teardown are consistent.
   - Display settings (fullscreen, resolution) persist in `~/.irun/ivan/state.json` and are applied on startup.
   - Main menu "Video Settings" screen allows switching between windowed presets and fullscreen at runtime.
   - In-game UI/input split:

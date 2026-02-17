@@ -33,6 +33,7 @@ python -m ivan
 Default boot:
 - `python -m ivan` now boots into the **main menu**.
 - Base texture filtering is **pixelated (nearest)** by default; pass `--smooth-textures` to disable it.
+- You can also toggle this at runtime from the debug panel (`pixelated textures`) or console: `world_textures smooth|pixelated`.
 - The menu includes `Quick Start: Bounce` if either:
   - `assets/imported/halflife/valve/bounce/map.json` (directory bundle), or
   - `assets/imported/halflife/valve/bounce.irunmap` (packed bundle)
@@ -113,6 +114,20 @@ Menu/input behavior:
 - When `Esc` menu or debug menu is open, gameplay input (mouse look / movement keys) is ignored.
 - The world simulation continues running (no hard pause), so physics/time still progress.
 - Core movement simulation uses a fixed `60 Hz` tick for deterministic input replay.
+- Closing the game window exits the process (including MCP console bridge) the same way as the in-game Quit flow.
+
+Weapon viewmodel asset notes:
+- Rocket slot (`3`) now prefers a Half-Life RPG viewmodel mesh loaded from `assets/models/halflife/v_rpg/v_rpg_blowpipe.obj`.
+- If that OBJ is missing or fails to load, runtime falls back to the existing procedural rocket launcher mesh.
+- Raw source files copied from Half-Life are stored in `assets/models/halflife/raw/` for repeatable re-export.
+- Re-sync RPG raw resources from installed Half-Life + SDK with:
+```bash
+python tools/sync_halflife_rpg_resources.py \
+  --hl-root "C:/Program Files (x86)/Steam/steamapps/common/Half-Life" \
+  --sdk-root "C:/Program Files (x86)/Steam/steamapps/common/Half-Life SDK"
+```
+- Sync writes/refreshes `assets/models/halflife/raw/rpg_sync_report.json` so missing source files are visible immediately.
+- Current orientation/placement is intentionally approximate; expected to be tuned in follow-up passes.
 
 Multiplayer launch:
 - Dedicated server:
@@ -130,12 +145,26 @@ python -m ivan --connect <server-host> --port 7777 --name <player-name>
   - ON: starts embedded host server bound to `0.0.0.0` so other clients can join by your machine IP
 
 MCP console control:
-- IVAN starts a localhost console control bridge (JSON-lines TCP) on port `7779` by default.
-  - Override port via env var `IRUN_IVAN_CONSOLE_PORT`.
+- IVAN starts a localhost console control bridge (JSON-lines TCP) by default.
+- You can configure it in-game via `Esc -> Settings`:
+  - `Enable MCP Console Control` (on/off, default on)
+  - `MCP Port` (default `7779`)
+- Environment overrides (startup-time):
+  - `IRUN_IVAN_CONSOLE_ENABLED` (`1/0`, `true/false`, `on/off`)
+  - `IRUN_IVAN_CONSOLE_PORT` (port number)
 - Run the MCP stdio server (for an MCP-capable client) with:
 ```bash
 ivan-mcp --control-host 127.0.0.1 --control-port 7779
 ```
+
+Temporary RPG viewmodel tuning commands (F4 console):
+- `vm_rpg_print` - print current imported RPG transform state.
+- `vm_rpg_pos <x> <y> <z>` - set weapon-root position.
+- `vm_rpg_hpr <h> <p> <r>` - set weapon-root rotation.
+- `vm_rpg_model_hpr <h> <p> <r>` - set imported-model pivot rotation.
+- `vm_rpg_model_scale <x> <y> <z>` - set imported-model pivot non-uniform scale (use `-1 1 1` to mirror an axis when needed).
+- `vm_rpg_size <value>` - set imported-model size scalar.
+- `vm_rpg_reset` - restore default imported RPG transform values.
 - Cursor project MCP config lives in `../../.cursor/mcp.json` (relative to `apps/ivan`).
 - Full console/MCP command reference: `../../docs/console-control-and-mcp.md`.
 
@@ -160,6 +189,7 @@ Notes:
 - The value is horizontal speed, rounded down to an integer.
 - A classic Half-Life/CS-style center crosshair is shown during active gameplay (hidden in pause/debug/menu).
 - Detailed movement status (`speed/z-vel/grounded/wall`) is shown in the bottom-left corner during gameplay and hidden while the debug/admin panel is open.
+- A small build marker is always shown in the lower-left corner (`build <8-char code>`). The code is generated per launch from `a-zA-Z0-9`.
 - Vault diagnostics are shown in the status line and `F2` overlay (`vault ok` / explicit reject reason) to debug ledge-vault failures quickly.
 - A health bar/chip is shown in the top-left corner (`HP`).
 - Input debug (F2), error console (F3), and debug HUD (F12) are shown as compact overlays that avoid overlapping the HUD bars.
