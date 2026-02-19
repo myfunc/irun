@@ -94,6 +94,8 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
 - `Tab` (hold): show race leaderboard while playing a race/time_trial map
 - `F2`: toggle input debug overlay (useful when keyboard/mouse don't seem to register)
 - `F3`: toggle error console overlay (shows recent errors without crashing)
+- `F10`: toggle schema-driven runtime tweak panel (RPG viewmodel tuning via console commands; COPY exports script to clipboard; Windows-capable)
+- `Shift+F10`: dump feel rolling diagnostics to JSON
 - `F12`: cycle debug HUD overlay (off → minimal → render → streaming → graph; compact fps/frametime view)
 - Combat slots:
   - `1-4`: weapon slots (`blink`, `slam`, `rocket`, `pulse`)
@@ -142,6 +144,7 @@ python -m ivan --connect <server-host> --port 7777 --name <player-name>
   - ON: starts embedded host server bound to `0.0.0.0` so other clients can join by your machine IP
 
 MCP console control:
+- IVAN uses a typed command-bus-first approach for both client and server command surfaces.
 - IVAN starts a localhost console control bridge (JSON-lines TCP) by default.
 - You can configure it in-game via `Esc -> Settings`:
   - `Enable MCP Console Control` (on/off, default on)
@@ -154,7 +157,7 @@ MCP console control:
 ivan-mcp --control-host 127.0.0.1 --control-port 7779
 ```
 
-Temporary RPG viewmodel tuning commands (F4 console):
+RPG viewmodel tuning (F10 panel or F4 console):
 - `vm_rpg_print` - print current imported RPG transform state.
 - `vm_rpg_pos <x> <y> <z>` - set weapon-root position.
 - `vm_rpg_hpr <h> <p> <r>` - set weapon-root rotation.

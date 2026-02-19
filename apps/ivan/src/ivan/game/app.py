@@ -81,6 +81,7 @@ from ivan.ui.main_menu import ImportRequest, MainMenuController
 from ivan.ui.pause_menu_ui import PauseMenuUI
 from ivan.ui.feel_capture_ui import FeelCaptureUI
 from ivan.ui.replay_browser_ui import ReplayBrowserUI, ReplayListItem
+from ivan.ui.runtime_tweak_panel import RuntimeTweakPanel
 from ivan.ui.replay_input_ui import ReplayInputUI
 from ivan.ui.ui_layout import UILayers
 from ivan.world.scene import WorldScene
@@ -173,6 +174,7 @@ class RunnerDemo(ShowBase):
         self._console_open = False
         self._feel_capture_open = False
         self._feel_capture_staged_demo_path: Path | None = None
+        self._tweak_panel_open = False
         self._mode: str = "boot"  # boot | menu | game
         self._last_mouse: tuple[float, float] | None = None
         self._input_debug_until: float = 0.0
@@ -398,6 +400,15 @@ class RunnerDemo(ShowBase):
             on_close=self._close_feel_capture,
         )
         self.feel_capture_ui.hide()
+        self.tweak_panel_ui = RuntimeTweakPanel(
+            aspect2d=self.aspect2d,
+            theme=self.ui_theme,
+            execute_cmd=lambda line: self._execute_console_line_now(
+                ctx=CommandContext(role="client", origin="ui"), line=line
+            ),
+            on_close=self._close_tweak_panel,
+        )
+        self.tweak_panel_ui.hide()
         self.replay_browser_ui = ReplayBrowserUI(
             aspect2d=self.aspect2d,
             theme=self.ui_theme,
@@ -471,6 +482,7 @@ class RunnerDemo(ShowBase):
         self._set_ui_bin(getattr(self.ui, "debug_root", None), layers.MENU)
         self._set_ui_bin(getattr(self.pause_ui, "root", None), layers.MENU)
         self._set_ui_bin(getattr(self.feel_capture_ui, "root", None), layers.MENU)
+        self._set_ui_bin(getattr(self.tweak_panel_ui, "root", None), layers.MENU)
         self._set_ui_bin(getattr(self.replay_input_ui, "root", None), layers.MENU)
         self._set_ui_bin(getattr(self.replay_browser_ui, "root", None), layers.MENU)
         # Console should always be on top.
@@ -631,6 +643,9 @@ class RunnerDemo(ShowBase):
             return
         if self._mode == "game" and self._debug_menu_open:
             self.ui.scroll_wheel(direction)
+            return
+        if self._mode == "game" and self._tweak_panel_open:
+            self.tweak_panel_ui.scroll_wheel(direction)
 
     def _setup_input(self) -> None:
         self.accept("escape", lambda: self._safe_call("input.escape", self._on_escape))
@@ -648,7 +663,8 @@ class RunnerDemo(ShowBase):
         self.accept("f2", lambda: self._safe_call("input.input_debug", self._toggle_input_debug))
         self.accept("f3", self.error_console.toggle)
         self.accept("f12", lambda: self._safe_call("input.debug_hud", self._cycle_debug_hud))
-        self.accept("f10", lambda: self._safe_call("feel.dump", self._dump_feel_rolling_log))
+        self.accept("f10", lambda: self._safe_call("input.tweak_panel", self._toggle_tweak_panel))
+        self.accept("shift-f10", lambda: self._safe_call("feel.dump", self._dump_feel_rolling_log))
         self.accept("f11", lambda: self._safe_call("determinism.dump", self._dump_determinism_trace))
         self.accept("shift-f3", lambda: self._safe_call("errors.clear", self._clear_errors))
         self.accept("arrow_up", lambda: self._safe_call("input.arrow_up", self._on_arrow_up))
@@ -791,7 +807,7 @@ class RunnerDemo(ShowBase):
         if self._net_connected and not self._net_can_configure:
             self.ui.set_status("Game editor is host-only in multiplayer.")
             return
-        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open or self._feel_capture_open:
+        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open or self._feel_capture_open or self._tweak_panel_open:
             return
         if self._playback_active:
             self.ui.set_status("Replay lock: press R to exit replay.")
@@ -818,7 +834,7 @@ class RunnerDemo(ShowBase):
     def _on_interact_pressed(self) -> None:
         if self._mode != "game" or self.player is None:
             return
-        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open or self._feel_capture_open:
+        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open or self._feel_capture_open or self._tweak_panel_open:
             return
         if self._race_editor_enabled:
             if self.game_mode_picker_ui.is_visible():
@@ -856,6 +872,7 @@ class RunnerDemo(ShowBase):
             or self._replay_browser_open
             or self._console_open
             or self._feel_capture_open
+            or self._tweak_panel_open
         ):
             self._set_pointer_lock(True)
 
@@ -1216,6 +1233,10 @@ class RunnerDemo(ShowBase):
         self.replay_browser_ui.hide()
         self.ui.hide()
         try:
+            self.tweak_panel_ui.hide()
+        except Exception:
+            pass
+        try:
             self.console_ui.hide()
         except Exception:
             pass
@@ -1234,9 +1255,14 @@ class RunnerDemo(ShowBase):
         self._console_open = False
         self._feel_capture_open = False
         self._feel_capture_staged_demo_path = None
+        self._tweak_panel_open = False
         self._awaiting_noclip_rebind = False
         try:
             self.feel_capture_ui.hide()
+        except Exception:
+            pass
+        try:
+            self.tweak_panel_ui.hide()
         except Exception:
             pass
         try:
@@ -1282,7 +1308,7 @@ class RunnerDemo(ShowBase):
         if self._mode != "game":
             return
         # Keep input-debug focused on active gameplay to reduce overlap noise.
-        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open or self._feel_capture_open:
+        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open or self._feel_capture_open or self._tweak_panel_open:
             self.input_debug.hide()
             return
         self.input_debug.toggle()
@@ -1305,6 +1331,7 @@ class RunnerDemo(ShowBase):
             self._replay_browser_open = False
             self._console_open = False
             self._feel_capture_open = False
+            self._tweak_panel_open = False
             self.pause_ui.hide()
             self.replay_browser_ui.hide()
             try:
@@ -1315,13 +1342,17 @@ class RunnerDemo(ShowBase):
                 self.console_ui.hide()
             except Exception:
                 pass
+            try:
+                self.tweak_panel_ui.hide()
+            except Exception:
+                pass
             self.error_console.set_suppressed(False)
             self.input_debug.hide()
             self.ui.show()
             self._set_pointer_lock(False)
             return
         self.ui.hide()
-        if self._pause_menu_open or self._replay_browser_open or self._feel_capture_open:
+        if self._pause_menu_open or self._replay_browser_open or self._feel_capture_open or self._tweak_panel_open:
             self.pause_ui.show()
             self._set_pointer_lock(False)
         else:
@@ -1348,6 +1379,9 @@ class RunnerDemo(ShowBase):
         if self._feel_capture_open:
             self._close_feel_capture()
             return
+        if self._tweak_panel_open:
+            self._close_tweak_panel()
+            return
         if self._debug_menu_open or self._pause_menu_open:
             self._close_all_game_menus()
             return
@@ -1368,7 +1402,7 @@ class RunnerDemo(ShowBase):
         if self._mode != "game":
             return
         # Keep console mutually exclusive with other in-game menus.
-        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._feel_capture_open:
+        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._feel_capture_open or self._tweak_panel_open:
             self._close_all_game_menus()
         self._console_open = True
         self.input_debug.hide()
@@ -1383,7 +1417,52 @@ class RunnerDemo(ShowBase):
             self.console_ui.hide()
         except Exception:
             pass
-        if not (self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._feel_capture_open):
+        if not (self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._feel_capture_open or self._tweak_panel_open):
+            self._set_pointer_lock(True)
+
+    def _toggle_tweak_panel(self) -> None:
+        if self._mode != "game":
+            return
+        if self._playback_active:
+            self.ui.set_status("Replay lock: press R to exit replay.")
+            return
+        if self._tweak_panel_open:
+            self._close_tweak_panel()
+        else:
+            self._open_tweak_panel()
+
+    def _open_tweak_panel(self) -> None:
+        if self._mode != "game":
+            return
+        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open or self._feel_capture_open:
+            self._close_all_game_menus()
+        self._tweak_panel_open = True
+        self.input_debug.hide()
+        try:
+            self.pause_ui.hide()
+        except Exception:
+            pass
+        try:
+            self.feel_capture_ui.hide()
+        except Exception:
+            pass
+        try:
+            self.console_ui.hide()
+        except Exception:
+            pass
+        self.ui.hide()
+        self.tweak_panel_ui.show()
+        self._set_pointer_lock(False)
+
+    def _close_tweak_panel(self) -> None:
+        self._tweak_panel_open = False
+        try:
+            self.tweak_panel_ui.hide()
+        except Exception:
+            pass
+        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._feel_capture_open:
+            self._set_pointer_lock(False)
+        else:
             self._set_pointer_lock(True)
 
     def _console_submit_line(self, line: str) -> list[str]:
@@ -1562,7 +1641,7 @@ class RunnerDemo(ShowBase):
     def _toggle_feel_capture(self) -> None:
         if self._mode != "game":
             return
-        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open:
+        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open or self._tweak_panel_open:
             return
         if self._feel_capture_open:
             return
@@ -3084,8 +3163,8 @@ class RunnerDemo(ShowBase):
             self._start_new_demo_recording()
 
     def _on_respawn_pressed(self) -> None:
-        if bool(getattr(self, "_feel_capture_open", False)):
-            self.ui.set_status("Feel capture is open. Close it before respawn.")
+        if bool(getattr(self, "_feel_capture_open", False)) or bool(getattr(self, "_tweak_panel_open", False)):
+            self.ui.set_status("Close open panel (Feel capture or Tweak) before respawn.")
             return
         if bool(getattr(self, "_playback_active", False)):
             self._stop_replay_playback(reason="Exited replay.")
@@ -3226,6 +3305,7 @@ class RunnerDemo(ShowBase):
                 or self._replay_browser_open
                 or self._console_open
                 or self._feel_capture_open
+                or self._tweak_panel_open
                 or self.game_mode_picker_ui.is_visible()
             )
             self.ui.set_crosshair_visible(not menu_open)

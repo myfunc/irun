@@ -100,10 +100,13 @@ See: `docs/ui-kit.md`.
   - Includes a Feel Session tab with route radio options (`A/B/C`), replay export, and feedback-driven tuning tweaks.
 - `apps/ivan/src/ivan/ui/pause_menu_settings_section.py`: focused settings subsection widget for pause menu settings tab (audio + keybind controls)
 - `apps/ivan/src/ivan/ui/feel_capture_ui.py`: in-game quick capture popup (`G`) for route-tagged save/export/apply flow, including one-click `Revert Last` rollback
+- `apps/ivan/src/ivan/ui/runtime_tweak_panel.py`: schema-driven runtime tweak panel (`F10`) for RPG viewmodel tuning via typed console commands; COPY exports config script to clipboard (Windows-capable via ctypes, graceful fallback elsewhere)
+- `apps/ivan/src/ivan/ui/runtime_tweak_schema.py`: schema definitions for tweak panel fields and console-script generation
+- `apps/ivan/src/ivan/ui/clipboard.py`: cross-platform clipboard helpers; Windows primary target (ctypes + user32/kernel32, no extra deps)
 - `apps/ivan/src/ivan/ui/replay_browser_ui.py`: in-game replay browser overlay (UI kit list menu)
 - `apps/ivan/src/ivan/ui/replay_input_ui.py`: in-game replay input HUD (UI kit panel) for recorded command visualization
 - `apps/ivan/src/ivan/ui/ui_layout.py`: shared gameplay UI safe-area anchors and render-layer order tokens (`UILayers`)
-- `apps/ivan/src/ivan/console/command_bus.py`: typed console command contracts, argument schema validation, and structured execution results
+- `apps/ivan/src/ivan/console/command_bus.py`: typed command-bus-first registry (`CommandMetadata`, `CommandArgSpec`, `CommandResult`), argument schema validation, and structured execution results; single source of truth for client command discoverability and MCP
 - `apps/ivan/src/ivan/console/scene_runtime.py`: scene/runtime command helpers for object introspection/manipulation + world controls
 - `apps/ivan/src/ivan/console/autotune_bindings.py`: console command wiring for route-scoped autotune V1 (`autotune_suggest/apply/eval/rollback`)
 - `apps/ivan/src/ivan/replays/demo.py`: input-demo storage (record/save/load/list) using repository-local storage under `apps/ivan/replays/`
@@ -174,7 +177,8 @@ See: `docs/ui-kit.md`.
   - legacy air gain scalars are migrated (`max_air_speed`, `jump_accel`, `air_control`, `air_counter_strafe_brake`) and removed from active tuning schema
 - Feel diagnostics:
   - `F2` overlay now includes frame-time p95, sim steps per frame, motion state, accel, contacts, floor/wall normals, leniency timers, and determinism hash status.
-  - `F10` dumps the rolling 2-5 second diagnostics buffer to `apps/ivan/replays/telemetry_exports/*_feel_rolling.json`.
+  - `F10` opens runtime tweak panel (RPG viewmodel tuning via console commands; COPY exports script to clipboard).
+  - `Shift+F10` dumps the rolling 2-5 second diagnostics buffer to `apps/ivan/replays/telemetry_exports/*_feel_rolling.json`.
   - `F11` dumps rolling determinism trace hashes to `apps/ivan/replays/telemetry_exports/*_det_trace.json`.
 - Multiplayer networking:
   - TCP bootstrap for join/session token assignment.
@@ -226,8 +230,8 @@ See: `docs/ui-kit.md`.
   - Host toggle force-restarts embedded host state before connect, and if bind fails (busy port) it exits without auto-joining unknown local servers.
   - Default multiplayer port uses env var `DEFAULT_HOST_PORT` (fallback `7777`).
 - Console control / MCP:
-  - Runtime includes a typed command-bus-first console engine (`apps/ivan/src/ivan/console/`) for command + cvar execution.
-    - `command_bus.py`: typed registry/metadata, schema validation, structured results.
+  - Runtime uses a full typed command-bus-first approach for both client and server command surfaces.
+    - `command_bus.py`: typed registry (`CommandMetadata`, `CommandArgSpec`, `CommandResult`), schema validation, structured results; single source for MCP discoverability.
     - `scene_runtime.py`: scene introspection/manipulation and world runtime control adapters.
   - IVAN client process starts a localhost control bridge (JSON-lines TCP) for driving the console externally.
     - Env: `IRUN_IVAN_CONSOLE_PORT` (default `7779`).
@@ -261,8 +265,8 @@ See: `docs/ui-kit.md`.
     - `autotune_eval <route_tag> [out_dir]` (guardrail checks + weighted route score)
     - `autotune_rollback [backup_ref]` (alias over backup restore flow; defaults to latest backup)
   - `ivan-mcp` runs an MCP stdio server (Python 3.9, no deps) with tools:
-    - `console_exec`
-    - `console_commands` (returns typed command metadata)
+    - `console_exec` — execute one console line
+    - `console_commands` — list typed command metadata with filtering (`prefix`, `tag`) and pagination (`page`, `page_size`, max 200)
   - Full command/cvar/MCP reference: `docs/console-control-and-mcp.md`
 - CLI telemetry export:
   - `python -m ivan --export-latest-replay-telemetry [--replay-telemetry-out <dir>]` exports latest replay metrics and exits.
