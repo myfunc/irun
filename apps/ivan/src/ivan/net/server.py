@@ -17,7 +17,9 @@ from ivan.common.aabb import AABB
 from ivan.console.control_server import ConsoleControlServer
 from ivan.console.server_bindings import build_server_console
 from ivan.console.line_bus import ThreadSafeLineBus
-from ivan.games import RaceCourse, RaceEvent, RaceRuntime
+from ivan.games import RaceCourse
+from ivan.games.session_adapter import create_race_session
+from ivan.net.game_session import GameSession
 from ivan.maps.bundle_io import resolve_bundle_handle
 from ivan.maps.run_metadata import load_run_metadata
 from ivan.net.relevance import GoldSrcPvsRelevance, build_goldsrc_pvs_relevance_from_map
@@ -131,17 +133,17 @@ class MultiplayerServer:
         self._config_owner_token: str | None = None
         self._tuning_version: int = 1
         self._games_version: int = 0
-        self._race_runtime = RaceRuntime()
-        self._race_event_seq: int = 0
-        self._race_event_ring: deque[dict] = deque(maxlen=160)
+        self._game_session: GameSession = create_race_session(initial_course=initial_race_course)
+        self._game_event_seq: int = 0
+        self._game_event_ring: deque[dict] = deque(maxlen=160)
         if isinstance(initial_race_course, RaceCourse):
-            self._set_race_course(initial_race_course)
+            self._set_game_course(initial_race_course)
         elif self.map_json:
             try:
                 run_meta = load_run_metadata(bundle_ref=Path(str(self.map_json)))
                 games = run_meta.games if isinstance(run_meta.games, dict) else None
                 if isinstance(games, dict):
-                    self._set_race_games_payload(games=games)
+                    self._set_game_games_payload(games=games)
             except Exception:
                 pass
 
@@ -246,29 +248,31 @@ class MultiplayerServer:
                 return st
         return None
 
-    def _set_race_course(self, course: RaceCourse | None) -> None:
-        self._race_runtime.set_course(course if isinstance(course, RaceCourse) else None)
+    def _set_game_course(self, course: RaceCourse | None) -> None:
+        self._game_session.set_initial_course(course if isinstance(course, RaceCourse) else None)
         self._games_version = int(self._games_version) + 1
-        self._race_event_seq = 0
-        self._race_event_ring.clear()
+        self._game_event_seq = 0
+        self._game_event_ring.clear()
 
-    def _set_race_games_payload(self, *, games: dict | None) -> bool:
+    def _set_game_games_payload(self, *, games: dict | None) -> bool:
         if not isinstance(games, dict):
-            self._set_race_course(None)
+            self._set_game_course(None)
             return True
-        if self._race_runtime.set_course_from_games_payload(games):
+        if self._game_session.set_course_from_games_payload(games):
             self._games_version = int(self._games_version) + 1
-            self._race_event_seq = 0
-            self._race_event_ring.clear()
+            self._game_event_seq = 0
+            self._game_event_ring.clear()
             return True
         return False
 
-    def _append_race_events(self, events: list[RaceEvent]) -> None:
+    def _append_game_events(self, events: list) -> None:
         if not events:
             return
         for event in events:
-            self._race_event_seq = int(self._race_event_seq) + 1
-            self._race_event_ring.append(RaceRuntime.event_to_payload(event, seq=int(self._race_event_seq)))
+            self._game_event_seq = int(self._game_event_seq) + 1
+            self._game_event_ring.append(
+                self._game_session.event_to_payload(event, seq=int(self._game_event_seq))
+            )
 
     @staticmethod
     def _safe_close_socket(sock: socket.socket | None) -> None:
@@ -696,12 +700,12 @@ class MultiplayerServer:
                     st = self._client_state_by_tcp(cs)
                     if st is None:
                         continue
-                    events = self._race_runtime.interact(
+                    events = self._game_session.interact(
                         player_id=int(st.player_id),
                         pos=LVector3f(st.ctrl.pos),
                         now=float(self._tick) * float(self.fixed_dt),
                     )
-                    self._append_race_events(events)
+                    self._append_game_events(events)
                     continue
                 if t == "games_set":
                     st = self._client_state_by_tcp(cs)
@@ -711,7 +715,7 @@ class MultiplayerServer:
                         continue
                     payload = obj.get("games")
                     if isinstance(payload, dict):
-                        self._set_race_games_payload(games=payload)
+                        self._set_game_games_payload(games=payload)
                     continue
                 if t != "hello":
                     continue
@@ -765,7 +769,7 @@ class MultiplayerServer:
                     "cfg_v": int(self._tuning_version),
                     "tuning": self._tuning_snapshot(),
                     "games_v": int(self._games_version),
-                    "games": (self._race_runtime.games_payload() if self._race_runtime.has_course() else None),
+                    "games": (self._game_session.games_payload() if self._game_session.has_course() else None),
                 }
                 try:
                     cs.sendall(encode_json(resp))
@@ -788,7 +792,7 @@ class MultiplayerServer:
             if token_to_drop == self._config_owner_token:
                 self._config_owner_token = None
             if st is not None:
-                self._race_runtime.remove_player(player_id=int(st.player_id))
+                self._game_session.remove_player(player_id=int(st.player_id))
         try:
             cs.close()
         except Exception:
@@ -930,15 +934,15 @@ class MultiplayerServer:
             cmd = st.last_input
             if bool(cmd.interact_pressed) and int(cmd.seq) > int(st.last_interact_seq):
                 st.last_interact_seq = int(cmd.seq)
-                events = self._race_runtime.interact(
+                events = self._game_session.interact(
                     player_id=int(st.player_id),
                     pos=LVector3f(st.ctrl.pos),
                     now=float(now_s),
                 )
-                self._append_race_events(events)
+                self._append_game_events(events)
 
         for st in self._clients_by_token.values():
-            tp = self._race_runtime.consume_teleport_target(player_id=int(st.player_id))
+            tp = self._game_session.consume_teleport_target(player_id=int(st.player_id))
             if tp is None:
                 continue
             safe_tp = self._find_safe_spawn_near(
@@ -949,7 +953,7 @@ class MultiplayerServer:
             st.ctrl.pos = LVector3f(safe_tp)
             st.ctrl.spawn_point = LVector3f(safe_tp)
             st.ctrl.vel = LVector3f(0.0, 0.0, 0.0)
-        race_active = self._race_runtime.status in {"lobby", "intro", "countdown", "running"}
+        race_active = self._game_session.status in {"lobby", "intro", "countdown", "running"}
 
         for st in self._clients_by_token.values():
             cmd = st.last_input
@@ -959,7 +963,7 @@ class MultiplayerServer:
                 -88.0,
                 88.0,
             )
-            frozen = bool(self._race_runtime.is_player_frozen(player_id=int(st.player_id)))
+            frozen = bool(self._game_session.is_player_frozen(player_id=int(st.player_id)))
 
             jump_requested = bool(cmd.jump_pressed) and not frozen
             if (not frozen) and self.tuning.autojump_enabled and cmd.jump_held and st.ctrl.grounded:
@@ -1001,11 +1005,11 @@ class MultiplayerServer:
             else:
                 st.void_stuck_s = 0.0
             st.rewind_history.append((int(self._tick), LVector3f(st.ctrl.pos)))
-        events = self._race_runtime.tick(
+        events = self._game_session.tick(
             now=float(now_s),
             player_positions={int(st.player_id): LVector3f(st.ctrl.pos) for st in self._clients_by_token.values()},
         )
-        self._append_race_events(events)
+        self._append_game_events(events)
 
     def _snapshot_players(self) -> tuple[list[int], dict[int, dict], dict[int, LVector3f], dict[int, int | None]]:
         ordered_ids: list[int] = []
@@ -1045,11 +1049,11 @@ class MultiplayerServer:
             return
 
         all_players = [rows_by_id[int(pid)] for pid in ordered_ids if int(pid) in rows_by_id]
-        games_payload = self._race_runtime.games_payload() if self._race_runtime.has_course() else None
+        games_payload = self._game_session.games_payload() if self._game_session.has_course() else None
         game_state_payload: dict | None = None
-        if self._race_runtime.has_course():
-            game_state_payload = {"race": self._race_runtime.export_state_payload()}
-        game_events_payload = list(self._race_event_ring)[-48:] if self._race_event_ring else None
+        if self._game_session.has_course():
+            game_state_payload = self._game_session.export_state_payload()
+        game_events_payload = list(self._game_event_ring)[-48:] if self._game_event_ring else None
         packet_cache: dict[tuple[int, ...], bytes] = {
             tuple(int(pid) for pid in ordered_ids): encode_snapshot_packet(
                 tick=self._tick,

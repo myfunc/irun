@@ -62,6 +62,11 @@ def main(argv: list[str] | None = None) -> None:
         help="Watch .map file for changes and auto-reload (TrenchBroom workflow).",
     )
     parser.add_argument(
+        "--enable-games",
+        action="store_true",
+        help="Enable experimental game-session layer (race missions/markers/events). Disabled by default.",
+    )
+    parser.add_argument(
         "--map-profile",
         default="auto",
         choices=("auto", "dev-fast", "prod-baked"),
@@ -213,6 +218,7 @@ def main(argv: list[str] | None = None) -> None:
         net_port=int(args.port),
         net_name=args.name,
         watch=args.watch,
+        games_enabled=bool(args.enable_games),
     )
 
 

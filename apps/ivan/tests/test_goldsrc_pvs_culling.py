@@ -46,6 +46,63 @@ class _StubVis:
         return bytearray([1, 1, 1])
 
 
+class _StubVisYSplit:
+    """Y >= 0 -> leaf 0 (all visible), Y < 0 -> leaf 1 (face 100 hidden). Guards no-Y-flip mapping."""
+
+    world_first_face = 100
+    world_num_faces = 3
+    leaves = [
+        (-1, 0, 0),
+        (0, 0, 0),
+    ]
+
+    @property
+    def world_face_end(self) -> int:
+        return int(self.world_first_face + self.world_num_faces)
+
+    def point_leaf(self, *, x: float, y: float, z: float) -> int:
+        return 0 if y >= 0.0 else 1
+
+    def visible_world_face_flags_for_leaf(self, leaf_idx: int) -> bytearray:
+        if int(leaf_idx) == 1:
+            return bytearray([0, 1, 1])
+        return bytearray([1, 1, 1])
+
+
+def test_pvs_culling_nonzero_camera_y_no_y_flip() -> None:
+    """
+    Camera at non-zero Y must map to correct leaf under canonical world->BSP (no Y-flip).
+    Would fail with legacy Y-negation: camera (0, 5, 0) would become BSP (0, -5, 0)
+    and incorrectly land in leaf 1, hiding face 100 when it should be visible.
+    """
+    from ivan.world.scene import WorldScene
+
+    scene = WorldScene()
+    scene._vis_goldsrc = _StubVisYSplit()  # type: ignore[assignment]
+    scene._map_scale = 1.0
+    scene._world_root_np = object()
+    cam = _StubCamera()
+    scene._camera_np = cam
+
+    n0 = _StubNode()
+    n1 = _StubNode()
+    n2 = _StubNode()
+    scene._vis_face_nodes = {100: [n0], 101: [n1], 102: [n2]}
+
+    scene.set_visibility_enabled(True)
+    cam.pos = (0.0, 5.0, 0.0)
+    scene.tick(now=0.0)
+    assert n0.visible is True
+    assert n1.visible is True
+    assert n2.visible is True
+
+    cam.pos = (0.0, -5.0, 0.0)
+    scene.tick(now=0.0)
+    assert n0.visible is False
+    assert n1.visible is True
+    assert n2.visible is True
+
+
 def test_pvs_culling_show_hide_unmasked_and_default_off() -> None:
     from ivan.world.scene import WorldScene
 

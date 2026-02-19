@@ -14,6 +14,8 @@ At runtime we still want to support development workflows where assets remain un
 ## Decision
 We introduce a packed map-bundle storage format: `.irunmap`.
 
+**Default distribution format:** `.irunmap` is the default distribution format for map bundles. All import pipelines and tools produce `.irunmap` unless overridden. Directory bundles are supported only as an explicit development/debugging override when the user requests them.
+
 `.irunmap` is a zip archive with **low compression** intended for fast pack/unpack:
 - Archive root contains `map.json`.
 - Adjacent folders follow the same layout as directory bundles:
@@ -23,8 +25,8 @@ We introduce a packed map-bundle storage format: `.irunmap`.
   - (future) chunked geometry payloads for format v3
 
 Runtime loading rules:
-- If the selected bundle is a directory (contains `map.json`), load it directly.
 - If the selected bundle is a `.irunmap`, extract it to a local cache under `~/.irun/ivan/cache/bundles/<hash>/` and load from the extracted directory.
+- If the selected bundle is a directory (contains `map.json`), load it directly — this is an explicit dev/debug override, not the default distribution path.
 
 Run metadata rules:
 - Directory bundles use `<bundle>/run.json`.

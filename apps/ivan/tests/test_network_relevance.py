@@ -4,6 +4,8 @@ from pathlib import Path
 
 from panda3d.core import LVector3f
 
+# Import ivan.game first to resolve circular ivan.net dependency before relevance.
+import ivan.game  # noqa: F401
 from ivan.net.relevance import GoldSrcPvsRelevance, build_goldsrc_pvs_relevance_from_map
 from ivan.world.goldsrc_visibility import GoldSrcBspVis
 
@@ -25,10 +27,39 @@ def _test_vis() -> GoldSrcBspVis:
     )
 
 
+def _test_vis_y_split() -> GoldSrcBspVis:
+    """Y >= 0 -> leaf 0, Y < 0 -> leaf 1. Guards against legacy Y-negation in world->BSP."""
+    return GoldSrcBspVis(
+        source_bsp="test_y.bsp",
+        source_mtime_ns=0,
+        root_node=0,
+        planes=[(0.0, 1.0, 0.0, 0.0)],
+        nodes=[(0, -1, -2)],
+        leaves=[(0, 0, 0), (1, 0, 0)],
+        leaf_faces=[],
+        visdata=bytes([0x01, 0x02]),
+        world_first_face=0,
+        world_num_faces=0,
+    )
+
+
 def test_world_pos_to_leaf_and_visible_leaf_set() -> None:
     rel = GoldSrcPvsRelevance(vis=_test_vis(), map_scale=1.0, distance_fallback=0.0)
     assert rel.world_pos_to_leaf(pos=LVector3f(2.0, 0.0, 0.0)) == 0
     assert rel.world_pos_to_leaf(pos=LVector3f(-2.0, 0.0, 0.0)) == 1
+    assert rel.visible_leaves_for_leaf(leaf=0) == {0}
+    assert rel.visible_leaves_for_leaf(leaf=1) == {1}
+
+
+def test_world_pos_to_leaf_nonzero_y_no_y_flip() -> None:
+    """
+    Non-zero Y positions must map to correct leaf under canonical (scale-only, no Y-flip).
+    Would fail with legacy Y-negation: world (0, 5, 0) would be converted to BSP (0, -5, 0)
+    and incorrectly land in leaf 1 instead of leaf 0.
+    """
+    rel = GoldSrcPvsRelevance(vis=_test_vis_y_split(), map_scale=1.0, distance_fallback=0.0)
+    assert rel.world_pos_to_leaf(pos=LVector3f(0.0, 5.0, 0.0)) == 0
+    assert rel.world_pos_to_leaf(pos=LVector3f(0.0, -5.0, 0.0)) == 1
     assert rel.visible_leaves_for_leaf(leaf=0) == {0}
     assert rel.visible_leaves_for_leaf(leaf=1) == {1}
 
@@ -49,6 +80,28 @@ def test_relevant_player_ids_uses_pvs_and_keeps_local_player() -> None:
         leaves_by_player_id=leaves,
     )
     assert out == [1, 3]
+
+
+def test_relevant_player_ids_nonzero_y_pvs_occlusion() -> None:
+    """
+    PVS occlusion with non-zero Y: viewer in leaf 0 (Y>=0), target in leaf 1 (Y<0).
+    Would fail with legacy Y-flip: positions would map to wrong leaves and visibility
+    would be incorrect.
+    """
+    rel = GoldSrcPvsRelevance(vis=_test_vis_y_split(), map_scale=1.0, distance_fallback=0.0)
+    ordered = [1, 2]
+    positions = {
+        1: LVector3f(0.0, 5.0, 0.0),   # viewer in leaf 0 (Y >= 0)
+        2: LVector3f(0.0, -5.0, 0.0),  # target in leaf 1 (Y < 0), not visible from leaf 0
+    }
+    leaves = {pid: rel.world_pos_to_leaf(pos=pos) for pid, pos in positions.items()}
+    out = rel.relevant_player_ids(
+        viewer_player_id=1,
+        ordered_player_ids=ordered,
+        positions_by_player_id=positions,
+        leaves_by_player_id=leaves,
+    )
+    assert out == [1]
 
 
 def test_relevant_player_ids_short_range_distance_fallback() -> None:

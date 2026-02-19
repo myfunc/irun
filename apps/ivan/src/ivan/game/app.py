@@ -53,7 +53,6 @@ from ivan.games import (
     RaceRuntime,
     RaceUiFeedback,
 )
-from ivan.course.time_trial import make_marker_cylinder
 from ivan.replays import (
     DemoFrame,
     DemoRecording,
@@ -97,6 +96,9 @@ from . import menu_flow as _menu
 from . import netcode as _net
 from . import time_trial_markers as _tt_markers
 from . import tuning_profiles as _profiles
+from . import session_sync as _session_sync
+from .features.race import controller as _race_controller
+from .devtools import RaceEditorService
 from .animation_observer import AnimationObserver
 from .camera_feedback_observer import CameraFeedbackObserver
 from .camera_height_observer import CameraHeightObserver
@@ -140,6 +142,7 @@ class RunnerDemo(ShowBase):
 
         self.cfg = cfg
         self._pixelated_textures_runtime: bool = bool(pixelated_textures_runtime)
+        self._games_enabled: bool = bool(getattr(cfg, "games_enabled", False))
         # Centralized UI theme + font/background defaults for all non-HUD UI.
         self.ui_renderer = UIRenderer(base=self, theme=Theme())
         self.ui_renderer.set_background()
@@ -299,12 +302,7 @@ class RunnerDemo(ShowBase):
         _combat_fx.init_runtime(self)
         self._race_runtime = RaceRuntime()
         self._race_markers = RaceMarkerRenderer()
-        self._race_editor_enabled: bool = False
-        self._race_editor_mode_id: str | None = None
-        self._race_editor_selection_pos: LVector3f | None = None
-        self._race_draft_start = None
-        self._race_draft_checkpoints: list = []
-        self._race_draft_finish = None
+        self._race_editor = RaceEditorService()
         self._race_bundle_ref: Path | None = None
 
         self.scene: WorldScene | None = None
@@ -788,43 +786,34 @@ class RunnerDemo(ShowBase):
     def _on_editor_toggle_pressed(self) -> None:
         if self._mode != "game" or self.player is None:
             return
-        if self._net_connected and not self._net_can_configure:
-            self.ui.set_status("Game editor is host-only in multiplayer.")
+        if not self._games_enabled:
+            # Keep legacy muscle-memory: V remains a noclip toggle when games layer is disabled.
+            self._toggle_noclip()
             return
-        if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open or self._feel_capture_open:
-            return
-        if self._playback_active:
-            self.ui.set_status("Replay lock: press R to exit replay.")
-            return
-        if self._race_editor_enabled:
-            self._publish_race_from_editor()
-            self._race_editor_enabled = False
-            self._race_editor_mode_id = None
-            self._close_game_mode_picker()
-            self.tuning.noclip_enabled = False
-            self.ui.set_status("Game editor disabled.")
-            return
-        self._race_editor_enabled = True
-        self._race_editor_mode_id = None
-        self._race_editor_selection_pos = None
-        self._race_draft_start = None
-        self._race_draft_checkpoints = []
-        self._race_draft_finish = None
-        self._close_game_mode_picker()
-        self.tuning.noclip_enabled = True
-        self.ui.set_status("Game editor enabled (noclip). Press F to select game mode.")
-        self._sync_race_markers()
+        can_edit = not self._net_connected or self._net_can_configure
+        menus_block = bool(
+            self._pause_menu_open
+            or self._debug_menu_open
+            or self._replay_browser_open
+            or self._console_open
+            or self._feel_capture_open
+        )
+        if self._race_editor.toggle(
+            host=self,
+            can_edit=can_edit,
+            menus_block=menus_block,
+            playback_active=self._playback_active,
+            marker_radius_half_z=self._marker_radius_half_z(),
+        ):
+            self._sync_race_markers()
 
     def _on_interact_pressed(self) -> None:
         if self._mode != "game" or self.player is None:
             return
         if self._pause_menu_open or self._debug_menu_open or self._replay_browser_open or self._console_open or self._feel_capture_open:
             return
-        if self._race_editor_enabled:
-            if self.game_mode_picker_ui.is_visible():
-                self.game_mode_picker_ui.on_enter()
-            else:
-                self._open_game_mode_picker()
+        if self._race_editor.on_interact(host=self, player_pos=LVector3f(self.player.pos)):
+            self._sync_race_markers()
             return
         if self._net_connected:
             self._net_interact_pending = False
@@ -841,78 +830,29 @@ class RunnerDemo(ShowBase):
         self._apply_race_events(events, now=float(globalClock.getFrameTime()))
         self._sync_race_markers()
 
-    def _open_game_mode_picker(self) -> None:
-        if self._mode != "game":
-            return
-        rows = [ModeItem(id="race", label="Race")]
-        self.game_mode_picker_ui.show(items=rows, status="Select mode to author.")
-        self._set_pointer_lock(False)
-
     def _close_game_mode_picker(self) -> None:
         self.game_mode_picker_ui.hide()
-        if self._mode == "game" and not (
-            self._pause_menu_open
-            or self._debug_menu_open
-            or self._replay_browser_open
-            or self._console_open
-            or self._feel_capture_open
-        ):
+        if _session_sync.should_restore_pointer_lock_after_picker(self):
             self._set_pointer_lock(True)
 
     def _on_game_mode_selected(self, mode_id: str) -> None:
         if self._mode != "game" or self.player is None:
             return
-        self._race_editor_mode_id = str(mode_id)
-        self._race_editor_selection_pos = LVector3f(self.player.pos)
-        self._race_draft_start = None
-        self._race_draft_checkpoints = []
-        self._race_draft_finish = None
-        self._close_game_mode_picker()
-        self.ui.set_status("Race editor: 1 start | 2 checkpoint | 3 finish | V publish")
+        self._race_editor.on_mode_selected(
+            host=self, mode_id=mode_id, player_pos=LVector3f(self.player.pos)
+        )
         self._sync_race_markers()
 
     def _on_editor_place_pressed(self, slot: int) -> None:
-        if not self._race_editor_enabled or self._race_editor_mode_id != "race":
-            return
         if self.player is None:
             return
-        radius, half_z = self._marker_radius_half_z()
-        marker = make_marker_cylinder(pos=LVector3f(self.player.pos), radius=radius, half_z=half_z)
-        s = int(slot)
-        if s == 1:
-            self._race_draft_start = marker
-            self.ui.set_status("Race editor: start marker placed.")
-        elif s == 2:
-            self._race_draft_checkpoints.append(marker)
-            self.ui.set_status(f"Race editor: checkpoint {len(self._race_draft_checkpoints)} placed.")
-        elif s == 3:
-            self._race_draft_finish = marker
-            self.ui.set_status("Race editor: finish marker placed.")
-        self._sync_race_markers()
-
-    def _publish_race_from_editor(self) -> None:
-        if self._race_editor_mode_id != "race":
-            return
-        if self._race_editor_selection_pos is None:
-            self.ui.set_status("Race editor: no mode selected; nothing published.")
-            return
-        if self._race_draft_start is None or self._race_draft_finish is None:
-            self.ui.set_status("Race editor: place start and finish before publishing.")
-            return
-        radius, half_z = self._marker_radius_half_z()
-        mission = make_marker_cylinder(pos=LVector3f(self._race_editor_selection_pos), radius=radius * 1.18, half_z=half_z)
-        course = RaceCourse(
-            mission_marker=mission,
-            start=self._race_draft_start,
-            checkpoints=tuple(self._race_draft_checkpoints),
-            finish=self._race_draft_finish,
-        )
-        self._race_runtime.set_course(course)
-        self._persist_published_race(course=course)
-        self.ui.set_status(
-            f"Race published. Mission marker set ({1 + len(self._race_draft_checkpoints)} checkpoints before finish)."
-        )
-        self._sync_race_markers()
+        if self._race_editor.place(
+            host=self,
+            slot=slot,
+            player_pos=LVector3f(self.player.pos),
+            marker_radius_half_z=self._marker_radius_half_z(),
+        ):
+            self._sync_race_markers()
 
     def _persist_published_race(self, *, course: RaceCourse) -> None:
         ref = self._race_bundle_ref
@@ -932,6 +872,9 @@ class RunnerDemo(ShowBase):
 
     def _set_race_from_run_metadata(self, *, run_meta: RunMetadata) -> None:
         self._race_runtime.set_course(None)
+        if not self._games_enabled:
+            self._sync_race_markers()
+            return
         games = run_meta.games if isinstance(run_meta.games, dict) else None
         if isinstance(games, dict):
             if self._race_runtime.set_course_from_games_payload(games):
@@ -939,6 +882,10 @@ class RunnerDemo(ShowBase):
                 return
 
     def _apply_network_games_payload(self, *, games_v: int, games: dict | None) -> None:
+        if not self._games_enabled:
+            self._race_runtime.set_course(None)
+            self._sync_race_markers()
+            return
         v = max(0, int(games_v))
         if v <= int(self._net_games_version):
             return
@@ -951,6 +898,8 @@ class RunnerDemo(ShowBase):
         self._sync_race_markers()
 
     def _apply_network_game_state(self, *, game_state: dict | None) -> None:
+        if not self._games_enabled:
+            return
         if not isinstance(game_state, dict):
             return
         race = game_state.get("race")
@@ -960,6 +909,8 @@ class RunnerDemo(ShowBase):
         self._sync_race_markers()
 
     def _apply_network_game_events(self, *, events: list[dict], now: float) -> None:
+        if not self._games_enabled:
+            return
         now_ui = float(globalClock.getFrameTime())
         out: list[RaceEvent] = []
         for row in events:
@@ -977,116 +928,33 @@ class RunnerDemo(ShowBase):
         self._sync_race_markers()
 
     def _sync_race_markers(self) -> None:
-        if self.world_root is None:
-            return
-        self._race_markers.attach(world_root=self.world_root)
-        if self._race_editor_enabled and self._race_editor_mode_id == "race":
-            mission = None
-            if self._race_editor_selection_pos is not None:
-                radius, half_z = self._marker_radius_half_z()
-                mission = make_marker_cylinder(
-                    pos=LVector3f(self._race_editor_selection_pos),
-                    radius=radius * 1.18,
-                    half_z=half_z,
-                )
-            self._race_markers.render(
-                mission=mission,
-                start=self._race_draft_start,
-                checkpoints=tuple(self._race_draft_checkpoints),
-                finish=self._race_draft_finish,
-                show_mission=True,
-                show_course=True,
-            )
-            return
-        self._race_markers.render(
-            mission=self._race_runtime.mission_marker(),
-            start=self._race_runtime.start_marker(),
-            checkpoints=self._race_runtime.checkpoint_markers(),
-            finish=self._race_runtime.finish_marker(),
-            show_mission=self._race_runtime.mission_visible(),
-            show_course=self._race_runtime.checkpoints_visible(),
+        _race_controller.sync_race_markers(
+            host=self,
+            race_editor=self._race_editor,
+            race_runtime=self._race_runtime,
+            race_markers=self._race_markers,
+            marker_radius_half_z=self._marker_radius_half_z(),
         )
 
     def _apply_race_events(self, events: list[RaceEvent], *, now: float) -> None:
-        if not events:
-            return
-        local_id = self._local_player_id()
-        for ev in events:
-            kind = str(ev.kind)
-            if kind == "race_lobby_join":
-                if int(ev.player_id) == int(local_id):
-                    self.race_ui_feedback.notice(
-                        text="Race lobby: press F again to start.",
-                        color=(0.84, 0.92, 1.00, 0.96),
-                        now=float(now),
-                    )
-            elif kind == "race_intro":
-                self.race_ui_feedback.notice(
-                    text="Race intro",
-                    color=(0.90, 0.95, 1.00, 0.96),
-                    now=float(now),
-                    duration=1.0,
-                )
-            elif kind == "race_countdown_tick":
-                self.race_ui_feedback.notice(
-                    text=str(int(ev.countdown_value)),
-                    color=(1.00, 0.96, 0.76, 0.98),
-                    now=float(now),
-                    duration=0.78,
-                )
-                _audio.on_race_countdown(self, value=int(ev.countdown_value))
-            elif kind == "race_go":
-                self.race_ui_feedback.notice(
-                    text="GO!",
-                    color=(0.45, 1.00, 0.45, 0.98),
-                    now=float(now),
-                    duration=1.0,
-                )
-                _audio.on_race_go(self)
-            elif kind == "race_checkpoint_collected":
-                if int(ev.player_id) == int(local_id):
-                    self.race_ui_feedback.flash(color=(1.00, 0.88, 0.18, 0.34), now=float(now), duration=0.16)
-                    self.race_ui_feedback.notice(
-                        text=f"Checkpoint {int(ev.checkpoint_index) + 1}",
-                        color=(1.00, 0.92, 0.20, 0.96),
-                        now=float(now),
-                        duration=0.7,
-                    )
-                    _audio.on_race_checkpoint(self)
-            elif kind == "race_finished":
-                if int(ev.player_id) == int(local_id):
-                    self.race_ui_feedback.flash(color=(0.22, 1.00, 0.30, 0.40), now=float(now), duration=0.24)
-                    t = float(ev.elapsed_seconds) if ev.elapsed_seconds is not None else 0.0
-                    self.race_ui_feedback.notice(
-                        text=f"Finish {t:0.3f}s",
-                        color=(0.30, 1.00, 0.36, 0.98),
-                        now=float(now),
-                        duration=1.2,
-                    )
-                    _audio.on_race_finish(self)
-            elif kind == "race_all_finished":
-                self.ui.set_status("Race finished. Enter mission marker and press F to race again.")
+        _race_controller.apply_race_events(
+            host=self,
+            events=events,
+            now=now,
+            local_player_id=self._local_player_id(),
+            audio_module=_audio,
+        )
 
     def _tick_race_runtime(self, *, now: float) -> None:
-        if self.player is None:
-            return
-        if self._net_connected:
-            return
-        tp = self._race_runtime.consume_teleport_target(player_id=self._local_player_id())
-        if tp is not None:
-            self.player.pos = LVector3f(tp)
-            self.player.vel = LVector3f(0.0, 0.0, 0.0)
-            self._push_sim_snapshot()
-        events = self._race_runtime.tick(
-            now=float(now),
-            player_positions={int(self._local_player_id()): LVector3f(self.player.pos)},
+        _race_controller.tick_race_runtime(
+            host=self,
+            now=now,
+            local_player_id=self._local_player_id(),
+            audio_module=_audio,
         )
-        if events:
-            self._apply_race_events(events, now=float(now))
-            self._sync_race_markers()
 
     def are_weapons_enabled(self) -> bool:
-        if self._race_editor_enabled and self._race_editor_mode_id == "race":
+        if self._race_editor.is_enabled() and self._race_editor.get_mode_id() == "race":
             return False
         if self._race_runtime.status in {"lobby", "intro", "countdown", "running"}:
             return False
@@ -1843,12 +1711,7 @@ class RunnerDemo(ShowBase):
             self._feel_capture_open = False
             self._feel_capture_staged_demo_path = None
             self._awaiting_noclip_rebind = False
-            self._race_editor_enabled = False
-            self._race_editor_mode_id = None
-            self._race_editor_selection_pos = None
-            self._race_draft_start = None
-            self._race_draft_checkpoints = []
-            self._race_draft_finish = None
+            self._race_editor.reset()
             self._close_game_mode_picker()
             self._pointer_locked = True
             self._last_mouse = None
@@ -1979,7 +1842,11 @@ class RunnerDemo(ShowBase):
             _mark_stage("player_collision_network_init")
 
             # Install game mode after the world/player exist.
-            mode = load_mode(mode=run_meta.mode, config=run_meta.mode_config)
+            mode_id = str(run_meta.mode or "free_run").strip() or "free_run"
+            if (not self._games_enabled) and mode_id in {"time_trial", "race"}:
+                # Keep race/time-trial as an opt-in experimental layer.
+                mode_id = "free_run"
+            mode = load_mode(mode=mode_id, config=run_meta.mode_config)
             self._setup_game_mode(mode=mode, bundle_root=bundle_ref)
             self._set_race_from_run_metadata(run_meta=run_meta)
             self._sync_race_markers()
@@ -2468,8 +2335,7 @@ class RunnerDemo(ShowBase):
                 self._push_sim_snapshot()
             if self._runtime_connect_host:
                 update_state(last_net_host=str(self._runtime_connect_host), last_net_port=int(self._runtime_connect_port))
-            self._race_editor_enabled = False
-            self._race_editor_mode_id = None
+            self._race_editor.reset()
             # Noclip is not authoritative in network gameplay. Always reset it on connect.
             self.tuning.noclip_enabled = False
             self._close_game_mode_picker()
@@ -3102,7 +2968,7 @@ class RunnerDemo(ShowBase):
         self._do_respawn(from_mode=False)
 
     def _toggle_noclip(self) -> None:
-        if self._net_connected and not self._race_editor_enabled:
+        if self._net_connected and not self._race_editor.is_enabled():
             self.tuning.noclip_enabled = False
             self.ui.set_status("Noclip is disabled in multiplayer gameplay.")
             return
@@ -3477,6 +3343,7 @@ def run(
     net_port: int = 7777,
     net_name: str = "player",
     watch: bool = False,
+    games_enabled: bool = False,
 ) -> None:
     app = RunnerDemo(
         RunConfig(
@@ -3493,6 +3360,7 @@ def run(
             net_port=int(net_port),
             net_name=net_name,
             watch=watch,
+            games_enabled=bool(games_enabled),
         )
     )
     app.run()

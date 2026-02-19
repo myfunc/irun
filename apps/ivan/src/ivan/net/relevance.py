@@ -28,10 +28,11 @@ class GoldSrcPvsRelevance:
     _visible_leaf_cache: dict[int, set[int]] = field(default_factory=dict, init=False, repr=False)
 
     def _world_to_bsp(self, *, pos: LVector3f) -> tuple[float, float, float]:
+        """Convert world (Panda-native) position to BSP-space. Scale-only, no Y-flip."""
         scale = float(self.map_scale) if float(self.map_scale) > 0.0 else 1.0
         return (
             float(pos.x) / scale,
-            -float(pos.y) / scale,
+            float(pos.y) / scale,
             float(pos.z) / scale,
         )
 

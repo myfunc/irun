@@ -52,3 +52,6 @@ class RunConfig:
     net_name: str = "player"
     # Watch .map file for changes and auto-reload (TrenchBroom workflow).
     watch: bool = False
+    # Experimental game-session layer (race missions, markers, network game events).
+    # Disabled by default to keep base runtime clean unless explicitly requested.
+    games_enabled: bool = False

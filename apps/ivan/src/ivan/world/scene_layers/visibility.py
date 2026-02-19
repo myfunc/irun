@@ -53,20 +53,29 @@ def tick_visibility(scene: SceneLayerContract) -> None:
                 ensure_deferred_lightmaps_loaded(scene, face_idx=int(face_idx))
 
 
+def world_to_bsp_pos(scene: SceneLayerContract, *, pos: LVector3f) -> tuple[float, float, float]:
+    """
+    Convert world (Panda-native) position to BSP-space for leaf lookup.
+    Scale-only, no Y-flip. Canonical contract for world->BSP mapping.
+    """
+    scale = float(scene._map_scale) if float(scene._map_scale) > 0.0 else 1.0
+    return (float(pos[0]) / scale, float(pos[1]) / scale, float(pos[2]) / scale)
+
+
 def best_effort_visibility_leaf(scene: SceneLayerContract, *, pos: LVector3f) -> int | None:
     """
     Find a stable BSP leaf index for PVS culling.
+    Uses canonical world->BSP conversion (scale-only, no Y-flip).
     """
     if scene._vis_goldsrc is None:
         return None
     if scene._world_root_np is None or scene._camera_np is None:
         return None
 
-    scale = float(scene._map_scale) if float(scene._map_scale) > 0.0 else 1.0
-    bsp_pos = LVector3f(float(pos[0]) / scale, -float(pos[1]) / scale, float(pos[2]) / scale)
+    bx, by, bz = world_to_bsp_pos(scene, pos=pos)
 
     try:
-        leaf0 = int(scene._vis_goldsrc.point_leaf(x=float(bsp_pos[0]), y=float(bsp_pos[1]), z=float(bsp_pos[2])))
+        leaf0 = int(scene._vis_goldsrc.point_leaf(x=float(bx), y=float(by), z=float(bz)))
     except Exception:
         return None
 

@@ -22,6 +22,7 @@ from panda3d.core import (
 )
 
 from ivan.world.scene_layers.contracts import SceneLayerContract
+from ivan.world.scene_layers.visibility import world_to_bsp_pos
 
 
 _MOCK_SKYBOX_VERT = """
@@ -300,11 +301,12 @@ def attach_triangle_map_geometry_v2(scene: SceneLayerContract, *, loader, render
 
     # If PVS is active, precompute initial world-face visibility from the spawn point so we can
     # avoid loading thousands of per-face lightmap textures for faces that start hidden.
+    # Uses same world->BSP contract as runtime visibility (scale-only, no Y-flip).
     scene._vis_initial_world_face_flags = None
     if scene._vis_goldsrc is not None:
         try:
-            pos = scene.spawn_point
-            leaf = scene._vis_goldsrc.point_leaf(x=float(pos[0]), y=float(pos[1]), z=float(pos[2]))
+            bx, by, bz = world_to_bsp_pos(scene, pos=scene.spawn_point)
+            leaf = scene._vis_goldsrc.point_leaf(x=float(bx), y=float(by), z=float(bz))
             scene._vis_initial_world_face_flags = scene._vis_goldsrc.visible_world_face_flags_for_leaf(int(leaf))
         except Exception:
             scene._vis_initial_world_face_flags = None

@@ -71,6 +71,78 @@ def _python_for(app: str, app_dir: Path) -> str:
     return "python" if sys.platform == "win32" else "python3"
 
 
+def _python_can_import(py: str, module: str) -> bool:
+    probe = [py, "-c", f"import {module}"]
+    try:
+        p = subprocess.run(
+            probe,
+            cwd=str(REPO_ROOT),
+            env=dict(os.environ),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        return False
+    return int(p.returncode) == 0
+
+
+def _install_launcher_deps(*, launcher_py: str, app_dir: Path) -> bool:
+    pip_up_cmd = [launcher_py, "-m", "pip", "install", "-U", "pip"]
+    p_pip = subprocess.run(pip_up_cmd, cwd=str(REPO_ROOT), env=dict(os.environ), check=False)
+    if int(p_pip.returncode) != 0:
+        print("runapp: failed to upgrade pip in launcher virtualenv", file=sys.stderr)
+        return False
+    install_cmd = [launcher_py, "-m", "pip", "install", "-U", "-e", str(app_dir)]
+    p_install = subprocess.run(install_cmd, cwd=str(REPO_ROOT), env=dict(os.environ), check=False)
+    if int(p_install.returncode) != 0:
+        print("runapp: failed to install launcher dependencies", file=sys.stderr)
+        return False
+    return True
+
+
+def _bootstrap_launcher_venv(app_dir: Path) -> str | None:
+    venv_dir = app_dir / ".venv"
+    base_py = sys.executable if sys.executable else ("python" if sys.platform == "win32" else "python3")
+    create_cmd = [base_py, "-m", "venv", str(venv_dir)]
+    print("runapp: bootstrapping launcher virtualenv...", file=sys.stderr)
+    p_create = subprocess.run(create_cmd, cwd=str(REPO_ROOT), env=dict(os.environ), check=False)
+    if int(p_create.returncode) != 0:
+        print("runapp: failed to create launcher virtualenv", file=sys.stderr)
+        return None
+    launcher_py = _venv_python(venv_dir)
+    if launcher_py is None:
+        print("runapp: launcher virtualenv created but python executable not found", file=sys.stderr)
+        return None
+    if not _install_launcher_deps(launcher_py=str(launcher_py), app_dir=app_dir):
+        return None
+    return str(launcher_py)
+
+
+def _python_for_launcher(app_dir: Path, *, allow_bootstrap: bool) -> str:
+    launcher_py = _venv_python(app_dir / ".venv")
+    if launcher_py is not None:
+        if _python_can_import(str(launcher_py), "dearpygui.dearpygui"):
+            return str(launcher_py)
+        if allow_bootstrap:
+            print("runapp: installing launcher dependencies into existing launcher virtualenv...", file=sys.stderr)
+            if _install_launcher_deps(launcher_py=str(launcher_py), app_dir=app_dir) and _python_can_import(
+                str(launcher_py), "dearpygui.dearpygui"
+            ):
+                return str(launcher_py)
+
+    ivan_py = _venv_python(APPS_DIR / "ivan" / ".venv")
+    if ivan_py is not None and _python_can_import(str(ivan_py), "dearpygui.dearpygui"):
+        return str(ivan_py)
+
+    if allow_bootstrap:
+        boot_py = _bootstrap_launcher_venv(app_dir)
+        if boot_py is not None:
+            return boot_py
+
+    return _python_for("launcher", app_dir)
+
+
 def _default_module_for_app(app: str) -> str:
     mapping = {
         "ivan": "ivan",
@@ -243,7 +315,10 @@ def main(argv: Iterable[str] | None = None) -> int:
         return 2
 
     module = module_override or _default_module_for_app(app)
-    py = _python_for(app, app_dir)
+    if app == "launcher":
+        py = _python_for_launcher(app_dir, allow_bootstrap=not print_cmd)
+    else:
+        py = _python_for(app, app_dir)
     cmd = [py, "-m", module, *app_args]
 
     if print_cmd:
