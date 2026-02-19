@@ -38,15 +38,23 @@ See: `docs/ui-kit.md`.
   - `apps/ivan/src/ivan/game/input_system.py`: mouse/keyboard sampling + input command helpers
   - `apps/ivan/src/ivan/game/combat_system.py`: offline combat sandbox orchestration (weapon slot state, per-slot cooldowns, and impulse-style firing actions, including travel-scaled blink carry and close-impact slam rebound tuning)
   - `apps/ivan/src/ivan/game/combat_fx.py`: weapon presentation layer (first-person weapon kick animation, slot-specific weapon view meshes, per-slot particles/tracers, slot-specific world-hit confirm effects, impact shockwaves, and fire/impact view-punch feedback)
+  - `apps/ivan/src/ivan/game/ring_marker.py`: shared LineSegs-based ring marker rendering (used by time_trial_markers and games.markers)
   - `apps/ivan/src/ivan/game/time_trial_markers.py`: world-space checkpoint marker visuals for race/time_trial mode (GTA-style circular rings)
   - `apps/ivan/src/ivan/game/audio_system.py`: synthesized SFX runtime (weapon/grapple/footstep audio + per-slot impact layers, volume controls, local audio asset cache)
   - `apps/ivan/src/ivan/game/feel_diagnostics.py`: rolling frame/tick diagnostics buffer and JSON dump utility for movement feel analysis
   - `apps/ivan/src/ivan/game/determinism.py`: per-tick quantized state hashing + rolling determinism trace buffer
 - `apps/ivan/src/ivan/games/`: game-session framework (race V1 offline + multiplayer authority wiring)
+  - `game_session.py`: mode-agnostic GameSession protocol for network server integration (bootstrap via `set_initial_course` / `set_course_from_games_payload`)
+  - `session_adapter.py`: RaceSessionAdapter implementing GameSession, wraps RaceRuntime for wire-compatible replication
   - `race_runtime.py`: race session state machine (lobby/intro/countdown/running/finished), ordered checkpoint progression, and shared payload serialization helpers used by client/server
-  - `markers.py`: mission/course ring rendering for editor and runtime states
+  - `markers.py`: mission/course ring rendering for editor and runtime states (uses `ivan.game.ring_marker`)
   - `mode_picker_ui.py`: UI kit mode picker used by in-world editor flow
   - `ui_feedback.py`: race notifications and screen-flash feedback layer
+- `apps/ivan/src/ivan/game/devtools/`: DevTools services (in-world editors, placement, publish)
+  - `race_editor_service.py`: race editor toggle, mode picker, place markers (1/2/3), publish to runtime and run metadata
+- `apps/ivan/src/ivan/game/features/race/`: race orchestration extracted from app
+  - `controller.py`: sync_race_markers, apply_race_events, tick_race_runtime
+- `apps/ivan/src/ivan/game/session_sync.py`: pointer lock and menu coordination helpers for editor flow
 - `apps/ivan/src/ivan/game/camera_observer.py`: read-only camera smoothing observer over solved simulation state
   - Also smooths read-only camera roll targets (used for wallrun engagement tilt) without mutating simulation.
 - `apps/ivan/src/ivan/game/camera_tilt_observer.py`: read-only movement/wallrun camera tilt observer
@@ -329,7 +337,7 @@ See: `docs/ui-kit.md`.
 - Production CLI pipelines are documented under tools: baking in `bake_map.py`, packing in `pack_map.py` (not in Baker runtime flow).
 - Texture sizing: IVAN disables Panda3D's default power-of-two rescaling for textures (`textures-power-2 none`).
   - Reason: imported GoldSrc maps commonly reference non-power-of-two textures; automatic rescaling breaks BSP UV mapping.
-- Coordinate system: IVAN uses Panda3D's default world axes (`X` right, `Y` forward, `Z` up). GoldSrc BSP imports keep the same axes and only apply a uniform scale.
+- **Coordinate contract**: IVAN uses Panda3D's native world axes (`X` right, `Y` forward, `Z` up). Canonical runtime coordinates are Panda-native with **scale-only mapping** at import boundaries — no global Y-flip. All map-to-runtime conversions (geometry, visibility, PVS, gameplay markers) apply uniform scale only.
 - Imported BSP bundles render with baked lightmaps (Source/GoldSrc) and disable dynamic scene lights for map geometry.
 - If a face references missing lightmap files at runtime, IVAN skips lightmap shading for that face and falls back to base-texture rendering (avoids full-black output for partial bundles).
 - Runtime GLSL is file-based and versioned under `apps/ivan/assets/shaders/`; shader ids and bindings are tracked in `apps/ivan/src/ivan/render/shader_catalog.py`.
@@ -442,7 +450,10 @@ No new dependencies were added for the TrenchBroom direct .map pipeline — it r
 ## Maps
 Maps are distributed as **map bundles** rooted at a `map.json` manifest plus adjacent assets (textures/resources).
 
-**Default distribution format is `.irunmap`** (packed zip archive). Directory bundles are only used during development/debugging when explicitly requested.
+**Map format policy:**
+- **Authoring**: `.map` (Valve 220) is the primary authoring format for IVAN-original maps; the engine loads `.map` directly during development (no BSP compilation needed).
+- **Distribution**: `.irunmap` (packed zip archive) is the **default distribution format**. All import pipelines and tools produce `.irunmap` unless overridden.
+- **Directory bundles**: Used only during development/debugging when explicitly requested (e.g. `--dir-bundle` or direct path to a bundle directory).
 
 Bundle storage formats:
 - **Directory bundle** (dev only): `<bundle>/map.json` plus folders like `materials/`, `lightmaps/`, `resources/`.
@@ -451,9 +462,7 @@ Bundle storage formats:
 
 **Resource packs** (`.irunres`): shared texture packs referenced by maps. When `map.json` has `resource_packs` and `asset_bindings`, runtime resolves assets by stable `asset_id`. Cache: `~/.irun/ivan/cache/resource_packs/<hash>/`. See ADR 0009.
 
-Level editing uses **TrenchBroom** as the external editor. `.map` files (Valve 220 format) are the **primary authoring format** for IVAN-original maps. The engine can load `.map` files directly — no BSP compilation step is needed for development.
-
-TrenchBroom game configuration files live in `apps/ivan/trenchbroom/`:
+Level editing uses **TrenchBroom** as the external editor. TrenchBroom game configuration files live in `apps/ivan/trenchbroom/`:
 - `GameConfig.cfg`: TrenchBroom game definition (Valve 220 format, loose textures in `textures_tb`, editor tags)
 - `ivan.fgd`: Entity definitions (spawns, triggers, lights, light_spot, env_fog, brush entities with `_phong` / `_phong_angle` support)
 - `README.md`: Setup instructions for installing the IVAN game profile into TrenchBroom
@@ -548,7 +557,7 @@ Mode selection is driven by optional per-bundle metadata:
   - packed bundle: `<bundle>.run.json` sidecar
   - `.map` source file: `<map-file>.run.json` sidecar
 - Fields:
-  - `mode`: mode id (`free_run`, `time_trial`/`race`, or `some.module:ClassName`)
+  - `mode`: mode id (`free_run`, `time_trial`, `race`, or `some.module:ClassName`)
   - `config`: mode-specific configuration (JSON object)
   - `spawn`: optional spawn override `{ "position": [x, y, z], "yaw": deg }`
   - `visibility`: optional visibility/culling config (JSON object)
@@ -558,9 +567,10 @@ Mode selection is driven by optional per-bundle metadata:
 
 Built-in modes:
 - `free_run`: default "just run around"
-- `time_trial` (alias: `race`): local race mode (Start/Finish checkpoints, restart, local PB + local leaderboard)
+- `time_trial`: legacy local mode (Start/Finish only, 5/6 marker placement, local PB + leaderboard)
+- `race`: first-class race mode (mission marker F, intro/countdown, ordered checkpoints, multiplayer-ready)
 
-## Time Trial (Local Mode)
+## Time Trial (Legacy Local Mode)
 `time_trial` is currently **local-only**:
 - Course is defined by **Start** and **Finish** checkpoints.
   - Preferred format: cylindrical checkpoints in `run.json` as `start_circle` / `finish_circle` (`center`, `radius`, `half_z`).
@@ -578,6 +588,15 @@ Built-in modes:
   - Runtime visuals render checkpoints as translucent GTA-style circular rings for readability.
   - Marker size is controlled by tuning fields (`course_marker_half_extent_xy`, `course_marker_half_extent_z`).
 
+## Race (First-Class Mode)
+`race` uses the games module `RaceRuntime` directly (no time_trial alias):
+- Course from `run.json` `games.definitions` (mission marker + start + checkpoints + finish).
+- Mission marker interaction (`F`) to join lobby, then intro → countdown → go.
+- Ordered checkpoint progression; finish requires all checkpoints.
+- `Shift+F4`: restart (respawn).
+- Hold `Tab` for best-times leaderboard.
+- Marker visuals via `RaceMarkerRenderer`; devtools editor (`V`) publishes to `RaceRuntime`.
+
 ## Games Module (Race V1 Landed)
 
 To support multiple online mission types without growing `RunnerDemo` and `net/server.py` into mode-specific god files,
@@ -593,6 +612,7 @@ the project now has a dedicated `ivan.games` package with clear boundaries:
 Current implementation scope:
 
 - race session runtime is implemented and wired into `RunnerDemo` (`V` editor flow, mission marker interaction, intro/countdown/go, ordered checkpoints, and feedback hooks).
+- game-session runtime consumption is gated behind CLI flag `--enable-games` (default OFF), so maps do not auto-load race mission markers/session lanes unless explicitly enabled.
 - multiplayer authority for race sessions is implemented:
   - server owns race state transitions and ordered checkpoint progression.
   - clients send mission interact edge (`F`) and render mirrored authoritative state/events.
