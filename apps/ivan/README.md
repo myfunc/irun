@@ -34,6 +34,9 @@ Default boot:
 - `python -m ivan` now boots into the **main menu**.
 - Base texture filtering is **pixelated (nearest)** by default; pass `--smooth-textures` to disable it.
 - You can also toggle this at runtime from the debug panel (`pixelated textures`) or console: `world_textures smooth|pixelated`.
+- Experimental game-session content (race mission markers/checkpoint session state from `run.json games`) is **disabled by default**.
+- Enable it explicitly with `--enable-games`.
+- When `--enable-games` is not provided, map metadata modes `race`/`time_trial` are treated as `free_run` for that run.
 - The menu includes `Quick Start: Bounce` if either:
   - `assets/imported/halflife/valve/bounce/map.json` (directory bundle), or
   - `assets/imported/halflife/valve/bounce.irunmap` (packed bundle)
@@ -57,6 +60,11 @@ python -m ivan --smoke --smoke-screenshot /tmp/ivan-smoke.png
 Prefill the menu with a Half-Life install (imports GoldSrc/Xash3D maps on demand):
 ```bash
 python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steamapps/common/Half-Life" --hl-mod valve
+```
+
+Enable experimental game-session layer for this run:
+```bash
+python -m ivan --enable-games
 ```
 
 ## Code Layout
@@ -104,7 +112,8 @@ python -m ivan --hl-root "/Users/myfunc/Library/Application Support/Steam/steama
   - click (not attached): fire grapple to aimed surface
   - click (attached): detach
 - In multiplayer, grapple hit on another player deals `20` damage.
-- `V`: toggle game editor mode (enables noclip while editor mode is active; host/config-owner only in multiplayer)
+- `V`: toggle game editor mode when `--enable-games` is on (enables noclip while editor mode is active; host/config-owner only in multiplayer)
+  - when `--enable-games` is off, `V` toggles noclip directly
 - `F`: editor interaction key (open mode picker) and mission marker interaction key (server-authoritative in multiplayer)
 - `1/2/3` in race editor mode: place start/checkpoint/finish markers
 - `N` (default): toggle noclip (rebindable from `Esc -> Key Bindings`)
@@ -290,7 +299,11 @@ The map is generated in code and includes:
 - A simple reset/hard-fail condition if you fall off the course
 
 ## External Map Assets
-IVAN can load an external map bundle via `--map <path-to-map.json>` or `--map <path-to-bundle.irunmap>`.
+IVAN can load an external map bundle via `--map <path-to-map.json>`, `--map <path-to-bundle.irunmap>`, or `--map <path-to-bundle.map>`.
+
+**Map format policy:** `.map` (Valve 220) is the primary authoring format; the engine loads `.map` directly during development. `.irunmap` is the default distribution format. Directory bundles are used only during development/debugging when explicitly requested.
+
+**Coordinate contract:** Runtime coordinates are Panda-native (X right, Y forward, Z up) with scale-only mapping at import boundaries — no global Y-flip.
 
 You can also use a short alias under `apps/ivan/assets/`, for example:
 ```bash

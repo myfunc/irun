@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from ivan.game import RunnerDemo
 from ivan.game import app as app_mod
+from ivan.game.devtools import RaceEditorService
 from ivan.game import netcode as netcode_mod
 from ivan.game import tuning_profiles as profiles_mod
 from ivan.net.protocol import InputCommand, decode_input_packet
@@ -126,11 +127,15 @@ class _FakeLoader:
 
 
 class _FakeWindowProps:
-    def __init__(self, *, fullscreen: bool) -> None:
+    def __init__(self, *, fullscreen: bool, opened: bool = True) -> None:
         self._fullscreen = bool(fullscreen)
+        self._opened = bool(opened)
 
     def getFullscreen(self) -> bool:
         return bool(self._fullscreen)
+
+    def getOpen(self) -> bool:
+        return bool(self._opened)
 
 
 class _FakeWindow:
@@ -225,7 +230,7 @@ def test_interact_button_network_path_uses_reliable_client_message() -> None:
     demo.player = SimpleNamespace(pos=LVector3f(0.0, 0.0, 1.0))
     demo._net_connected = True
     demo._net_client = _FakeNetClient()
-    demo._race_editor_enabled = False
+    demo._race_editor = RaceEditorService()
     demo._pause_menu_open = False
     demo._debug_menu_open = False
     demo._replay_browser_open = False
@@ -667,7 +672,7 @@ def test_noclip_forward_uses_view_pitch_direction() -> None:
 def test_noclip_toggle_is_blocked_in_multiplayer_gameplay() -> None:
     demo = RunnerDemo.__new__(RunnerDemo)
     demo._net_connected = True
-    demo._race_editor_enabled = False
+    demo._race_editor = RaceEditorService()
     demo.tuning = PhysicsTuning(noclip_enabled=True)
     demo.ui = _FakeUI()
 
@@ -960,6 +965,61 @@ def test_apply_profile_readonly_client_is_blocked() -> None:
     assert demo.ui.last_profiles == (["p1", "surf_bhop_c2"], "surf_bhop_c2")
 
 
+def test_server_uses_game_session_set_initial_course_for_bootstrap(monkeypatch) -> None:
+    """Server uses GameSession.set_initial_course (no hasattr hack)."""
+    set_initial_course_calls: list[object] = []
+    real_adapter = None
+
+    def _create_spy(*, initial_course=None):
+        nonlocal real_adapter
+        from ivan.games.session_adapter import create_race_session
+        real_adapter = create_race_session(initial_course=initial_course)
+
+        class _Spy:
+            def __getattr__(self, name):
+                return getattr(real_adapter, name)
+
+            def set_initial_course(self, course):
+                set_initial_course_calls.append(course)
+                return real_adapter.set_initial_course(course)
+
+        return _Spy()
+
+    class _FakeSock:
+        def setsockopt(self, *_args) -> None:
+            return
+
+        def bind(self, *_args) -> None:
+            return
+
+        def listen(self, *_args) -> None:
+            return
+
+        def setblocking(self, *_args) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+    import ivan.net.server as server_mod
+    monkeypatch.setattr(server_mod, "create_race_session", _create_spy)
+    monkeypatch.setattr(server_mod.socket, "socket", lambda *_a, **_kw: _FakeSock())
+
+    srv = MultiplayerServer(
+        host="127.0.0.1",
+        tcp_port=0,
+        udp_port=0,
+        map_json=None,
+        initial_race_course=_sample_race_course(),
+    )
+    try:
+        assert len(set_initial_course_calls) == 1
+        assert set_initial_course_calls[0] is not None
+        assert srv._game_session.has_course() is True
+    finally:
+        srv.close()
+
+
 def test_dedicated_server_defaults_match_surf_bhop_c2_core_values(monkeypatch) -> None:
     class _FakeSock:
         def setsockopt(self, *_args) -> None:
@@ -1179,7 +1239,7 @@ def test_server_snapshot_includes_games_payload_and_event_ring(monkeypatch) -> N
             rewind_history=deque(maxlen=8),
         )
         srv._clients_by_token = {"t1": st}
-        srv._append_race_events([RaceEvent(kind="race_intro")])
+        srv._append_game_events([RaceEvent(kind="race_intro")])
         srv._broadcast_snapshot()
 
         assert srv._udp_sock.sent
@@ -1298,19 +1358,20 @@ def test_server_interact_during_running_race_does_not_enroll_late_player(monkeyp
         srv._clients_by_token = {"t1": st1, "t2": st2}
 
         # Start race with player 1 only.
-        _ = srv._race_runtime.interact(player_id=1, pos=LVector3f(0.0, 0.0, 1.0), now=0.0)
-        _ = srv._race_runtime.interact(player_id=1, pos=LVector3f(0.0, 0.0, 1.0), now=0.1)
-        _ = srv._race_runtime.tick(now=1.1, player_positions={1: LVector3f(0.0, 0.0, 1.0)})
-        _ = srv._race_runtime.tick(now=2.1, player_positions={1: LVector3f(0.0, 0.0, 1.0)})
-        _ = srv._race_runtime.tick(now=3.1, player_positions={1: LVector3f(0.0, 0.0, 1.0)})
-        _ = srv._race_runtime.tick(now=4.1, player_positions={1: LVector3f(0.0, 0.0, 1.0)})
-        assert srv._race_runtime.status == "running"
-        assert srv._race_runtime.participants == {1}
+        session = srv._game_session
+        _ = session.interact(player_id=1, pos=LVector3f(0.0, 0.0, 1.0), now=0.0)
+        _ = session.interact(player_id=1, pos=LVector3f(0.0, 0.0, 1.0), now=0.1)
+        _ = session.tick(now=1.1, player_positions={1: LVector3f(0.0, 0.0, 1.0)})
+        _ = session.tick(now=2.1, player_positions={1: LVector3f(0.0, 0.0, 1.0)})
+        _ = session.tick(now=3.1, player_positions={1: LVector3f(0.0, 0.0, 1.0)})
+        _ = session.tick(now=4.1, player_positions={1: LVector3f(0.0, 0.0, 1.0)})
+        assert session.status == "running"
+        assert getattr(session._runtime, "participants", set()) == {1}
 
         # Player 2 pressing interact inside mission marker during running should be ignored.
         srv._simulate_tick()
-        assert srv._race_runtime.status == "running"
-        assert srv._race_runtime.participants == {1}
+        assert session.status == "running"
+        assert getattr(session._runtime, "participants", set()) == {1}
     finally:
         srv.close()
 
@@ -1389,10 +1450,11 @@ def test_server_process_tcp_interact_message_joins_race_lobby(monkeypatch) -> No
 
         srv._process_tcp()
 
-        assert srv._race_runtime.status == "lobby"
-        assert srv._race_runtime.participants == {1}
-        assert list(srv._race_event_ring)
-        assert list(srv._race_event_ring)[-1]["kind"] == "race_lobby_join"
+        session = srv._game_session
+        assert session.status == "lobby"
+        assert getattr(session._runtime, "participants", set()) == {1}
+        assert list(srv._game_event_ring)
+        assert list(srv._game_event_ring)[-1]["kind"] == "race_lobby_join"
     finally:
         srv.close()
 

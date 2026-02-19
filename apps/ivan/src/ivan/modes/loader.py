@@ -4,6 +4,7 @@ import importlib
 from typing import Any
 
 from ivan.modes.free_run import FreeRunMode
+from ivan.modes.race import RaceMode
 from ivan.modes.time_trial import TimeTrialMode
 
 
@@ -12,15 +13,17 @@ def load_mode(*, mode: str, config: dict | None) -> Any:
     Load a game mode.
 
     Supported values:
-    - Built-in ids: "free_run", "time_trial" (alias: "race")
+    - Built-in ids: "free_run", "time_trial", "race"
     - Python class path: "some.module:ClassName" (instantiated with config=...)
     """
 
     mode = str(mode or "").strip() or "free_run"
     if mode == "free_run":
         return FreeRunMode(config=config)
-    if mode in {"time_trial", "race"}:
+    if mode == "time_trial":
         return TimeTrialMode(config=config)
+    if mode == "race":
+        return RaceMode(config=config)
 
     if ":" in mode:
         mod_name, cls_name = mode.split(":", 1)
