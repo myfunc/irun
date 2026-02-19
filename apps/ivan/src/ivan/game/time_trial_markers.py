@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
 
-from panda3d.core import LineSegs, LVector3f, NodePath
+from panda3d.core import LVector3f, NodePath
 
 from ivan.course.volumes import AABBVolume, CylinderVolume
+from ivan.game.ring_marker import build_ring
 
 
 @dataclass
@@ -65,49 +65,6 @@ def _as_cylinder(vol: AABBVolume | CylinderVolume | None) -> tuple[LVector3f, fl
     return None
 
 
-def _build_ring(
-    parent: NodePath,
-    *,
-    name: str,
-    center: LVector3f,
-    radius: float,
-    half_z: float,
-    color: tuple[float, float, float, float],
-) -> None:
-    segs = 48
-    ribs = 12
-    ls = LineSegs(str(name))
-    try:
-        ls.setThickness(3.0)
-    except Exception:
-        pass
-    ls.setColor(float(color[0]), float(color[1]), float(color[2]), float(color[3]))
-
-    for zoff in (-half_z, 0.0, half_z):
-        for i in range(segs + 1):
-            a = (math.tau * float(i)) / float(segs)
-            x = float(center.x) + math.cos(a) * float(radius)
-            y = float(center.y) + math.sin(a) * float(radius)
-            z = float(center.z) + float(zoff)
-            if i == 0:
-                ls.moveTo(x, y, z)
-            else:
-                ls.drawTo(x, y, z)
-
-    for i in range(ribs):
-        a = (math.tau * float(i)) / float(ribs)
-        x = float(center.x) + math.cos(a) * float(radius)
-        y = float(center.y) + math.sin(a) * float(radius)
-        ls.moveTo(x, y, float(center.z) - float(half_z))
-        ls.drawTo(x, y, float(center.z) + float(half_z))
-
-    np = parent.attachNewNode(ls.create())
-    np.setTransparency(True)
-    np.setDepthWrite(False)
-    np.setBin("fixed", 14)
-    np.setLightOff(1)
-
-
 def set_markers(
     host,
     *,
@@ -123,23 +80,27 @@ def set_markers(
     finish_v = _as_cylinder(finish)
     if start_v is not None:
         c, r, hz = start_v
-        _build_ring(
+        build_ring(
             st.root_np,
             name="race-start",
             center=c,
             radius=r,
             half_z=hz,
             color=(0.25, 0.95, 0.35, 0.78),
+            thickness=3.0,
+            segs=48,
         )
     if finish_v is not None:
         c, r, hz = finish_v
-        _build_ring(
+        build_ring(
             st.root_np,
             name="race-finish",
             center=c,
             radius=r,
             half_z=hz,
             color=(0.98, 0.48, 0.16, 0.82),
+            thickness=3.0,
+            segs=48,
         )
 
 

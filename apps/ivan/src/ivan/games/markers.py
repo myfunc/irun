@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
 
-from panda3d.core import LineSegs, LVector3f, NodePath
+from panda3d.core import LVector3f, NodePath
 
 from ivan.course.volumes import CylinderVolume
+from ivan.game.ring_marker import build_ring
 
 
 @dataclass
@@ -87,38 +87,16 @@ class RaceMarkerRenderer:
         if marker is None or self.root_np is None:
             return
         center, radius, half_z = self._as_params(marker)
-        segs = 56
-        ribs = 12
-        ls = LineSegs(str(name))
-        try:
-            ls.setThickness(float(thickness))
-        except Exception:
-            pass
-        ls.setColor(float(color[0]), float(color[1]), float(color[2]), float(color[3]))
-
-        for zoff in (-half_z, 0.0, half_z):
-            for i in range(segs + 1):
-                ang = (math.tau * float(i)) / float(segs)
-                x = float(center.x) + math.cos(ang) * float(radius)
-                y = float(center.y) + math.sin(ang) * float(radius)
-                z = float(center.z) + float(zoff)
-                if i == 0:
-                    ls.moveTo(x, y, z)
-                else:
-                    ls.drawTo(x, y, z)
-
-        for i in range(ribs):
-            ang = (math.tau * float(i)) / float(ribs)
-            x = float(center.x) + math.cos(ang) * float(radius)
-            y = float(center.y) + math.sin(ang) * float(radius)
-            ls.moveTo(x, y, float(center.z) - float(half_z))
-            ls.drawTo(x, y, float(center.z) + float(half_z))
-
-        np = self.root_np.attachNewNode(ls.create())
-        np.setTransparency(True)
-        np.setDepthWrite(False)
-        np.setBin("fixed", 14)
-        np.setLightOff(1)
+        build_ring(
+            self.root_np,
+            name=name,
+            center=center,
+            radius=radius,
+            half_z=half_z,
+            color=color,
+            thickness=thickness,
+            segs=56,
+        )
 
     @staticmethod
     def _as_params(marker: CylinderVolume) -> tuple[LVector3f, float, float]:

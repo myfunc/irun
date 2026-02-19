@@ -24,6 +24,15 @@ pip install -e .
 python -m launcher
 ```
 
+Fast path from repo root:
+
+```bash
+./runapp launcher
+```
+
+`runapp` now auto-bootstraps `apps/launcher/.venv` on first launcher run when Dear PyGui
+is not available in the current/shared environment.
+
 ## What It Does
 
 ### Settings Panel (collapsible)
