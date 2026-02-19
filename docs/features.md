@@ -49,7 +49,8 @@
   - `F2` now includes FPS + frame p95, sim steps, state, accel, contacts, normals, leniency timers, and rolling determinism hash summary
   - `F2` now includes live camera feedback diagnostics (`cam_fov`, target fov, speed ratio/curve factor, camera event quality/amplitude/reject reason) for fast camera tuning
   - `F2` + gameplay status line now include vault diagnostics (`ok` or explicit reject reason) for ledge-vault iteration
-  - `F10` dumps rolling diagnostics buffer to JSON for offline jank analysis
+  - `F10` opens schema-driven runtime tweak panel (RPG viewmodel tuning via typed console commands; COPY exports script to clipboard; Windows-capable clipboard via ctypes, graceful fallback on other platforms)
+  - `Shift+F10` dumps rolling diagnostics buffer to JSON for offline jank analysis
   - `F11` dumps rolling determinism trace hash buffer for replay/harness checks
 - Ivan: debug tuning surface reduced to invariant-first controls
   - removed most legacy/direct scalar sliders from the runtime debug menu
@@ -322,13 +323,14 @@
   - Controls: Button (hover/pressed), Checkbox (visual), Slider (compact), TextInput (basic editing hotkeys on macOS)
   - Higher-level widgets used by Ivan: ListMenu, Scrolled, Dropdown, NumericControl, Tooltip
   - Playground demo to exercise components in one place (`python -m irun_ui_kit.demo`)
-- Ivan: typed command-bus-first console engine + localhost control bridge (JSON-lines TCP) for external command execution
-  - command metadata + schema validation + structured execution responses (`ok`, `error_code`, `data`, timings)
+- Ivan: full typed command-bus-first console engine for client and server command surfaces
+  - single typed registry (`CommandBus`) with `CommandMetadata`, `CommandArgSpec`, schema validation, and structured execution responses (`ok`, `error_code`, `data`, timings)
+  - client and server both expose localhost JSON-lines control bridge for external command execution; MCP discoverability via `cmd_meta` and `console_commands`
   - scene introspection commands with filtering/pagination (`scene_list`, `scene_select`, `scene_inspect`, `player_look_target`)
   - scene manipulation commands (`scene_create`, `scene_delete`, `scene_transform`, `scene_group`, `scene_ungroup`, `scene_group_transform`)
   - runtime world controls (`world_fog_set` with mode/density/color validation, `world_skybox_set` with preset validation, `world_map_save` for explicit map.json persistence)
   - in-game console UX upgrades: Up/Down history, Tab autocomplete, live command hints, metadata discoverability (`help`, `cmd_meta`)
-  - MCP stdio server (`ivan-mcp`) exposes `console_exec` and `console_commands`
+  - MCP stdio server (`ivan-mcp`) exposes `console_exec` and `console_commands`; `console_commands` supports filtering (`prefix`, `tag`) and pagination (`page`, `page_size`, max 200)
   - RPG imported-model alignment commands are available in console control (`vm_rpg_print`, `vm_rpg_pos`, `vm_rpg_hpr`, `vm_rpg_model_hpr`, `vm_rpg_model_scale`, `vm_rpg_size`, `vm_rpg_reset`)
   - command execution from external control is routed to the game thread with bounded per-frame queue drain safeguards
 - Ivan: map pipeline profiles and authoring flow

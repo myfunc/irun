@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ivan.console.command_bus import CommandArgSpec, CommandMetadata, CommandResult
 from ivan.console.core import CommandContext, Console
 
 if TYPE_CHECKING:
@@ -211,26 +212,69 @@ def register_autotune_commands(*, con: Console, runner: Any) -> None:
             pass
         return [f"restored: {restored}"]
 
-    con.register_command(
+    def _legacy_wrap(legacy_handler, meta: CommandMetadata):
+        def _wrapped(ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+            argv: list[str] = []
+            for spec in meta.args:
+                v = args.get(spec.name)
+                if spec.required:
+                    argv.append(str(v) if v is not None else "")
+                elif v is not None and v != "":
+                    argv.append(str(v))
+            try:
+                out = legacy_handler(ctx, argv)
+                return CommandResult.success(out=list(out))
+            except Exception as e:
+                return CommandResult.failure(str(e), error_code="handler-error")
+
+        return _wrapped
+
+    _suggest_meta = CommandMetadata(
         name="autotune_suggest",
-        help="Suggest invariant-only route-scoped tuning deltas from feedback text.",
-        handler=_cmd_autotune_suggest,
+        summary="Suggest invariant-only route-scoped tuning deltas from feedback text.",
+        route="immediate",
+        tags=("tuning", "autotune", "mcp"),
+        args=(
+            CommandArgSpec(name="route_tag", typ="str", required=True, help="Route tag."),
+            CommandArgSpec(name="feedback_text", typ="str", required=True, help="Feedback text."),
+            CommandArgSpec(name="out_dir", typ="str", required=False, default="", help="Optional output directory."),
+        ),
     )
-    con.register_command(
+    con.register_bus_command(metadata=_suggest_meta, handler=_legacy_wrap(_cmd_autotune_suggest, _suggest_meta))
+
+    _apply_meta = CommandMetadata(
         name="autotune_apply",
-        help="Backup then apply route-scoped autotune invariant suggestions.",
-        handler=_cmd_autotune_apply,
+        summary="Backup then apply route-scoped autotune invariant suggestions.",
+        route="immediate",
+        tags=("tuning", "autotune", "mcp"),
+        args=(
+            CommandArgSpec(name="route_tag", typ="str", required=True, help="Route tag."),
+            CommandArgSpec(name="feedback_text", typ="str", required=True, help="Feedback text."),
+            CommandArgSpec(name="out_dir", typ="str", required=False, default="", help="Optional output directory."),
+        ),
     )
-    con.register_command(
+    con.register_bus_command(metadata=_apply_meta, handler=_legacy_wrap(_cmd_autotune_apply, _apply_meta))
+
+    _eval_meta = CommandMetadata(
         name="autotune_eval",
-        help="Evaluate latest route run against guardrails and score.",
-        handler=_cmd_autotune_eval,
+        summary="Evaluate latest route run against guardrails and score.",
+        route="immediate",
+        tags=("tuning", "autotune", "mcp"),
+        args=(
+            CommandArgSpec(name="route_tag", typ="str", required=True, help="Route tag."),
+            CommandArgSpec(name="out_dir", typ="str", required=False, default="", help="Optional output directory."),
+        ),
     )
-    con.register_command(
+    con.register_bus_command(metadata=_eval_meta, handler=_legacy_wrap(_cmd_autotune_eval, _eval_meta))
+
+    _rollback_meta = CommandMetadata(
         name="autotune_rollback",
-        help="Restore latest tuning backup (or optional backup ref).",
-        handler=_cmd_autotune_rollback,
+        summary="Restore latest tuning backup (or optional backup ref).",
+        route="immediate",
+        tags=("tuning", "autotune", "mcp"),
+        args=(CommandArgSpec(name="backup_ref", typ="str", required=False, default="", help="Backup name or path."),),
     )
+    con.register_bus_command(metadata=_rollback_meta, handler=_legacy_wrap(_cmd_autotune_rollback, _rollback_meta))
 
 
 __all__ = [

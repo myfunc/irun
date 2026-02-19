@@ -4,6 +4,7 @@ This document is the canonical reference for everything currently available thro
 
 ## Surfaces and Transport
 
+- Full typed command-bus-first approach: client and server command surfaces share the same command runtime and control bridge protocol.
 - In-game console (`F4`) and external control use the same command runtime.
 - Client process starts localhost JSON-lines control bridge:
   - host: `127.0.0.1`
@@ -48,19 +49,24 @@ Project includes MCP config at `ivan/.cursor/mcp.json`:
     - `line` (required string)
     - `role` (optional string: `client` or `server`, default `client`)
 - `console_commands`
-  - purpose: list typed command metadata
+  - purpose: list typed command metadata with filtering and pagination (MCP discoverability)
   - args:
-    - `prefix` (optional command-name filter)
+    - `prefix` (optional string: command-name prefix filter)
+    - `tag` (optional string: command must have this tag)
+    - `page` (optional int, 1-based, default 1)
+    - `page_size` (optional int, max 200, default 50)
     - `role` (optional string: `client` or `server`, default `client`)
+  - returns: JSON with `commands[]` and `pagination` (page, page_size, total, total_pages)
 
 ## Discoverability Commands
 
 - `help [command]`
   - no args: list commands and cvars
   - with `command`: show details for one typed command when available
-- `cmd_meta [--prefix <name>]`
-  - returns machine-friendly JSON with typed command metadata:
-    - `name`, `summary`, `route`, `tags`, `args[]`
+- `cmd_meta [--prefix <name>] [--tag <tag>] [--page <n>] [--page_size <n>]`
+  - returns machine-friendly JSON with typed command metadata and pagination:
+    - `commands[]`: `name`, `summary`, `route`, `tags`, `args[]`
+    - `pagination`: `page`, `page_size`, `total`, `total_pages`
 
 ## Typed Command Bus Commands (client runtime)
 
@@ -88,34 +94,53 @@ Project includes MCP config at `ivan/.cursor/mcp.json`:
 - `world_skybox_set <skyname>`
 - `world_map_save [--include_fog true|false]`
 
-## Legacy/Compatibility Commands (client runtime)
+## Typed Commands (client runtime, MCP-discoverable)
 
-- `echo <text>`
-- `exec <path>`
+All client commands are now typed and registered on the command bus. They support `--arg value` and positional syntax.
+
+### Utility
+
+- `echo [text...]` – print text (greedy positional)
+- `exec <path>` – execute script file
+- `help [command]` – list commands/cvars or command details
+- `cmd_meta [--prefix <name>] [--tag <tag>] [--page <n>] [--page_size <n>]` – typed metadata + pagination
+
+### Multiplayer
+
 - `connect <host> [port]`
 - `disconnect`
+
+### Entity Introspection
+
 - `ent_list`
 - `ent_get <name> [path]`
-- `ent_set <name> <path> <json>`
+- `ent_set <name> <path> <value>`
 - `ent_dir <name> [path]`
 - `ent_pos <name> [x y z]`
-- `world_runtime`
-- `vm_rpg_print`
-- `vm_rpg_pos <x> <y> <z>`
-- `vm_rpg_hpr <h> <p> <r>`
-- `vm_rpg_model_hpr <h> <p> <r>`
-- `vm_rpg_model_scale <x> <y> <z>`
-- `vm_rpg_size <value>`
-- `vm_rpg_reset`
 
-### Replay/Telemetry/Tuning Workflows (client runtime)
+### World
+
+- `world_runtime` – dump diagnostics
+- `world_textures <pixelated|smooth> [reload]`
+
+### RPG Viewmodel (typed, MCP-discoverable)
+
+- `vm_rpg_print` – print current state
+- `vm_rpg_pos [x y z]` – get/set weapon root position
+- `vm_rpg_hpr [h p r]` – get/set weapon root rotation
+- `vm_rpg_model_hpr [h p r]` – get/set model-pivot rotation
+- `vm_rpg_model_scale [x y z]` – get/set model-pivot scale
+- `vm_rpg_size [value]` – get/set size scalar
+- `vm_rpg_reset` – reset to defaults
+
+### Replay/Telemetry/Tuning
 
 - `replay_export_latest [out_dir]`
 - `replay_export <replay_path> [out_dir]`
 - `replay_compare_latest [out_dir] [route_tag]`
 - `feel_feedback <text> [route_tag]`
 - `tuning_backup [label]`
-- `tuning_restore [name_or_path]`
+- `tuning_restore [backup_ref]`
 - `tuning_backups [limit]`
 - `autotune_suggest <route_tag> <feedback_text> [out_dir]`
 - `autotune_apply <route_tag> <feedback_text> [out_dir]`
@@ -124,11 +149,12 @@ Project includes MCP config at `ivan/.cursor/mcp.json`:
 
 ## Dedicated Server Console Commands
 
-Server console intentionally keeps a smaller command set:
+Server console intentionally keeps a smaller command set, fully typed on the command bus:
 
-- `help`
-- `echo <text>`
-- `exec <path>`
+- `help [--command <name>]` — list commands/cvars or show command details
+- `echo [--text <...>]` — print text (greedy)
+- `exec --path <file>` — execute a .cfg-like script file
+- `cmd_meta [--prefix <name>] [--tag <tag>] [--page <n>] [--page_size <n>]` — MCP discoverability (same schema as client)
 - same tuning cvars as client runtime (applied through server tuning snapshot path)
 
 ## Console CVARs (Physics Tuning Fields)
@@ -230,6 +256,8 @@ Response includes:
 
 - List typed scene commands:
   - `cmd_meta --prefix scene_`
+- List commands with tag filter and pagination:
+  - `cmd_meta --tag mcp --page 1 --page_size 20`
 - List commands and cvars:
   - `help`
 - Create and move runtime object:
@@ -241,14 +269,25 @@ Response includes:
 - Save world overrides to map:
   - `world_map_save --include_fog true`
 
+## Runtime Tweak Panel (F10)
+
+Schema-driven panel for RPG viewmodel tuning:
+- Reads/writes via typed console commands only (`vm_rpg_*`).
+- COPY button exports a console script to clipboard.
+- Clipboard: Windows-capable via ctypes (user32/kernel32, no extra deps); graceful fallback on other platforms (pyperclip if installed).
+
 ## Source of Truth
 
 This reference is synchronized with:
 
+- `apps/ivan/src/ivan/console/command_bus.py`
 - `apps/ivan/src/ivan/console/ivan_bindings.py`
 - `apps/ivan/src/ivan/console/server_bindings.py`
 - `apps/ivan/src/ivan/console/autotune_bindings.py`
 - `apps/ivan/src/ivan/physics/tuning.py`
 - `apps/ivan/src/ivan/mcp_server.py`
+- `apps/ivan/src/ivan/ui/runtime_tweak_panel.py`
+- `apps/ivan/src/ivan/ui/runtime_tweak_schema.py`
+- `apps/ivan/src/ivan/ui/clipboard.py`
 
 When adding/removing commands or tuning fields, update this file in the same change.
