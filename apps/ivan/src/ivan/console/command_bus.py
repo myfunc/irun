@@ -19,6 +19,7 @@ class CommandArgSpec:
     choices: tuple[str, ...] = ()
     minimum: float | None = None
     maximum: float | None = None
+    greedy: bool = False  # When True, consumes all remaining positionals as space-joined str
 
 
 @dataclass(frozen=True)
@@ -161,6 +162,9 @@ class CommandBus:
             raw: str | None = None
             if spec.name in named:
                 raw = named.pop(spec.name)
+            elif getattr(spec, "greedy", False):
+                raw = " ".join(positional[pos_idx:]) if pos_idx < len(positional) else None
+                pos_idx = len(positional)
             elif pos_idx < len(positional):
                 raw = positional[pos_idx]
                 pos_idx += 1

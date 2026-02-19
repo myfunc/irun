@@ -62,10 +62,26 @@ def _control_exec(*, host: str, port: int, line: str, role: str) -> list[str]:
     return []
 
 
-def _control_meta(*, host: str, port: int, role: str, prefix: str = "") -> list[str]:
-    line = "cmd_meta"
+def _control_meta(
+    *,
+    host: str,
+    port: int,
+    role: str,
+    prefix: str = "",
+    tag: str = "",
+    page: int = 1,
+    page_size: int = 50,
+) -> list[str]:
+    parts: list[str] = ["cmd_meta"]
     if str(prefix).strip():
-        line = f"cmd_meta --prefix {prefix}"
+        parts.append(f"--prefix {prefix}")
+    if str(tag).strip():
+        parts.append(f"--tag {tag}")
+    if page != 1:
+        parts.append(f"--page {page}")
+    if page_size != 50:
+        parts.append(f"--page_size {page_size}")
+    line = " ".join(parts)
     return _control_exec(host=host, port=port, line=line, role=role)
 
 
@@ -152,6 +168,21 @@ def main(argv: list[str] | None = None) -> None:
                                             "description": "Optional command name prefix filter.",
                                             "default": "",
                                         },
+                                        "tag": {
+                                            "type": "string",
+                                            "description": "Optional tag filter for commands.",
+                                            "default": "",
+                                        },
+                                        "page": {
+                                            "type": "integer",
+                                            "description": "Page number for pagination (1-based).",
+                                            "default": 1,
+                                        },
+                                        "page_size": {
+                                            "type": "integer",
+                                            "description": "Number of items per page.",
+                                            "default": 50,
+                                        },
                                         "role": {
                                             "type": "string",
                                             "description": 'Execution role hint: "client" or "server".',
@@ -194,6 +225,9 @@ def main(argv: list[str] | None = None) -> None:
                         port=int(args.control_port),
                         role=str(role),
                         prefix=str(arguments.get("prefix") or ""),
+                        tag=str(arguments.get("tag") or ""),
+                        page=int(arguments.get("page") or 1),
+                        page_size=int(arguments.get("page_size") or 50),
                     )
             except Exception as e:
                 _send_json(_error(req_id=req_id, code=-32000, message=f"control error: {e}"))

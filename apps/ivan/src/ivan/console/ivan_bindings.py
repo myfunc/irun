@@ -559,9 +559,14 @@ def build_client_console(runner: Any) -> Console:
 
     def _bus_meta(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
         prefix = str(args.get("prefix") or "").strip().casefold()
+        tag_filter = str(args.get("tag") or "").strip().casefold()
+        page = max(1, int(args.get("page") or 1))
+        page_size = max(1, min(200, int(args.get("page_size") or 50)))
         rows: list[dict[str, Any]] = []
         for meta in con.list_command_metadata():
             if prefix and prefix not in str(meta.name).casefold():
+                continue
+            if tag_filter and tag_filter not in (t.casefold() for t in meta.tags):
                 continue
             rows.append(
                 {
@@ -583,7 +588,21 @@ def build_client_console(runner: Any) -> Console:
                 }
             )
         rows.sort(key=lambda x: str(x.get("name") or ""))
-        return CommandResult.success(out=[json.dumps({"commands": rows}, ensure_ascii=True)], data={"commands": rows})
+        total = len(rows)
+        start = (page - 1) * page_size
+        end = start + page_size
+        page_rows = rows[start:end]
+        total_pages = (total + page_size - 1) // page_size if page_size > 0 else 0
+        payload = {
+            "commands": page_rows,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+            },
+        }
+        return CommandResult.success(out=[json.dumps(payload, ensure_ascii=True)], data=payload)
 
     def _bus_scene_list(_ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
         try:
@@ -739,10 +758,23 @@ def build_client_console(runner: Any) -> Console:
     con.register_bus_command(
         metadata=CommandMetadata(
             name="cmd_meta",
-            summary="Dump typed command metadata as JSON.",
+            summary="Dump typed command metadata as JSON with filtering and pagination.",
             route="immediate",
             tags=("discoverability", "mcp"),
-            args=(CommandArgSpec(name="prefix", typ="str", required=False, default="", help="Optional name prefix filter."),),
+            args=(
+                CommandArgSpec(name="prefix", typ="str", required=False, default="", help="Optional name prefix filter."),
+                CommandArgSpec(name="tag", typ="str", required=False, default="", help="Optional tag filter (command must have this tag)."),
+                CommandArgSpec(name="page", typ="int", required=False, default=1, minimum=1, help="Page index (1-based)."),
+                CommandArgSpec(
+                    name="page_size",
+                    typ="int",
+                    required=False,
+                    default=50,
+                    minimum=1,
+                    maximum=200,
+                    help="Items per page (max 200).",
+                ),
+            ),
         ),
         handler=_bus_meta,
     )
@@ -967,97 +999,409 @@ def build_client_console(runner: Any) -> Console:
         handler=_bus_world_textures_set,
     )
 
-    # Legacy/compat commands remain available for existing scripts.
-    con.register_command(name="help", help="List commands and cvars.", handler=_cmd_help)
-    con.register_command(name="echo", help="Print text.", handler=_cmd_echo)
-    con.register_command(name="exec", help="Execute a .cfg-like script file.", handler=_cmd_exec)
-    con.register_command(name="connect", help="Connect to a multiplayer server.", handler=_cmd_connect)
-    con.register_command(name="disconnect", help="Disconnect from multiplayer.", handler=_cmd_disconnect)
-    con.register_command(
-        name="replay_export_latest",
-        help="Export telemetry (CSV + JSON summary) for latest replay.",
-        handler=_cmd_replay_export_latest,
+    def _legacy_wrap(legacy_handler, meta: CommandMetadata):
+        def _wrapped(ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+            argv: list[str] = []
+            for spec in meta.args:
+                v = args.get(spec.name)
+                if spec.required:
+                    argv.append(str(v) if v is not None else "")
+                elif v is not None and v != "":
+                    argv.append(str(v))
+            try:
+                out = legacy_handler(ctx, argv)
+                return CommandResult.success(out=list(out))
+            except Exception as e:
+                return CommandResult.failure(str(e), error_code="handler-error")
+
+        return _wrapped
+
+    _echo_meta = CommandMetadata(
+        name="echo",
+        summary="Print text.",
+        route="immediate",
+        tags=("utility",),
+        args=(CommandArgSpec(name="text", typ="str", required=False, default="", help="Text to print.", greedy=True),),
     )
-    con.register_command(
-        name="replay_export",
-        help="Export telemetry (CSV + JSON summary) for a replay path.",
-        handler=_cmd_replay_export,
+    con.register_bus_command(metadata=_echo_meta, handler=_legacy_wrap(_cmd_echo, _echo_meta))
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="exec",
+            summary="Execute a .cfg-like script file.",
+            route="immediate",
+            tags=("utility",),
+            args=(CommandArgSpec(name="path", typ="str", required=True, help="Path to script file."),),
+        ),
+        handler=_legacy_wrap(
+            _cmd_exec,
+            CommandMetadata(name="exec", summary="", args=(CommandArgSpec(name="path", typ="str", required=True),)),
+        ),
     )
-    con.register_command(
-        name="replay_compare_latest",
-        help="Auto-export latest+previous replay telemetry and write a comparison summary.",
-        handler=_cmd_replay_compare_latest,
+    def _bus_connect(ctx: CommandContext, args: dict[str, Any]) -> CommandResult:
+        host = str(args.get("host") or "").strip()
+        if not host:
+            return CommandResult.failure("usage: connect <host> [port]", error_code="usage")
+        argv = [host]
+        if args.get("port") is not None:
+            argv.append(str(args["port"]))
+        try:
+            return CommandResult.success(out=_cmd_connect(ctx, argv))
+        except Exception as e:
+            return CommandResult.failure(str(e), error_code="connect")
+
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="connect",
+            summary="Connect to a multiplayer server.",
+            route="immediate",
+            tags=("multiplayer",),
+            args=(
+                CommandArgSpec(name="host", typ="str", required=True, help="Server host."),
+                CommandArgSpec(name="port", typ="int", required=False, default=None, help="Server port (default from runtime)."),
+            ),
+        ),
+        handler=_bus_connect,
     )
-    con.register_command(
-        name="feel_feedback",
-        help="Apply rule-based tuning tweaks from feedback text + latest replay metrics.",
-        handler=_cmd_feel_feedback,
+    con.register_bus_command(
+        metadata=CommandMetadata(name="disconnect", summary="Disconnect from multiplayer.", route="immediate", tags=("multiplayer",), args=()),
+        handler=lambda ctx, args: CommandResult.success(out=_cmd_disconnect(ctx, [])),
     )
-    con.register_command(
-        name="tuning_backup",
-        help="Save a tuning snapshot backup (optional label).",
-        handler=_cmd_tuning_backup,
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="replay_export_latest",
+            summary="Export telemetry (CSV + JSON summary) for latest replay.",
+            route="immediate",
+            tags=("replay", "telemetry", "mcp"),
+            args=(CommandArgSpec(name="out_dir", typ="str", required=False, default="", help="Optional output directory."),),
+        ),
+        handler=_legacy_wrap(
+            _cmd_replay_export_latest,
+            CommandMetadata(name="replay_export_latest", summary="", args=(CommandArgSpec(name="out_dir", typ="str", required=False, default=""),)),
+        ),
     )
-    con.register_command(
-        name="tuning_restore",
-        help="Restore tuning from latest backup or by name/path.",
-        handler=_cmd_tuning_restore,
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="replay_export",
+            summary="Export telemetry (CSV + JSON summary) for a replay path.",
+            route="immediate",
+            tags=("replay", "telemetry", "mcp"),
+            args=(
+                CommandArgSpec(name="replay_path", typ="str", required=True, help="Path to replay file."),
+                CommandArgSpec(name="out_dir", typ="str", required=False, default="", help="Optional output directory."),
+            ),
+        ),
+        handler=_legacy_wrap(
+            _cmd_replay_export,
+            CommandMetadata(
+                name="replay_export",
+                summary="",
+                args=(
+                    CommandArgSpec(name="replay_path", typ="str", required=True),
+                    CommandArgSpec(name="out_dir", typ="str", required=False, default=""),
+                ),
+            ),
+        ),
     )
-    con.register_command(
-        name="tuning_backups",
-        help="List recent tuning backups.",
-        handler=_cmd_tuning_backups,
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="replay_compare_latest",
+            summary="Auto-export latest+previous replay telemetry and write a comparison summary.",
+            route="immediate",
+            tags=("replay", "telemetry", "mcp"),
+            args=(
+                CommandArgSpec(name="out_dir", typ="str", required=False, default="", help="Optional output directory."),
+                CommandArgSpec(name="route_tag", typ="str", required=False, default="", help="Optional route tag filter."),
+            ),
+        ),
+        handler=_legacy_wrap(
+            _cmd_replay_compare_latest,
+            CommandMetadata(
+                name="replay_compare_latest",
+                summary="",
+                args=(
+                    CommandArgSpec(name="out_dir", typ="str", required=False, default=""),
+                    CommandArgSpec(name="route_tag", typ="str", required=False, default=""),
+                ),
+            ),
+        ),
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="feel_feedback",
+            summary="Apply rule-based tuning tweaks from feedback text + latest replay metrics.",
+            route="immediate",
+            tags=("tuning", "feel", "mcp"),
+            args=(
+                CommandArgSpec(name="text", typ="str", required=True, help="Feedback text."),
+                CommandArgSpec(name="route_tag", typ="str", required=False, default="", help="Optional route tag."),
+            ),
+        ),
+        handler=_legacy_wrap(
+            _cmd_feel_feedback,
+            CommandMetadata(
+                name="feel_feedback",
+                summary="",
+                args=(
+                    CommandArgSpec(name="text", typ="str", required=True),
+                    CommandArgSpec(name="route_tag", typ="str", required=False, default=""),
+                ),
+            ),
+        ),
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="tuning_backup",
+            summary="Save a tuning snapshot backup (optional label).",
+            route="immediate",
+            tags=("tuning", "mcp"),
+            args=(CommandArgSpec(name="label", typ="str", required=False, default="", help="Optional backup label."),),
+        ),
+        handler=_legacy_wrap(
+            _cmd_tuning_backup,
+            CommandMetadata(name="tuning_backup", summary="", args=(CommandArgSpec(name="label", typ="str", required=False, default=""),)),
+        ),
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="tuning_restore",
+            summary="Restore tuning from latest backup or by name/path.",
+            route="immediate",
+            tags=("tuning", "mcp"),
+            args=(CommandArgSpec(name="backup_ref", typ="str", required=False, default="", help="Backup name or path."),),
+        ),
+        handler=_legacy_wrap(
+            _cmd_tuning_restore,
+            CommandMetadata(name="tuning_restore", summary="", args=(CommandArgSpec(name="backup_ref", typ="str", required=False, default=""),)),
+        ),
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="tuning_backups",
+            summary="List recent tuning backups.",
+            route="immediate",
+            tags=("tuning", "mcp"),
+            args=(CommandArgSpec(name="limit", typ="int", required=False, default=12, minimum=1, maximum=100, help="Max backups to list."),),
+        ),
+        handler=_legacy_wrap(
+            _cmd_tuning_backups,
+            CommandMetadata(name="tuning_backups", summary="", args=(CommandArgSpec(name="limit", typ="int", required=False, default=12),)),
+        ),
     )
     register_autotune_commands(con=con, runner=runner)
-    con.register_command(name="ent_list", help="List registered entities/objects.", handler=_cmd_ent_list)
-    con.register_command(name="ent_get", help="Get a property by path (dot-separated).", handler=_cmd_ent_get)
-    con.register_command(name="ent_set", help="Set a property by path using JSON value.", handler=_cmd_ent_set)
-    con.register_command(name="ent_dir", help="List keys/attrs for an entity or sub-path.", handler=_cmd_ent_dir)
-    con.register_command(name="ent_pos", help="Get/set position for an entity.", handler=_cmd_ent_pos)
-    con.register_command(
-        name="world_runtime",
-        help="Dump world runtime path + sky/fog diagnostics as JSON.",
-        handler=_cmd_world_runtime,
+    con.register_bus_command(
+        metadata=CommandMetadata(name="ent_list", summary="List registered entities/objects.", route="immediate", tags=("introspection",), args=()),
+        handler=lambda ctx, args: CommandResult.success(out=_cmd_ent_list(ctx, [])),
     )
-    con.register_command(
-        name="world_textures",
-        help="Toggle world texture filtering mode (pixelated/smooth), optionally reloading the map.",
-        handler=_cmd_world_textures,
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="ent_get",
+            summary="Get a property by path (dot-separated).",
+            route="immediate",
+            tags=("introspection",),
+            args=(
+                CommandArgSpec(name="name", typ="str", required=True, help="Entity name."),
+                CommandArgSpec(name="path", typ="str", required=False, default="", help="Optional dot-separated path."),
+            ),
+        ),
+        handler=_legacy_wrap(
+            _cmd_ent_get,
+            CommandMetadata(
+                name="ent_get",
+                summary="",
+                args=(
+                    CommandArgSpec(name="name", typ="str", required=True),
+                    CommandArgSpec(name="path", typ="str", required=False, default=""),
+                ),
+            ),
+        ),
     )
-    con.register_command(
-        name="vm_rpg_print",
-        help="Print imported RPG viewmodel debug transform state.",
-        handler=_cmd_vm_rpg_print,
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="ent_set",
+            summary="Set a property by path using JSON value.",
+            route="immediate",
+            tags=("introspection",),
+            args=(
+                CommandArgSpec(name="name", typ="str", required=True, help="Entity name."),
+                CommandArgSpec(name="path", typ="str", required=True, help="Dot-separated path."),
+                CommandArgSpec(name="value", typ="str", required=True, help="JSON value or raw string."),
+            ),
+        ),
+        handler=_legacy_wrap(
+            _cmd_ent_set,
+            CommandMetadata(
+                name="ent_set",
+                summary="",
+                args=(
+                    CommandArgSpec(name="name", typ="str", required=True),
+                    CommandArgSpec(name="path", typ="str", required=True),
+                    CommandArgSpec(name="value", typ="str", required=True),
+                ),
+            ),
+        ),
     )
-    con.register_command(
-        name="vm_rpg_pos",
-        help="Get/set imported RPG weapon root position (x y z).",
-        handler=_cmd_vm_rpg_pos,
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="ent_dir",
+            summary="List keys/attrs for an entity or sub-path.",
+            route="immediate",
+            tags=("introspection",),
+            args=(
+                CommandArgSpec(name="name", typ="str", required=True, help="Entity name."),
+                CommandArgSpec(name="path", typ="str", required=False, default="", help="Optional dot-separated path."),
+            ),
+        ),
+        handler=_legacy_wrap(
+            _cmd_ent_dir,
+            CommandMetadata(
+                name="ent_dir",
+                summary="",
+                args=(
+                    CommandArgSpec(name="name", typ="str", required=True),
+                    CommandArgSpec(name="path", typ="str", required=False, default=""),
+                ),
+            ),
+        ),
     )
-    con.register_command(
-        name="vm_rpg_hpr",
-        help="Get/set imported RPG weapon root rotation (h p r).",
-        handler=_cmd_vm_rpg_hpr,
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="ent_pos",
+            summary="Get/set position for an entity.",
+            route="immediate",
+            tags=("introspection",),
+            args=(
+                CommandArgSpec(name="name", typ="str", required=True, help="Entity name."),
+                CommandArgSpec(name="x", typ="float", required=False, default=None, help="X coordinate (omit for get)."),
+                CommandArgSpec(name="y", typ="float", required=False, default=None, help="Y coordinate (omit for get)."),
+                CommandArgSpec(name="z", typ="float", required=False, default=None, help="Z coordinate (omit for get)."),
+            ),
+        ),
+        handler=lambda ctx, args: CommandResult.success(
+            out=_cmd_ent_pos(
+                ctx,
+                [str(args["name"])]
+                + ([str(args["x"]), str(args["y"]), str(args["z"])] if args.get("x") is not None and args.get("y") is not None and args.get("z") is not None else []),
+            )
+        ),
     )
-    con.register_command(
-        name="vm_rpg_model_hpr",
-        help="Get/set imported RPG model-pivot rotation (h p r).",
-        handler=_cmd_vm_rpg_model_hpr,
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="world_runtime",
+            summary="Dump world runtime path + sky/fog diagnostics as JSON.",
+            route="immediate",
+            tags=("world", "introspection", "mcp"),
+            args=(),
+        ),
+        handler=lambda ctx, args: CommandResult.success(out=_cmd_world_runtime(ctx, [])),
     )
-    con.register_command(
-        name="vm_rpg_size",
-        help="Get/set imported RPG viewmodel size scalar.",
-        handler=_cmd_vm_rpg_size,
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="world_textures",
+            summary="Toggle world texture filtering mode (pixelated/smooth), optionally reloading the map.",
+            route="immediate",
+            tags=("world", "render", "mcp"),
+            args=(
+                CommandArgSpec(name="pixelated", typ="bool", required=True, help="True = pixelated, False = smooth."),
+                CommandArgSpec(name="reload", typ="bool", required=False, default=True, help="Reload scene to apply."),
+            ),
+        ),
+        handler=lambda ctx, args: CommandResult.success(
+            out=_cmd_world_textures(ctx, [str(args.get("pixelated", True)), str(args.get("reload", True))])
+        ),
     )
-    con.register_command(
-        name="vm_rpg_model_scale",
-        help="Get/set imported RPG model-pivot scale vector (x y z).",
-        handler=_cmd_vm_rpg_model_scale,
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="vm_rpg_print",
+            summary="Print imported RPG viewmodel debug transform state.",
+            route="game-thread",
+            tags=("viewmodel", "rpg", "mcp"),
+            args=(),
+        ),
+        handler=lambda ctx, args: CommandResult.success(out=_cmd_vm_rpg_print(ctx, [])),
     )
-    con.register_command(
-        name="vm_rpg_reset",
-        help="Reset imported RPG debug transform to defaults.",
-        handler=_cmd_vm_rpg_reset,
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="vm_rpg_pos",
+            summary="Get/set imported RPG weapon root position (x y z).",
+            route="game-thread",
+            tags=("viewmodel", "rpg", "mcp"),
+            args=(
+                CommandArgSpec(name="x", typ="float", required=False, default=None, help="X (omit for get)."),
+                CommandArgSpec(name="y", typ="float", required=False, default=None, help="Y (omit for get)."),
+                CommandArgSpec(name="z", typ="float", required=False, default=None, help="Z (omit for get)."),
+            ),
+        ),
+        handler=lambda ctx, args: CommandResult.success(
+            out=_cmd_vm_rpg_pos(ctx, [str(args["x"]), str(args["y"]), str(args["z"])] if args.get("x") is not None and args.get("y") is not None and args.get("z") is not None else [])
+        ),
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="vm_rpg_hpr",
+            summary="Get/set imported RPG weapon root rotation (h p r).",
+            route="game-thread",
+            tags=("viewmodel", "rpg", "mcp"),
+            args=(
+                CommandArgSpec(name="h", typ="float", required=False, default=None, help="Heading (omit for get)."),
+                CommandArgSpec(name="p", typ="float", required=False, default=None, help="Pitch (omit for get)."),
+                CommandArgSpec(name="r", typ="float", required=False, default=None, help="Roll (omit for get)."),
+            ),
+        ),
+        handler=lambda ctx, args: CommandResult.success(
+            out=_cmd_vm_rpg_hpr(ctx, [str(args["h"]), str(args["p"]), str(args["r"])] if args.get("h") is not None and args.get("p") is not None and args.get("r") is not None else [])
+        ),
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="vm_rpg_model_hpr",
+            summary="Get/set imported RPG model-pivot rotation (h p r).",
+            route="game-thread",
+            tags=("viewmodel", "rpg", "mcp"),
+            args=(
+                CommandArgSpec(name="h", typ="float", required=False, default=None, help="Heading (omit for get)."),
+                CommandArgSpec(name="p", typ="float", required=False, default=None, help="Pitch (omit for get)."),
+                CommandArgSpec(name="r", typ="float", required=False, default=None, help="Roll (omit for get)."),
+            ),
+        ),
+        handler=lambda ctx, args: CommandResult.success(
+            out=_cmd_vm_rpg_model_hpr(ctx, [str(args["h"]), str(args["p"]), str(args["r"])] if args.get("h") is not None and args.get("p") is not None and args.get("r") is not None else [])
+        ),
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="vm_rpg_size",
+            summary="Get/set imported RPG viewmodel size scalar.",
+            route="game-thread",
+            tags=("viewmodel", "rpg", "mcp"),
+            args=(CommandArgSpec(name="value", typ="float", required=False, default=None, help="Size scalar (omit for get)."),),
+        ),
+        handler=lambda ctx, args: CommandResult.success(out=_cmd_vm_rpg_size(ctx, [str(args["value"])] if args.get("value") is not None else [])),
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="vm_rpg_model_scale",
+            summary="Get/set imported RPG model-pivot scale vector (x y z).",
+            route="game-thread",
+            tags=("viewmodel", "rpg", "mcp"),
+            args=(
+                CommandArgSpec(name="x", typ="float", required=False, default=None, help="Scale X (omit for get)."),
+                CommandArgSpec(name="y", typ="float", required=False, default=None, help="Scale Y (omit for get)."),
+                CommandArgSpec(name="z", typ="float", required=False, default=None, help="Scale Z (omit for get)."),
+            ),
+        ),
+        handler=lambda ctx, args: CommandResult.success(
+            out=_cmd_vm_rpg_model_scale(ctx, [str(args["x"]), str(args["y"]), str(args["z"])] if args.get("x") is not None and args.get("y") is not None and args.get("z") is not None else [])
+        ),
+    )
+    con.register_bus_command(
+        metadata=CommandMetadata(
+            name="vm_rpg_reset",
+            summary="Reset imported RPG debug transform to defaults.",
+            route="game-thread",
+            tags=("viewmodel", "rpg", "mcp"),
+            args=(),
+        ),
+        handler=lambda ctx, args: CommandResult.success(out=_cmd_vm_rpg_reset(ctx, [])),
     )
 
     for field, anno in PhysicsTuning.__annotations__.items():

@@ -183,3 +183,41 @@ def test_console_cmd_meta_exposes_typed_registry() -> None:
     out = con.execute_line(ctx=CommandContext(role="client", origin="test"), line="cmd_meta --prefix scene_")
     assert out
     assert any("scene_list" in line for line in out)
+
+
+def test_console_cmd_meta_pagination() -> None:
+    import json
+
+    runner = _FakeRunner()
+    con = build_client_console(runner)
+    out = con.execute_line(ctx=CommandContext(role="client", origin="test"), line="cmd_meta --page 1 --page_size 5")
+    assert out
+    payload = json.loads(out[0])
+    assert "commands" in payload
+    assert "pagination" in payload
+    pag = payload["pagination"]
+    assert pag["page"] == 1
+    assert pag["page_size"] == 5
+    assert pag["total"] >= len(payload["commands"])
+    assert pag["total_pages"] >= 1
+    assert len(payload["commands"]) <= 5
+
+
+def test_console_cmd_meta_tag_filter() -> None:
+    import json
+
+    runner = _FakeRunner()
+    con = build_client_console(runner)
+    out = con.execute_line(ctx=CommandContext(role="client", origin="test"), line="cmd_meta --tag mcp")
+    assert out
+    payload = json.loads(out[0])
+    assert "commands" in payload
+    for cmd in payload["commands"]:
+        assert "mcp" in [t.lower() for t in cmd.get("tags", [])]
+
+
+def test_console_echo_bus_command() -> None:
+    runner = _FakeRunner()
+    con = build_client_console(runner)
+    out = con.execute_line(ctx=CommandContext(role="client", origin="test"), line='echo hello world')
+    assert out == ["hello world"]
